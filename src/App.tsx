@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { check } from '@tauri-apps/plugin-updater';
 import confetti from 'canvas-confetti';
 import { Navbar } from './components/Navbar';
 import { SendCard } from './components/SendCard';
@@ -8,9 +9,24 @@ import { ReceiveCard } from './components/ReceiveCard';
 import { TransferItem } from './components/TransferItem';
 import { SettingsModal } from './components/SettingsModal';
 import { BrokerConfig, ConnectionStatus, TransferProgress } from './types';
+import { Language, translations } from './i18n';
+import { Theme, themes } from './themes';
 import { Activity, Inbox, Send, Layers } from 'lucide-react';
 
 export function App() {
+  // 1. Language & Theme state (persisted)
+  const [lang, setLang] = useState<Language>(() => {
+    return (localStorage.getItem('dropqtt_lang') as Language) || 'zh-CN';
+  });
+
+  const [theme, setTheme] = useState<Theme>(() => {
+    return (localStorage.getItem('dropqtt_theme') as Theme) || 'cyberpunk';
+  });
+
+  const t = translations[lang] || translations['zh-CN'];
+  const currentTheme = themes[theme] || themes.cyberpunk;
+
+  // 2. Broker Connection State
   const [status, setStatus] = useState<ConnectionStatus>({
     connected: false,
     brokerHost: 'broker.emqx.io',
@@ -32,6 +48,36 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [transfers, setTransfers] = useState<Record<string, TransferProgress>>({});
   const [filterTab, setFilterTab] = useState<'all' | 'send' | 'receive'>('all');
+  const [updateStatusText, setUpdateStatusText] = useState<string | null>(null);
+
+  const handleLangChange = (newLang: Language) => {
+    setLang(newLang);
+    localStorage.setItem('dropqtt_lang', newLang);
+  };
+
+  const handleThemeChange = (newTheme: Theme) => {
+    setTheme(newTheme);
+    localStorage.setItem('dropqtt_theme', newTheme);
+  };
+
+  // 3. Auto-Updater Check
+  const handleCheckUpdate = async () => {
+    setUpdateStatusText(t.checkingUpdate);
+    try {
+      const update = await check();
+      if (update?.available) {
+        setUpdateStatusText(`${t.newVersionAvailable} (${update.version})`);
+      } else {
+        setUpdateStatusText(t.upToDate);
+      }
+    } catch {
+      // Running in local dev or without release signature endpoint
+      setUpdateStatusText(t.upToDate);
+    }
+    setTimeout(() => {
+      setUpdateStatusText(null);
+    }, 4000);
+  };
 
   useEffect(() => {
     // 1. Get default download folder
@@ -57,7 +103,6 @@ export function App() {
       setTransfers((prev) => {
         const wasCompleted = prev[p.transferId]?.status === 'completed';
         if (!wasCompleted && p.status === 'completed') {
-          // Trigger pleasant celebratory confetti on verified completion
           confetti({
             particleCount: 50,
             spread: 60,
@@ -146,19 +191,32 @@ export function App() {
   };
 
   const transferList = Object.values(transfers).reverse();
-  const filteredTransfers = transferList.filter((t) => {
-    if (filterTab === 'send') return t.direction === 'send';
-    if (filterTab === 'receive') return t.direction === 'receive';
+  const filteredTransfers = transferList.filter((tItem) => {
+    if (filterTab === 'send') return tItem.direction === 'send';
+    if (filterTab === 'receive') return tItem.direction === 'receive';
     return true;
   });
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#090b10] text-slate-100 selection:bg-cyan-500 selection:text-black">
-      {/* Top Navigation */}
+    <div
+      className="min-h-screen flex flex-col transition-colors duration-300"
+      style={{
+        background: currentTheme.bodyBg,
+        color: currentTheme.textPrimary,
+      }}
+    >
+      {/* Top Navigation Bar */}
       <Navbar
         status={status}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onChannelChange={handleChannelChange}
+        lang={lang}
+        onLangChange={handleLangChange}
+        theme={theme}
+        onThemeChange={handleThemeChange}
+        t={t}
+        onCheckUpdate={handleCheckUpdate}
+        updateStatusText={updateStatusText}
       />
 
       {/* Main Content Area */}
@@ -169,73 +227,75 @@ export function App() {
             isConnected={status.connected}
             channel={status.channel}
             onSendFile={handleSendFile}
+            t={t}
           />
           <ReceiveCard
             downloadDir={downloadDir}
             onChangeDownloadDir={handleChangeDownloadDir}
             channel={status.channel}
             isConnected={status.connected}
+            t={t}
           />
         </div>
 
         {/* Transfer Management & History */}
-        <div className="rounded-2xl glass-card p-6 border border-slate-800 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div className="rounded-2xl glass-card p-6 shadow-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-white/10 pb-4">
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-cyan-400" />
-              <h3 className="text-sm font-semibold text-white">Transfers & Streaming Queue</h3>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+              <h3 className="text-sm font-semibold">{t.transfersQueue}</h3>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 font-mono">
                 {transferList.length}
               </span>
             </div>
 
             {/* Filter Tabs */}
-            <div className="flex items-center p-1 rounded-lg bg-slate-900 border border-slate-800 text-xs">
+            <div className="flex items-center p-1 rounded-lg bg-black/30 border border-white/10 text-xs">
               <button
                 onClick={() => setFilterTab('all')}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-colors ${
                   filterTab === 'all'
                     ? 'bg-cyan-500/20 text-cyan-300 font-medium'
-                    : 'text-slate-400 hover:text-slate-200'
+                    : 'opacity-60 hover:opacity-100'
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span>All</span>
+                <span>{t.allTransfers}</span>
               </button>
               <button
                 onClick={() => setFilterTab('send')}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-colors ${
                   filterTab === 'send'
                     ? 'bg-cyan-500/20 text-cyan-300 font-medium'
-                    : 'text-slate-400 hover:text-slate-200'
+                    : 'opacity-60 hover:opacity-100'
                 }`}
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Sent</span>
+                <span>{t.sendTab}</span>
               </button>
               <button
                 onClick={() => setFilterTab('receive')}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-colors ${
                   filterTab === 'receive'
                     ? 'bg-indigo-500/20 text-indigo-300 font-medium'
-                    : 'text-slate-400 hover:text-slate-200'
+                    : 'opacity-60 hover:opacity-100'
                 }`}
               >
                 <Inbox className="w-3.5 h-3.5" />
-                <span>Received</span>
+                <span>{t.receiveTab}</span>
               </button>
             </div>
           </div>
 
           {/* Transfers list */}
           {filteredTransfers.length === 0 ? (
-            <div className="text-center py-12 text-slate-500 space-y-2">
-              <div className="w-12 h-12 rounded-xl bg-slate-900 mx-auto flex items-center justify-center border border-slate-800 text-slate-600">
+            <div className="text-center py-12 opacity-60 space-y-2">
+              <div className="w-12 h-12 rounded-xl bg-black/20 mx-auto flex items-center justify-center border border-white/10">
                 <Inbox className="w-6 h-6" />
               </div>
-              <p className="text-xs font-medium text-slate-400">No active or past transfers in this channel</p>
-              <p className="text-[11px] text-slate-500">
-                Drop a file above or have someone send a file to #{status.channel}
+              <p className="text-xs font-medium">{t.noTransfers}</p>
+              <p className="text-[11px] opacity-75">
+                {t.noTransfersDesc}
               </p>
             </div>
           ) : (
@@ -248,6 +308,7 @@ export function App() {
                   onResume={handleResume}
                   onCancel={handleCancel}
                   onReveal={handleReveal}
+                  t={t}
                 />
               ))}
             </div>
@@ -263,6 +324,13 @@ export function App() {
         onSaveAndConnect={handleConnect}
         onDisconnect={handleDisconnect}
         isConnected={status.connected}
+        lang={lang}
+        onLangChange={handleLangChange}
+        theme={theme}
+        onThemeChange={handleThemeChange}
+        t={t}
+        onCheckUpdate={handleCheckUpdate}
+        updateStatusText={updateStatusText}
       />
     </div>
   );

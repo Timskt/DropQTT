@@ -1,5 +1,6 @@
 import React from 'react';
 import { TransferProgress } from '../types';
+import { Translations } from '../i18n';
 import {
   ArrowUpRight,
   ArrowDownLeft,
@@ -19,6 +20,7 @@ interface TransferItemProps {
   onResume: (id: string) => void;
   onCancel: (id: string) => void;
   onReveal: (path: string) => void;
+  t: Translations;
 }
 
 export const TransferItem: React.FC<TransferItemProps> = ({
@@ -27,6 +29,7 @@ export const TransferItem: React.FC<TransferItemProps> = ({
   onResume,
   onCancel,
   onReveal,
+  t,
 }) => {
   const isSend = transfer.direction === 'send';
   const percent = transfer.totalBytes > 0
@@ -62,7 +65,7 @@ export const TransferItem: React.FC<TransferItemProps> = ({
   const eta = calculateEta();
 
   return (
-    <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700/80 transition-all shadow-md">
+    <div className="p-4 rounded-xl bg-black/30 border border-white/10 hover:border-white/20 transition-all shadow-md">
       {/* Top row: Name, Direction, Status */}
       <div className="flex items-center justify-between gap-3 mb-2">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -74,13 +77,13 @@ export const TransferItem: React.FC<TransferItemProps> = ({
             {isSend ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownLeft className="w-4 h-4" />}
           </div>
           <div className="min-w-0">
-            <h4 className="text-xs font-semibold text-white truncate max-w-xs sm:max-w-md">
+            <h4 className="text-xs font-semibold truncate max-w-xs sm:max-w-md">
               {transfer.fileName}
             </h4>
-            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <div className="flex items-center gap-2 text-[11px] opacity-70">
               <span>{formatBytes(transfer.bytesTransferred)} / {formatBytes(transfer.totalBytes)}</span>
               <span>•</span>
-              <span className="font-mono">{transfer.chunksTransferred}/{transfer.totalChunks} chunks</span>
+              <span className="font-mono">{transfer.chunksTransferred}/{transfer.totalChunks} {t.chunks}</span>
             </div>
           </div>
         </div>
@@ -90,13 +93,13 @@ export const TransferItem: React.FC<TransferItemProps> = ({
           {transfer.status === 'completed' && (
             <span className="flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <CheckCircle2 className="w-3 h-3" />
-              Verified
+              {t.verified}
             </span>
           )}
           {transfer.status === 'verifying' && (
             <span className="flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 animate-pulse">
               <ShieldCheck className="w-3 h-3" />
-              Verifying Hash
+              {t.verifying}
             </span>
           )}
           {transfer.status === 'transferring' && (
@@ -106,25 +109,25 @@ export const TransferItem: React.FC<TransferItemProps> = ({
           )}
           {transfer.status === 'paused' && (
             <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              Paused
+              {t.paused}
             </span>
           )}
           {transfer.status === 'failed' && (
             <span className="flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
               <AlertCircle className="w-3 h-3" />
-              Failed
+              {t.failed}
             </span>
           )}
           {transfer.status === 'cancelled' && (
-            <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
-              Cancelled
+            <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-black/40 text-slate-400 border border-white/10">
+              {t.cancelled}
             </span>
           )}
         </div>
       </div>
 
       {/* Progress Bar */}
-      <div className="w-full bg-slate-800/80 rounded-full h-2 overflow-hidden my-2.5">
+      <div className="w-full bg-black/40 rounded-full h-2 overflow-hidden my-2.5">
         <div
           className={`h-full transition-all duration-300 rounded-full ${
             transfer.status === 'completed'
@@ -140,19 +143,19 @@ export const TransferItem: React.FC<TransferItemProps> = ({
       </div>
 
       {/* Bottom row: Percentage, ETA, Controls */}
-      <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
+      <div className="flex items-center justify-between text-xs opacity-75 pt-1">
         <div className="flex items-center gap-3">
-          <span className="font-semibold text-slate-200">{percent}%</span>
+          <span className="font-semibold">{percent}%</span>
           {eta && (
-            <span className="flex items-center gap-1 text-[11px] text-slate-400">
-              <Clock className="w-3 h-3 text-slate-500" />
+            <span className="flex items-center gap-1 text-[11px]">
+              <Clock className="w-3 h-3 opacity-60" />
               ETA: {eta}
             </span>
           )}
           {transfer.sha256 && (
             <span
               title={`SHA-256: ${transfer.sha256}`}
-              className="text-[10px] font-mono text-slate-500 hidden sm:inline truncate max-w-[140px]"
+              className="text-[10px] font-mono opacity-50 hidden sm:inline truncate max-w-[140px]"
             >
               #{transfer.sha256.slice(0, 10)}...
             </span>
@@ -164,8 +167,8 @@ export const TransferItem: React.FC<TransferItemProps> = ({
           {transfer.status === 'transferring' && isSend && (
             <button
               onClick={() => onPause(transfer.transferId)}
-              title="Pause Transfer"
-              className="p-1 rounded text-slate-400 hover:text-amber-300 hover:bg-slate-800 transition-colors"
+              title={t.pause}
+              className="p-1 rounded opacity-70 hover:opacity-100 hover:text-amber-300 transition-colors"
             >
               <Pause className="w-3.5 h-3.5" />
             </button>
@@ -174,8 +177,8 @@ export const TransferItem: React.FC<TransferItemProps> = ({
           {transfer.status === 'paused' && isSend && (
             <button
               onClick={() => onResume(transfer.transferId)}
-              title="Resume Transfer"
-              className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition-colors"
+              title={t.resume}
+              className="p-1 rounded opacity-70 hover:opacity-100 hover:text-cyan-300 transition-colors"
             >
               <Play className="w-3.5 h-3.5" />
             </button>
@@ -184,8 +187,8 @@ export const TransferItem: React.FC<TransferItemProps> = ({
           {(transfer.status === 'transferring' || transfer.status === 'paused') && (
             <button
               onClick={() => onCancel(transfer.transferId)}
-              title="Cancel Transfer"
-              className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+              title={t.cancel}
+              className="p-1 rounded opacity-70 hover:opacity-100 hover:text-rose-400 transition-colors"
             >
               <XCircle className="w-3.5 h-3.5" />
             </button>
@@ -194,11 +197,11 @@ export const TransferItem: React.FC<TransferItemProps> = ({
           {transfer.status === 'completed' && transfer.savePath && (
             <button
               onClick={() => onReveal(transfer.savePath!)}
-              title="Open enclosing folder"
-              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition-colors"
+              title={t.showInFolder}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-black/40 hover:bg-black/60 text-cyan-300 border border-white/10 transition-colors"
             >
               <FolderOpen className="w-3 h-3" />
-              <span>Show in Folder</span>
+              <span>{t.showInFolder}</span>
             </button>
           )}
         </div>
