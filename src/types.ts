@@ -7,6 +7,13 @@ export interface BrokerConfig {
   password?: string;
   keepAliveSecs: number;
   defaultQos: number;
+  baseTopic?: string;
+}
+
+export interface BrokerProfile {
+  id: string;
+  name: string;
+  config: BrokerConfig;
 }
 
 export interface ConnectionStatus {
@@ -33,9 +40,9 @@ export interface TransferProgress {
   savePath?: string;
 }
 
-export const BROKER_PRESETS: { name: string; host: string; port: number; useTls: boolean }[] = [
-  { name: 'EMQX Public', host: 'broker.emqx.io', port: 1883, useTls: false },
-  { name: 'HiveMQ Public', host: 'broker.hivemq.com', port: 1883, useTls: false },
-  { name: 'Mosquitto Public', host: 'test.mosquitto.org', port: 1883, useTls: false },
-  { name: 'Localhost', host: '127.0.0.1', port: 1883, useTls: false },
+export const BROKER_PRESETS: { name: string; host: string; port: number; useTls: boolean; baseTopic?: string }[] = [
+  { name: 'EMQX Public', host: 'broker.emqx.io', port: 1883, useTls: false, baseTopic: 'dropqtt' },
+  { name: 'HiveMQ Public', host: 'broker.hivemq.com', port: 1883, useTls: false, baseTopic: 'dropqtt' },
+  { name: 'Mosquitto Public', host: 'test.mosquitto.org', port: 1883, useTls: false, baseTopic: 'dropqtt' },
+  { name: 'Localhost (1883)', host: '127.0.0.1', port: 1883, useTls: false, baseTopic: 'dropqtt' },
 ];

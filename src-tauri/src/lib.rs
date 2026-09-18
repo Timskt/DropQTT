@@ -40,6 +40,11 @@ async fn disconnect_broker(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn test_broker_connection(config: BrokerConfig) -> Result<u64, String> {
+    MqttManager::test_connection(config).await
+}
+
+#[tauri::command]
 async fn get_connection_status(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
     Ok(state.mqtt.get_connection_status().await)
 }
@@ -114,6 +119,7 @@ pub fn run() {
             set_download_dir,
             connect_broker,
             disconnect_broker,
+            test_broker_connection,
             get_connection_status,
             join_channel,
             start_send_file,

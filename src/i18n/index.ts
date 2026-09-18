@@ -73,6 +73,21 @@ export interface Translations {
   updateNow: string;
   currentVersion: string;
   integrityVerified: string;
+  testConnection: string;
+  testingConnection: string;
+  connectionSuccess: string;
+  connectionFailed: string;
+  baseTopic: string;
+  baseTopicDesc: string;
+  activeBroker: string;
+  brokerProfiles: string;
+  saveProfile: string;
+  profileName: string;
+  deleteProfile: string;
+  customBroker: string;
+  manageBrokers: string;
+  pingBroker: string;
+  testLatency: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -144,11 +159,26 @@ export const translations: Record<Language, Translations> = {
     autoUpdate: '自动检查更新',
     checkForUpdates: '检查最新版本',
     checkingUpdate: '正在检查更新...',
-    upToDate: '已是最新版本 (v0.1.0)',
+    upToDate: '已是最新版本 (v0.1.2)',
     newVersionAvailable: '发现新版本可用！',
     updateNow: '立即更新',
     currentVersion: '当前版本',
     integrityVerified: 'SHA-256 完整性已通过',
+    testConnection: '测试连接',
+    testingConnection: '正在测试连接...',
+    connectionSuccess: '连接成功 (延迟: {ms}ms)',
+    connectionFailed: '连接失败',
+    baseTopic: 'MQTT 根主题 (Namespace)',
+    baseTopicDesc: '用于隔离团队或不同设备的主题前缀 (默认 dropqtt)',
+    activeBroker: '当前 Broker',
+    brokerProfiles: '常用配置预设',
+    saveProfile: '保存为常用预设',
+    profileName: '配置名称 (例如: 私有服务器)',
+    deleteProfile: '删除配置',
+    customBroker: '自定义 Broker',
+    manageBrokers: '配置 / 切换 Broker',
+    pingBroker: '延迟测速',
+    testLatency: '测速',
   },
   'en': {
     appName: 'DropQTT',
@@ -218,11 +248,26 @@ export const translations: Record<Language, Translations> = {
     autoUpdate: 'Auto Update',
     checkForUpdates: 'Check for Updates',
     checkingUpdate: 'Checking for updates...',
-    upToDate: 'Up to date (v0.1.0)',
+    upToDate: 'Up to date (v0.1.2)',
     newVersionAvailable: 'New version available!',
     updateNow: 'Update Now',
     currentVersion: 'Current Version',
     integrityVerified: 'SHA-256 Integrity Verified',
+    testConnection: 'Test Connection',
+    testingConnection: 'Testing connection...',
+    connectionSuccess: 'Connected successfully ({ms}ms)',
+    connectionFailed: 'Connection failed',
+    baseTopic: 'MQTT Base Topic (Namespace)',
+    baseTopicDesc: 'Namespace prefix to isolate transfers (Default: dropqtt)',
+    activeBroker: 'Active Broker',
+    brokerProfiles: 'Saved Profiles',
+    saveProfile: 'Save As Preset',
+    profileName: 'Profile Name (e.g. Private Server)',
+    deleteProfile: 'Delete',
+    customBroker: 'Custom Broker',
+    manageBrokers: 'Configure / Switch Broker',
+    pingBroker: 'Ping Latency',
+    testLatency: 'Ping',
   },
   'zh-TW': {
     appName: 'DropQTT',
@@ -292,11 +337,26 @@ export const translations: Record<Language, Translations> = {
     autoUpdate: '自動檢查更新',
     checkForUpdates: '檢查最新版本',
     checkingUpdate: '正在檢查更新...',
-    upToDate: '已是最新版本 (v0.1.0)',
+    upToDate: '已是最新版本 (v0.1.2)',
     newVersionAvailable: '發現新版本可用！',
     updateNow: '立即更新',
     currentVersion: '目前版本',
     integrityVerified: 'SHA-256 完整性已通過',
+    testConnection: '測試連線',
+    testingConnection: '正在測試連線...',
+    connectionSuccess: '連線成功 (延遲: {ms}ms)',
+    connectionFailed: '連線失敗',
+    baseTopic: 'MQTT 根主題 (Namespace)',
+    baseTopicDesc: '用於隔離團隊或不同設備的主題前綴 (預設 dropqtt)',
+    activeBroker: '目前 Broker',
+    brokerProfiles: '常用配置預設',
+    saveProfile: '儲存為常用預設',
+    profileName: '配置名稱 (例如: 私有伺服器)',
+    deleteProfile: '刪除配置',
+    customBroker: '自訂 Broker',
+    manageBrokers: '配置 / 切換 Broker',
+    pingBroker: '延遲測速',
+    testLatency: '測速',
   },
   'ja': {
     appName: 'DropQTT',
@@ -366,10 +426,25 @@ export const translations: Record<Language, Translations> = {
     autoUpdate: '自動アップデート',
     checkForUpdates: 'アップデートを確認',
     checkingUpdate: '確認中...',
-    upToDate: '最新バージョンです (v0.1.0)',
+    upToDate: '最新バージョンです (v0.1.2)',
     newVersionAvailable: '新しいバージョンが利用可能です！',
     updateNow: '今すぐアップデート',
     currentVersion: '現在のバージョン',
     integrityVerified: 'SHA-256 整合性確認済み',
+    testConnection: '接続テスト',
+    testingConnection: '接続テスト中...',
+    connectionSuccess: '接続成功 (レイテンシ: {ms}ms)',
+    connectionFailed: '接続失敗',
+    baseTopic: 'MQTT ベース トピック (Namespace)',
+    baseTopicDesc: '転送チャンネルを分離するためのプレフィックス (デフォルト dropqtt)',
+    activeBroker: 'アクティブ ブローカー',
+    brokerProfiles: '保存されたプロファイル',
+    saveProfile: 'プロファイルとして保存',
+    profileName: 'プロファイル名 (例: プライベートサーバー)',
+    deleteProfile: '削除',
+    customBroker: 'カスタムブローカー',
+    manageBrokers: 'ブローカー設定・切替',
+    pingBroker: 'PING レイテンシ',
+    testLatency: '測速',
   },
 };

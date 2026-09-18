@@ -4,11 +4,12 @@ import { listen } from '@tauri-apps/api/event';
 import { check } from '@tauri-apps/plugin-updater';
 import confetti from 'canvas-confetti';
 import { Navbar } from './components/Navbar';
+import { BrokerCard } from './components/BrokerCard';
 import { SendCard } from './components/SendCard';
 import { ReceiveCard } from './components/ReceiveCard';
 import { TransferItem } from './components/TransferItem';
 import { SettingsModal } from './components/SettingsModal';
-import { BrokerConfig, ConnectionStatus, TransferProgress } from './types';
+import { BrokerConfig, BrokerProfile, ConnectionStatus, TransferProgress } from './types';
 import { Language, translations } from './i18n';
 import { Theme, themes } from './themes';
 import { Activity, Inbox, Send, Layers } from 'lucide-react';
@@ -26,22 +27,72 @@ export function App() {
   const t = translations[lang] || translations['zh-CN'];
   const currentTheme = themes[theme] || themes.cyberpunk;
 
-  // 2. Broker Connection State
-  const [status, setStatus] = useState<ConnectionStatus>({
-    connected: false,
-    brokerHost: 'broker.emqx.io',
-    brokerPort: 1883,
-    channel: 'public-lobby',
-    clientId: 'DropQTT_Client',
+  // 2. Broker Connection State & Profiles (persisted)
+  const [config, setConfig] = useState<BrokerConfig>(() => {
+    try {
+      const saved = localStorage.getItem('dropqtt_active_broker');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return {
+      host: 'broker.emqx.io',
+      port: 1883,
+      useTls: false,
+      clientId: `DropQTT_${Math.random().toString(36).substring(2, 8)}`,
+      keepAliveSecs: 60,
+      defaultQos: 1,
+      baseTopic: 'dropqtt',
+    };
   });
 
-  const [config, setConfig] = useState<BrokerConfig>({
-    host: 'broker.emqx.io',
-    port: 1883,
-    useTls: false,
-    clientId: `DropQTT_${Math.random().toString(36).substring(2, 8)}`,
-    keepAliveSecs: 60,
-    defaultQos: 1,
+  const [profiles, setProfiles] = useState<BrokerProfile[]>(() => {
+    try {
+      const saved = localStorage.getItem('dropqtt_broker_profiles');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return [
+      {
+        id: 'emqx-default',
+        name: 'EMQX Public',
+        config: {
+          host: 'broker.emqx.io',
+          port: 1883,
+          useTls: false,
+          clientId: `DropQTT_${Math.random().toString(36).substring(2, 8)}`,
+          keepAliveSecs: 60,
+          defaultQos: 1,
+          baseTopic: 'dropqtt',
+        },
+      },
+      {
+        id: 'local-mosquitto',
+        name: 'Localhost (1883)',
+        config: {
+          host: '127.0.0.1',
+          port: 1883,
+          useTls: false,
+          clientId: `DropQTT_${Math.random().toString(36).substring(2, 8)}`,
+          keepAliveSecs: 60,
+          defaultQos: 1,
+          baseTopic: 'dropqtt',
+        },
+      },
+    ];
+  });
+
+  const [status, setStatus] = useState<ConnectionStatus>({
+    connected: false,
+    brokerHost: config.host,
+    brokerPort: config.port,
+    channel: 'public-lobby',
+    clientId: config.clientId,
   });
 
   const [downloadDir, setDownloadDir] = useState<string>('');
@@ -58,6 +109,23 @@ export function App() {
   const handleThemeChange = (newTheme: Theme) => {
     setTheme(newTheme);
     localStorage.setItem('dropqtt_theme', newTheme);
+  };
+
+  const handleSaveProfile = (name: string, newConfig: BrokerConfig) => {
+    const newProfile: BrokerProfile = {
+      id: Date.now().toString(),
+      name,
+      config: newConfig,
+    };
+    const updated = [...profiles, newProfile];
+    setProfiles(updated);
+    localStorage.setItem('dropqtt_broker_profiles', JSON.stringify(updated));
+  };
+
+  const handleDeleteProfile = (id: string) => {
+    const updated = profiles.filter((p) => p.id !== id);
+    setProfiles(updated);
+    localStorage.setItem('dropqtt_broker_profiles', JSON.stringify(updated));
   };
 
   // 3. Auto-Updater Check
@@ -126,6 +194,7 @@ export function App() {
   const handleConnect = async (newConfig: BrokerConfig) => {
     try {
       setConfig(newConfig);
+      localStorage.setItem('dropqtt_active_broker', JSON.stringify(newConfig));
       await invoke('connect_broker', { config: newConfig });
       const currentStatus = await invoke<ConnectionStatus>('get_connection_status');
       setStatus(currentStatus);
@@ -221,6 +290,16 @@ export function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-6xl w-full mx-auto p-6 space-y-6">
+        {/* Active Broker Info & Quick Actions Banner */}
+        <BrokerCard
+          status={status}
+          config={config}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onQuickSwitch={handleConnect}
+          profiles={profiles}
+          t={t}
+        />
+
         {/* Top Two Panels: Send & Receive */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <SendCard
@@ -331,6 +410,9 @@ export function App() {
         t={t}
         onCheckUpdate={handleCheckUpdate}
         updateStatusText={updateStatusText}
+        profiles={profiles}
+        onSaveProfile={handleSaveProfile}
+        onDeleteProfile={handleDeleteProfile}
       />
     </div>
   );

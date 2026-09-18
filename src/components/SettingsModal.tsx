@@ -1,8 +1,25 @@
 import React, { useState } from 'react';
-import { BrokerConfig, BROKER_PRESETS } from '../types';
+import { invoke } from '@tauri-apps/api/core';
+import { BrokerConfig, BROKER_PRESETS, BrokerProfile } from '../types';
 import { Language, Translations } from '../i18n';
 import { Theme } from '../themes';
-import { X, Server, Shield, Key, Sliders, CheckCircle2, Globe, Palette, RefreshCw } from 'lucide-react';
+import {
+  X,
+  Server,
+  Shield,
+  Key,
+  Sliders,
+  CheckCircle2,
+  Globe,
+  Palette,
+  RefreshCw,
+  Zap,
+  BookmarkPlus,
+  Trash2,
+  Check,
+  AlertCircle,
+  Hash,
+} from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -18,6 +35,9 @@ interface SettingsModalProps {
   t: Translations;
   onCheckUpdate: () => void;
   updateStatusText: string | null;
+  profiles: BrokerProfile[];
+  onSaveProfile: (name: string, config: BrokerConfig) => void;
+  onDeleteProfile: (id: string) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -34,23 +54,60 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   t,
   onCheckUpdate,
   updateStatusText,
+  profiles,
+  onSaveProfile,
+  onDeleteProfile,
 }) => {
   const [form, setForm] = useState<BrokerConfig>(config);
-  const [selectedPreset, setSelectedPreset] = useState<string>('EMQX Public');
+  const [selectedPreset, setSelectedPreset] = useState<string>('Custom');
+  const [newProfileName, setNewProfileName] = useState<string>('');
+  const [testing, setTesting] = useState<boolean>(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   if (!isOpen) return null;
 
-  const handleApplyPreset = (presetName: string) => {
-    const preset = BROKER_PRESETS.find((p) => p.name === presetName);
-    if (preset) {
-      setSelectedPreset(presetName);
-      setForm((prev) => ({
-        ...prev,
-        host: preset.host,
-        port: preset.port,
-        useTls: preset.useTls,
-      }));
+  const handleApplyPreset = (preset: { name: string; host: string; port: number; useTls: boolean; baseTopic?: string }) => {
+    setSelectedPreset(preset.name);
+    setForm((prev) => ({
+      ...prev,
+      host: preset.host,
+      port: preset.port,
+      useTls: preset.useTls,
+      baseTopic: preset.baseTopic || 'dropqtt',
+    }));
+    setTestResult(null);
+  };
+
+  const handleApplyProfile = (profile: BrokerProfile) => {
+    setSelectedPreset(profile.name);
+    setForm({ ...profile.config });
+    setTestResult(null);
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const latency = await invoke<number>('test_broker_connection', { config: form });
+      setTestResult({
+        success: true,
+        message: t.connectionSuccess.replace('{ms}', latency.toString()),
+      });
+    } catch (err) {
+      setTestResult({
+        success: false,
+        message: `${t.connectionFailed}: ${String(err)}`,
+      });
+    } finally {
+      setTesting(false);
     }
+  };
+
+  const handleSaveCurrentAsProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newProfileName.trim() || `${form.host}:${form.port}`;
+    onSaveProfile(name, form);
+    setNewProfileName('');
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -61,7 +118,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-xl rounded-2xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-black/20">
           <div className="flex items-center gap-2 font-semibold">
@@ -114,20 +171,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Quick Presets */}
-          <div>
-            <label className="block text-xs font-semibold opacity-70 uppercase tracking-wider mb-2">
-              {t.brokerPresets}
-            </label>
+          {/* Presets & Saved Profiles */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-semibold opacity-70 uppercase tracking-wider">
+                {t.brokerPresets} / {t.brokerProfiles}
+              </label>
+            </div>
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {BROKER_PRESETS.map((preset) => (
                 <button
                   type="button"
                   key={preset.name}
-                  onClick={() => handleApplyPreset(preset.name)}
+                  onClick={() => handleApplyPreset(preset)}
                   className={`px-2.5 py-2 text-xs rounded-lg font-medium border text-center transition-all ${
-                    selectedPreset === preset.name && form.host === preset.host
-                      ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 font-semibold'
+                    selectedPreset === preset.name && form.host === preset.host && form.port === preset.port
+                      ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 font-semibold shadow-sm'
                       : 'bg-white/5 border-white/10 opacity-80 hover:opacity-100 hover:bg-white/10'
                   }`}
                 >
@@ -135,22 +195,60 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               ))}
             </div>
+
+            {/* Custom Saved Profiles List */}
+            {profiles.length > 0 && (
+              <div className="pt-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {profiles.map((p) => (
+                    <div
+                      key={p.id}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs border transition-all ${
+                        form.host === p.config.host && form.port === p.config.port
+                          ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300 font-semibold'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleApplyProfile(p)}
+                        className="cursor-pointer"
+                      >
+                        {p.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteProfile(p.id)}
+                        className="opacity-50 hover:opacity-100 hover:text-rose-400 p-0.5 ml-1"
+                        title={t.deleteProfile}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Host & Port */}
+          {/* Host & Port Configuration */}
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
-              <label className="block text-xs font-medium opacity-80 mb-1.5">{t.brokerHost}</label>
+              <label className="block text-xs font-medium opacity-80 mb-1.5 flex items-center justify-between">
+                <span>{t.brokerHost}</span>
+                <span className="text-[10px] opacity-60">IP / Domain</span>
+              </label>
               <input
                 type="text"
                 value={form.host}
                 onChange={(e) => {
                   setSelectedPreset('Custom');
                   setForm({ ...form, host: e.target.value });
+                  setTestResult(null);
                 }}
                 required
                 className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-black/40 text-white font-mono"
-                placeholder="broker.emqx.io"
+                placeholder="192.168.1.100 or mqtt.example.com"
               />
             </div>
             <div>
@@ -158,7 +256,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <input
                 type="number"
                 value={form.port}
-                onChange={(e) => setForm({ ...form, port: parseInt(e.target.value) || 1883 })}
+                onChange={(e) => {
+                  setForm({ ...form, port: parseInt(e.target.value) || 1883 });
+                  setTestResult(null);
+                }}
                 required
                 className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-black/40 text-white font-mono"
                 placeholder="1883"
@@ -179,22 +280,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <input
                 type="checkbox"
                 checked={form.useTls}
-                onChange={(e) => setForm({ ...form, useTls: e.target.checked })}
+                onChange={(e) => {
+                  setForm({ ...form, useTls: e.target.checked });
+                  setTestResult(null);
+                }}
                 className="sr-only peer"
               />
               <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-500"></div>
             </label>
           </div>
 
-          {/* Client ID */}
-          <div>
-            <label className="block text-xs font-medium opacity-80 mb-1.5">{t.clientId}</label>
-            <input
-              type="text"
-              value={form.clientId}
-              onChange={(e) => setForm({ ...form, clientId: e.target.value })}
-              className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-black/40 text-white font-mono"
-            />
+          {/* Base Topic & Client ID */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium opacity-80 mb-1.5 flex items-center gap-1.5">
+                <Hash className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{t.baseTopic}</span>
+              </label>
+              <input
+                type="text"
+                value={form.baseTopic || 'dropqtt'}
+                onChange={(e) => setForm({ ...form, baseTopic: e.target.value.trim() || 'dropqtt' })}
+                className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-black/40 text-white font-mono"
+                placeholder="dropqtt"
+              />
+              <p className="text-[10px] opacity-60 mt-1">{t.baseTopicDesc}</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium opacity-80 mb-1.5">{t.clientId}</label>
+              <input
+                type="text"
+                value={form.clientId}
+                onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+                className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-black/40 text-white font-mono"
+              />
+            </div>
           </div>
 
           {/* Username & Password */}
@@ -207,9 +327,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <input
                 type="text"
                 value={form.username || ''}
-                onChange={(e) => setForm({ ...form, username: e.target.value || undefined })}
+                onChange={(e) => {
+                  setForm({ ...form, username: e.target.value || undefined });
+                  setTestResult(null);
+                }}
                 className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-black/40 text-white"
-                placeholder="User"
+                placeholder="User / Token"
               />
             </div>
             <div>
@@ -220,11 +343,69 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <input
                 type="password"
                 value={form.password || ''}
-                onChange={(e) => setForm({ ...form, password: e.target.value || undefined })}
+                onChange={(e) => {
+                  setForm({ ...form, password: e.target.value || undefined });
+                  setTestResult(null);
+                }}
                 className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-black/40 text-white"
-                placeholder="••••••"
+                placeholder="••••••••"
               />
             </div>
+          </div>
+
+          {/* Test Connection Live Button & Feedback */}
+          <div className="p-3.5 rounded-xl bg-black/30 border border-white/5 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>{t.testConnection}</span>
+              </span>
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={testing}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-amber-300 border border-amber-400/30 transition-all disabled:opacity-50"
+              >
+                <Zap className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
+                <span>{testing ? t.testingConnection : t.testConnection}</span>
+              </button>
+            </div>
+
+            {testResult && (
+              <div
+                className={`p-2.5 rounded-lg text-xs flex items-center gap-2 animate-in fade-in ${
+                  testResult.success
+                    ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
+                    : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
+                }`}
+              >
+                {testResult.success ? (
+                  <Check className="w-4 h-4 flex-shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                )}
+                <span>{testResult.message}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Save Profile Option */}
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              type="text"
+              value={newProfileName}
+              onChange={(e) => setNewProfileName(e.target.value)}
+              placeholder={t.profileName}
+              className="flex-1 px-3 py-1.5 text-xs rounded-lg glass-input bg-black/40 text-white"
+            />
+            <button
+              type="button"
+              onClick={handleSaveCurrentAsProfile}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 transition-all"
+            >
+              <BookmarkPlus className="w-3.5 h-3.5" />
+              <span>{t.saveProfile}</span>
+            </button>
           </div>
 
           {/* QoS & KeepAlive */}
@@ -263,7 +444,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>{t.autoUpdate}</span>
               </p>
               <p className="text-[11px] opacity-60 mt-0.5">
-                {updateStatusText || `${t.currentVersion}: v0.1.0`}
+                {updateStatusText || `${t.currentVersion}: v0.1.2`}
               </p>
             </div>
             <button

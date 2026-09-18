@@ -63,7 +63,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               title={t.checkForUpdates}
               className="text-[10px] px-2 py-0.5 rounded font-mono font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 flex items-center gap-1 transition-all"
             >
-              <span>v0.1.0</span>
+              <span>v0.1.2</span>
               <RefreshCw className="w-2.5 h-2.5 opacity-70" />
             </button>
             {updateStatusText && (

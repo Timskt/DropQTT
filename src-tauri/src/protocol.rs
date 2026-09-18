@@ -11,6 +11,7 @@ pub struct BrokerConfig {
     pub password: Option<String>,
     pub keep_alive_secs: u64,
     pub default_qos: u8,
+    pub base_topic: Option<String>,
 }
 
 impl Default for BrokerConfig {
@@ -25,6 +26,7 @@ impl Default for BrokerConfig {
             password: None,
             keep_alive_secs: 60,
             default_qos: 1,
+            base_topic: Some("dropqtt".to_string()),
         }
     }
 }

@@ -36,6 +36,7 @@ pub struct MqttManager {
     client: Arc<Mutex<Option<AsyncClient>>>,
     current_config: Arc<RwLock<Option<BrokerConfig>>>,
     current_channel: Arc<RwLock<String>>,
+    base_topic: Arc<RwLock<String>>,
     download_dir: Arc<RwLock<PathBuf>>,
     incoming_transfers: Arc<Mutex<HashMap<String, IncomingTransfer>>>,
     outgoing_transfers: Arc<Mutex<HashMap<String, ActiveOutgoing>>>,
@@ -49,6 +50,7 @@ impl MqttManager {
             client: Arc::new(Mutex::new(None)),
             current_config: Arc::new(RwLock::new(None)),
             current_channel: Arc::new(RwLock::new("public-lobby".to_string())),
+            base_topic: Arc::new(RwLock::new("dropqtt".to_string())),
             download_dir: Arc::new(RwLock::new(def_download)),
             incoming_transfers: Arc::new(Mutex::new(HashMap::new())),
             outgoing_transfers: Arc::new(Mutex::new(HashMap::new())),
@@ -88,6 +90,54 @@ impl MqttManager {
         }
     }
 
+    pub async fn test_connection(config: BrokerConfig) -> Result<u64, String> {
+        let rand_suffix: String = uuid::Uuid::new_v4().simple().to_string()[..6].to_string();
+        let test_client_id = format!("{}_test_{}", config.client_id, rand_suffix);
+        let mut mqttoptions = MqttOptions::new(test_client_id, &config.host, config.port);
+        mqttoptions.set_keep_alive(std::time::Duration::from_secs(10));
+
+        if let (Some(u), Some(p)) = (&config.username, &config.password) {
+            if !u.is_empty() {
+                mqttoptions.set_credentials(u, p);
+            }
+        }
+
+        if config.use_tls {
+            let transport = Transport::tls_with_default_config();
+            mqttoptions.set_transport(transport);
+        }
+
+        let start = Instant::now();
+        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 10);
+
+        let timeout_duration = std::time::Duration::from_secs(6);
+        let poll_task = async {
+            loop {
+                match eventloop.poll().await {
+                    Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(connack))) => {
+                        if connack.code == rumqttc::ConnectReturnCode::Success {
+                            return Ok(());
+                        } else {
+                            return Err(format!("ConnAck rejected: {:?}", connack.code));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => return Err(format!("Connection error: {:?}", e)),
+                }
+            }
+        };
+
+        match tokio::time::timeout(timeout_duration, poll_task).await {
+            Ok(Ok(_)) => {
+                let latency = start.elapsed().as_millis() as u64;
+                let _ = client.disconnect().await;
+                Ok(latency)
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("Connection timed out after 6 seconds".to_string()),
+        }
+    }
+
     pub async fn connect(&self, app: AppHandle, config: BrokerConfig) -> Result<(), String> {
         self.disconnect().await;
 
@@ -111,8 +161,11 @@ impl MqttManager {
         *self.client.lock().await = Some(client.clone());
         *self.current_config.write().await = Some(config.clone());
 
+        let base_topic = config.base_topic.clone().unwrap_or_else(|| "dropqtt".to_string());
+        *self.base_topic.write().await = base_topic.clone();
+
         let channel = self.current_channel.read().await.clone();
-        let channel_sub = format!("dropqtt/{}/#", channel);
+        let channel_sub = format!("{}/{}/#", base_topic, channel);
 
         // Subscribe to channel topic
         let qos = match config.default_qos {
@@ -136,6 +189,7 @@ impl MqttManager {
         let app_handle = app.clone();
         let my_client_id = config.client_id.clone();
         let channel_for_loop = channel.clone();
+        let base_topic_for_loop = base_topic.clone();
 
         tokio::spawn(async move {
             loop {
@@ -154,6 +208,7 @@ impl MqttManager {
                                 &client_clone,
                                 &my_client_id,
                                 &channel_for_loop,
+                                &base_topic_for_loop,
                             ).await;
                         }
                     }
@@ -180,13 +235,14 @@ impl MqttManager {
 
     pub async fn join_channel(&self, app: AppHandle, new_channel: String) -> Result<(), String> {
         let old_channel = self.current_channel.read().await.clone();
+        let base_topic = self.base_topic.read().await.clone();
         let client_guard = self.client.lock().await;
 
         if let Some(client) = client_guard.as_ref() {
-            let old_sub = format!("dropqtt/{}/#", old_channel);
+            let old_sub = format!("{}/{}/#", base_topic, old_channel);
             let _ = client.unsubscribe(&old_sub).await;
 
-            let new_sub = format!("dropqtt/{}/#", new_channel);
+            let new_sub = format!("{}/{}/#", base_topic, new_channel);
             client
                 .subscribe(&new_sub, QoS::AtLeastOnce)
                 .await
@@ -313,8 +369,8 @@ impl MqttManager {
             timestamp: chrono::Utc::now().timestamp(),
         };
 
-        // Publish Meta message
-        let meta_topic = format!("dropqtt/{}/meta", channel);
+        let base_topic = self.base_topic.read().await.clone();
+        let meta_topic = format!("{}/{}/meta", base_topic, channel);
         let meta_payload = serde_json::to_vec(&meta).map_err(|e| e.to_string())?;
 
         let qos = match qos_val {
@@ -349,6 +405,7 @@ impl MqttManager {
         let fname = file_name.clone();
         let hash = sha256_hash.clone();
         let fpath = file_path_str.clone();
+        let base_topic_for_chunks = base_topic.clone();
 
         tokio::spawn(async move {
             let mut file = match File::open(&path).await {
@@ -455,7 +512,7 @@ impl MqttManager {
                     0
                 };
 
-                let chunk_topic = format!("dropqtt/{}/chunk/{}/{}", ch, tid, chunk_idx);
+                let chunk_topic = format!("{}/{}/chunk/{}/{}", base_topic_for_chunks, ch, tid, chunk_idx);
                 let payload = Bytes::copy_from_slice(&chunk_buf[..read_bytes]);
 
                 if let Err(e) = client.publish(&chunk_topic, qos, false, payload).await {
@@ -518,9 +575,10 @@ impl MqttManager {
         client: &AsyncClient,
         my_client_id: &str,
         channel: &str,
+        base_topic: &str,
     ) {
         let parts: Vec<&str> = topic.split('/').collect();
-        if parts.len() < 3 || parts[0] != "dropqtt" {
+        if parts.len() < 3 || parts[0] != base_topic {
             return;
         }
 
@@ -666,6 +724,7 @@ impl MqttManager {
                         let app_handle_inner = app.clone();
                         let client_inner = client.clone();
                         let ch_inner = channel.to_string();
+                        let base_topic_inner = base_topic.to_string();
 
                         tokio::spawn(async move {
                             let verified = match Self::verify_sha256(&temp_path, &expected_hash).await {
@@ -689,7 +748,7 @@ impl MqttManager {
                                     chunk_index: None,
                                     message: Some("Verified and saved successfully".to_string()),
                                 };
-                                let ctrl_topic = format!("dropqtt/{}/ctrl/{}", ch_inner, meta_clone.transfer_id);
+                                let ctrl_topic = format!("{}/{}/ctrl/{}", base_topic_inner, ch_inner, meta_clone.transfer_id);
                                 if let Ok(ctrl_payload) = serde_json::to_vec(&ctrl) {
                                     let _ = client_inner
                                         .publish(&ctrl_topic, QoS::AtLeastOnce, false, ctrl_payload)
