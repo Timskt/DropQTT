@@ -16,6 +16,8 @@ dist-ssr
 *.AppImage
 *.msi
 *.exe
+*.key
+*.key.pub
 
 # OS & Editor
 .DS_Store
