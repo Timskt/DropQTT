@@ -3,7 +3,7 @@ pub mod protocol;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::mqtt_manager::MqttManager;
 use crate::protocol::{BrokerConfig, ConnectionStatus};
@@ -113,6 +113,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             mqtt: mqtt_manager,
+        })
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(debug_assertions)]
+                let _ = window.open_devtools();
+                #[cfg(not(debug_assertions))]
+                let _ = window;
+            }
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_default_download_dir,

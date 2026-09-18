@@ -444,7 +444,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>{t.autoUpdate}</span>
               </p>
               <p className="text-[11px] opacity-60 mt-0.5">
-                {updateStatusText || `${t.currentVersion}: v0.1.2`}
+                {updateStatusText || `${t.currentVersion}: v0.1.3`}
               </p>
             </div>
             <button

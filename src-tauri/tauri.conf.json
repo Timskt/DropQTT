@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DropQTT",
-  "version": "0.1.2",
-  "identifier": "com.dropqtt.app",
+  "version": "0.1.3",
+  "identifier": "com.dropqtt.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "DropQTT - Fast MQTT File Transfer",
         "width": 1020,
         "height": 720,
