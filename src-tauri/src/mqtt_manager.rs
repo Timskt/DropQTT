@@ -17,6 +17,7 @@ use crate::protocol::*;
 
 pub struct IncomingTransfer {
     pub meta: TransferMeta,
+    pub topic_prefix: String,
     pub temp_path: PathBuf,
     pub final_path: PathBuf,
     pub file: Arc<Mutex<File>>,
@@ -188,16 +189,34 @@ impl MqttManager {
         let client_clone = client.clone();
         let app_handle = app.clone();
         let my_client_id = config.client_id.clone();
-        let channel_for_loop = channel.clone();
-        let base_topic_for_loop = base_topic.clone();
 
         tokio::spawn(async move {
             loop {
                 match eventloop.poll().await {
                     Ok(notification) => {
                         if let rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish)) = notification {
-                            let topic = publish.topic;
-                            let payload = publish.payload;
+                            let topic = publish.topic.clone();
+                            let payload = publish.payload.clone();
+
+                            // If not a raw binary chunk packet, emit generic message event for MQTTX console
+                            if !topic.contains("/chunk/") {
+                                let payload_str = String::from_utf8_lossy(&payload).to_string();
+                                let msg = MqttGenericMessage {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    topic: topic.clone(),
+                                    payload: payload_str,
+                                    payload_len: payload.len(),
+                                    qos: match publish.qos {
+                                        rumqttc::QoS::AtMostOnce => 0,
+                                        rumqttc::QoS::AtLeastOnce => 1,
+                                        rumqttc::QoS::ExactlyOnce => 2,
+                                    },
+                                    retain: publish.retain,
+                                    timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                                    direction: "in".to_string(),
+                                };
+                                let _ = app_handle.emit("mqtt-message", msg);
+                            }
 
                             Self::handle_incoming_packet(
                                 &app_handle,
@@ -207,8 +226,6 @@ impl MqttManager {
                                 &download_dir_ref,
                                 &client_clone,
                                 &my_client_id,
-                                &channel_for_loop,
-                                &base_topic_for_loop,
                             ).await;
                         }
                     }
@@ -254,6 +271,90 @@ impl MqttManager {
         Ok(())
     }
 
+    pub async fn subscribe_topic(&self, topic: String, qos_val: u8) -> Result<(), String> {
+        let client = {
+            let client_guard = self.client.lock().await;
+            match client_guard.as_ref() {
+                Some(c) => c.clone(),
+                None => return Err("MQTT client not connected".to_string()),
+            }
+        };
+
+        let qos = match qos_val {
+            0 => QoS::AtMostOnce,
+            2 => QoS::ExactlyOnce,
+            _ => QoS::AtLeastOnce,
+        };
+
+        client
+            .subscribe(&topic, qos)
+            .await
+            .map_err(|e| format!("Failed to subscribe to {}: {:?}", topic, e))?;
+
+        Ok(())
+    }
+
+    pub async fn unsubscribe_topic(&self, topic: String) -> Result<(), String> {
+        let client = {
+            let client_guard = self.client.lock().await;
+            match client_guard.as_ref() {
+                Some(c) => c.clone(),
+                None => return Err("MQTT client not connected".to_string()),
+            }
+        };
+
+        client
+            .unsubscribe(&topic)
+            .await
+            .map_err(|e| format!("Failed to unsubscribe from {}: {:?}", topic, e))?;
+
+        Ok(())
+    }
+
+    pub async fn publish_raw_message(
+        &self,
+        app: AppHandle,
+        topic: String,
+        payload: String,
+        qos_val: u8,
+        retain: bool,
+    ) -> Result<(), String> {
+        let client = {
+            let client_guard = self.client.lock().await;
+            match client_guard.as_ref() {
+                Some(c) => c.clone(),
+                None => return Err("MQTT client not connected".to_string()),
+            }
+        };
+
+        let qos = match qos_val {
+            0 => QoS::AtMostOnce,
+            2 => QoS::ExactlyOnce,
+            _ => QoS::AtLeastOnce,
+        };
+
+        let payload_bytes = payload.as_bytes();
+        client
+            .publish(&topic, qos, retain, payload_bytes)
+            .await
+            .map_err(|e| format!("Failed to publish: {:?}", e))?;
+
+        // Emit outgoing message event to frontend
+        let msg = MqttGenericMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            topic: topic.clone(),
+            payload: payload.clone(),
+            payload_len: payload_bytes.len(),
+            qos: qos_val,
+            retain,
+            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+            direction: "out".to_string(),
+        };
+        let _ = app.emit("mqtt-message", msg);
+
+        Ok(())
+    }
+
     pub async fn pause_transfer(&self, transfer_id: &str) {
         let outgoing = self.outgoing_transfers.lock().await;
         if let Some(trans) = outgoing.get(transfer_id) {
@@ -281,6 +382,7 @@ impl MqttManager {
         file_path_str: String,
         chunk_size: usize,
         qos_val: u8,
+        custom_publish_topic: Option<String>,
     ) -> Result<String, String> {
         let path = PathBuf::from(&file_path_str);
         if !path.exists() {
@@ -307,6 +409,21 @@ impl MqttManager {
 
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let channel = self.current_channel.read().await.clone();
+        let base_topic = self.base_topic.read().await.clone();
+
+        // Determine topic prefix (either custom publish topic or standard base_topic/channel)
+        let topic_prefix = match custom_publish_topic {
+            Some(ref t) if !t.trim().is_empty() => {
+                let mut clean = t.trim().trim_end_matches('/').to_string();
+                if clean.ends_with("/meta") {
+                    clean = clean.strip_suffix("/meta").unwrap_or(&clean).to_string();
+                } else if clean.ends_with("/#") {
+                    clean = clean.strip_suffix("/#").unwrap_or(&clean).to_string();
+                }
+                clean
+            }
+            _ => format!("{}/{}", base_topic, channel),
+        };
 
         let client = {
             let client_guard = self.client.lock().await;
@@ -326,7 +443,7 @@ impl MqttManager {
             "transfer-progress",
             TransferProgress {
                 transfer_id: transfer_id.clone(),
-                channel: channel.clone(),
+                channel: topic_prefix.clone(),
                 file_name: file_name.clone(),
                 direction: "send".to_string(),
                 bytes_transferred: 0,
@@ -369,8 +486,7 @@ impl MqttManager {
             timestamp: chrono::Utc::now().timestamp(),
         };
 
-        let base_topic = self.base_topic.read().await.clone();
-        let meta_topic = format!("{}/{}/meta", base_topic, channel);
+        let meta_topic = format!("{}/meta", topic_prefix);
         let meta_payload = serde_json::to_vec(&meta).map_err(|e| e.to_string())?;
 
         let qos = match qos_val {
@@ -401,11 +517,11 @@ impl MqttManager {
         // Spawn chunk streaming task
         let app_handle = app.clone();
         let tid = transfer_id.clone();
-        let ch = channel.clone();
+        let ch = topic_prefix.clone();
         let fname = file_name.clone();
         let hash = sha256_hash.clone();
         let fpath = file_path_str.clone();
-        let base_topic_for_chunks = base_topic.clone();
+        let prefix_for_chunks = topic_prefix.clone();
 
         tokio::spawn(async move {
             let mut file = match File::open(&path).await {
@@ -512,7 +628,7 @@ impl MqttManager {
                     0
                 };
 
-                let chunk_topic = format!("{}/{}/chunk/{}/{}", base_topic_for_chunks, ch, tid, chunk_idx);
+                let chunk_topic = format!("{}/chunk/{}/{}", prefix_for_chunks, tid, chunk_idx);
                 let payload = Bytes::copy_from_slice(&chunk_buf[..read_bytes]);
 
                 if let Err(e) = client.publish(&chunk_topic, qos, false, payload).await {
@@ -574,18 +690,10 @@ impl MqttManager {
         download_dir_ref: &Arc<RwLock<PathBuf>>,
         client: &AsyncClient,
         my_client_id: &str,
-        channel: &str,
-        base_topic: &str,
     ) {
-        let parts: Vec<&str> = topic.split('/').collect();
-        if parts.len() < 3 || parts[0] != base_topic {
-            return;
-        }
-
-        let packet_type = parts[2];
-
-        // 1. Meta packet: dropqtt/{channel}/meta
-        if packet_type == "meta" {
+        // 1. Meta packet: {prefix}/meta
+        if topic.ends_with("/meta") {
+            let topic_prefix = topic.strip_suffix("/meta").unwrap_or(topic).to_string();
             if let Ok(meta) = serde_json::from_slice::<TransferMeta>(&payload) {
                 // Ignore self-sent transfers
                 if meta.sender_id == my_client_id {
@@ -612,6 +720,7 @@ impl MqttManager {
                     meta.transfer_id.clone(),
                     IncomingTransfer {
                         meta: meta.clone(),
+                        topic_prefix: topic_prefix.clone(),
                         temp_path: temp_path.clone(),
                         final_path: final_path.clone(),
                         file,
@@ -627,7 +736,7 @@ impl MqttManager {
                     "transfer-progress",
                     TransferProgress {
                         transfer_id: meta.transfer_id.clone(),
-                        channel: channel.to_string(),
+                        channel: topic_prefix,
                         file_name: meta.file_name.clone(),
                         direction: "receive".to_string(),
                         bytes_transferred: 0,
@@ -645,155 +754,157 @@ impl MqttManager {
             return;
         }
 
-        // 2. Chunk packet: dropqtt/{channel}/chunk/{transfer_id}/{chunk_index}
-        if packet_type == "chunk" && parts.len() >= 5 {
-            let transfer_id = parts[3];
-            let chunk_idx: usize = match parts[4].parse() {
-                Ok(idx) => idx,
-                Err(_) => return,
-            };
+        // 2. Chunk packet: {prefix}/chunk/{transfer_id}/{chunk_index}
+        if let Some((_topic_prefix, chunk_tail)) = topic.split_once("/chunk/") {
+            let parts: Vec<&str> = chunk_tail.split('/').collect();
+            if parts.len() >= 2 {
+                let transfer_id = parts[0];
+                let chunk_idx: usize = match parts[1].parse() {
+                    Ok(idx) => idx,
+                    Err(_) => return,
+                };
 
-            let mut incoming = incoming_map.lock().await;
-            if let Some(trans) = incoming.get_mut(transfer_id) {
-                if !trans.received_chunks.contains(&chunk_idx) {
-                    let offset = (chunk_idx * trans.meta.chunk_size) as u64;
-                    let payload_len = payload.len();
+                let mut incoming = incoming_map.lock().await;
+                if let Some(trans) = incoming.get_mut(transfer_id) {
+                    if !trans.received_chunks.contains(&chunk_idx) {
+                        let offset = (chunk_idx * trans.meta.chunk_size) as u64;
+                        let payload_len = payload.len();
 
-                    {
-                        let mut f = trans.file.lock().await;
-                        let _ = f.seek(SeekFrom::Start(offset)).await;
-                        if let Err(e) = f.write_all(&payload).await {
-                            eprintln!("Failed to write chunk {}: {:?}", chunk_idx, e);
-                            return;
-                        }
-                    }
-
-                    trans.received_chunks.insert(chunk_idx);
-                    trans.bytes_received += payload_len as u64;
-
-                    // Speed calculation
-                    let elapsed = trans.last_update.elapsed().as_secs_f64();
-                    let speed = if elapsed >= 0.2 {
-                        let s = ((trans.bytes_received - trans.last_bytes) as f64) / elapsed;
-                        trans.last_update = Instant::now();
-                        trans.last_bytes = trans.bytes_received;
-                        s
-                    } else {
-                        ((trans.bytes_received - trans.last_bytes) as f64) / elapsed.max(0.001)
-                    };
-
-                    let is_completed = trans.received_chunks.len() >= trans.meta.total_chunks;
-
-                    let _ = app.emit(
-                        "transfer-progress",
-                        TransferProgress {
-                            transfer_id: trans.meta.transfer_id.clone(),
-                            channel: channel.to_string(),
-                            file_name: trans.meta.file_name.clone(),
-                            direction: "receive".to_string(),
-                            bytes_transferred: trans.bytes_received,
-                            total_bytes: trans.meta.file_size,
-                            chunks_transferred: trans.received_chunks.len(),
-                            total_chunks: trans.meta.total_chunks,
-                            speed_bps: speed,
-                            status: if is_completed {
-                                "verifying".to_string()
-                            } else {
-                                "transferring".to_string()
-                            },
-                            error_message: None,
-                            sha256: trans.meta.sha256.clone(),
-                            save_path: Some(trans.final_path.to_string_lossy().to_string()),
-                        },
-                    );
-
-                    // If all chunks received, verify and finalize
-                    if is_completed {
                         {
                             let mut f = trans.file.lock().await;
-                            let _ = f.flush().await;
-                            let _ = f.sync_all().await;
+                            let _ = f.seek(SeekFrom::Start(offset)).await;
+                            if let Err(e) = f.write_all(&payload).await {
+                                eprintln!("Failed to write chunk {}: {:?}", chunk_idx, e);
+                                return;
+                            }
                         }
 
-                        // Compute SHA-256 verification
-                        let temp_path = trans.temp_path.clone();
-                        let final_path = trans.final_path.clone();
-                        let expected_hash = trans.meta.sha256.clone();
-                        let meta_clone = trans.meta.clone();
+                        trans.received_chunks.insert(chunk_idx);
+                        trans.bytes_received += payload_len as u64;
 
-                        let app_handle_inner = app.clone();
-                        let client_inner = client.clone();
-                        let ch_inner = channel.to_string();
-                        let base_topic_inner = base_topic.to_string();
+                        // Speed calculation
+                        let elapsed = trans.last_update.elapsed().as_secs_f64();
+                        let speed = if elapsed >= 0.2 {
+                            let s = ((trans.bytes_received - trans.last_bytes) as f64) / elapsed;
+                            trans.last_update = Instant::now();
+                            trans.last_bytes = trans.bytes_received;
+                            s
+                        } else {
+                            ((trans.bytes_received - trans.last_bytes) as f64) / elapsed.max(0.001)
+                        };
 
-                        tokio::spawn(async move {
-                            let verified = match Self::verify_sha256(&temp_path, &expected_hash).await {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    eprintln!("SHA-256 verification error: {:?}", e);
-                                    false
-                                }
-                            };
+                        let is_completed = trans.received_chunks.len() >= trans.meta.total_chunks;
 
-                            if verified {
-                                // Rename temp to final
-                                if let Err(e) = tokio::fs::rename(&temp_path, &final_path).await {
-                                    eprintln!("Failed to rename temp file: {:?}", e);
-                                }
+                        let _ = app.emit(
+                            "transfer-progress",
+                            TransferProgress {
+                                transfer_id: trans.meta.transfer_id.clone(),
+                                channel: trans.topic_prefix.clone(),
+                                file_name: trans.meta.file_name.clone(),
+                                direction: "receive".to_string(),
+                                bytes_transferred: trans.bytes_received,
+                                total_bytes: trans.meta.file_size,
+                                chunks_transferred: trans.received_chunks.len(),
+                                total_chunks: trans.meta.total_chunks,
+                                speed_bps: speed,
+                                status: if is_completed {
+                                    "verifying".to_string()
+                                } else {
+                                    "transferring".to_string()
+                                },
+                                error_message: None,
+                                sha256: trans.meta.sha256.clone(),
+                                save_path: Some(trans.final_path.to_string_lossy().to_string()),
+                            },
+                        );
 
-                                // Send ACK/COMPLETED control packet
-                                let ctrl = ControlMessage {
-                                    msg_type: "COMPLETED".to_string(),
-                                    transfer_id: meta_clone.transfer_id.clone(),
-                                    chunk_index: None,
-                                    message: Some("Verified and saved successfully".to_string()),
-                                };
-                                let ctrl_topic = format!("{}/{}/ctrl/{}", base_topic_inner, ch_inner, meta_clone.transfer_id);
-                                if let Ok(ctrl_payload) = serde_json::to_vec(&ctrl) {
-                                    let _ = client_inner
-                                        .publish(&ctrl_topic, QoS::AtLeastOnce, false, ctrl_payload)
-                                        .await;
-                                }
-
-                                let _ = app_handle_inner.emit(
-                                    "transfer-progress",
-                                    TransferProgress {
-                                        transfer_id: meta_clone.transfer_id.clone(),
-                                        channel: ch_inner,
-                                        file_name: meta_clone.file_name.clone(),
-                                        direction: "receive".to_string(),
-                                        bytes_transferred: meta_clone.file_size,
-                                        total_bytes: meta_clone.file_size,
-                                        chunks_transferred: meta_clone.total_chunks,
-                                        total_chunks: meta_clone.total_chunks,
-                                        speed_bps: 0.0,
-                                        status: "completed".to_string(),
-                                        error_message: None,
-                                        sha256: meta_clone.sha256.clone(),
-                                        save_path: Some(final_path.to_string_lossy().to_string()),
-                                    },
-                                );
-                            } else {
-                                let _ = app_handle_inner.emit(
-                                    "transfer-progress",
-                                    TransferProgress {
-                                        transfer_id: meta_clone.transfer_id.clone(),
-                                        channel: ch_inner,
-                                        file_name: meta_clone.file_name.clone(),
-                                        direction: "receive".to_string(),
-                                        bytes_transferred: meta_clone.file_size,
-                                        total_bytes: meta_clone.file_size,
-                                        chunks_transferred: meta_clone.total_chunks,
-                                        total_chunks: meta_clone.total_chunks,
-                                        speed_bps: 0.0,
-                                        status: "failed".to_string(),
-                                        error_message: Some("SHA-256 integrity check failed!".to_string()),
-                                        sha256: meta_clone.sha256.clone(),
-                                        save_path: Some(temp_path.to_string_lossy().to_string()),
-                                    },
-                                );
+                        // If all chunks received, verify and finalize
+                        if is_completed {
+                            {
+                                let mut f = trans.file.lock().await;
+                                let _ = f.flush().await;
+                                let _ = f.sync_all().await;
                             }
-                        });
+
+                            // Compute SHA-256 verification
+                            let temp_path = trans.temp_path.clone();
+                            let final_path = trans.final_path.clone();
+                            let expected_hash = trans.meta.sha256.clone();
+                            let meta_clone = trans.meta.clone();
+                            let topic_prefix_clone = trans.topic_prefix.clone();
+
+                            let app_handle_inner = app.clone();
+                            let client_inner = client.clone();
+
+                            tokio::spawn(async move {
+                                let verified = match Self::verify_sha256(&temp_path, &expected_hash).await {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        eprintln!("SHA-256 verification error: {:?}", e);
+                                        false
+                                    }
+                                };
+
+                                if verified {
+                                    // Rename temp to final
+                                    if let Err(e) = tokio::fs::rename(&temp_path, &final_path).await {
+                                        eprintln!("Failed to rename temp file: {:?}", e);
+                                    }
+
+                                    // Send ACK/COMPLETED control packet
+                                    let ctrl = ControlMessage {
+                                        msg_type: "COMPLETED".to_string(),
+                                        transfer_id: meta_clone.transfer_id.clone(),
+                                        chunk_index: None,
+                                        message: Some("Verified and saved successfully".to_string()),
+                                    };
+                                    let ctrl_topic = format!("{}/ctrl/{}", topic_prefix_clone, meta_clone.transfer_id);
+                                    if let Ok(ctrl_payload) = serde_json::to_vec(&ctrl) {
+                                        let _ = client_inner
+                                            .publish(&ctrl_topic, QoS::AtLeastOnce, false, ctrl_payload)
+                                            .await;
+                                    }
+
+                                    let _ = app_handle_inner.emit(
+                                        "transfer-progress",
+                                        TransferProgress {
+                                            transfer_id: meta_clone.transfer_id.clone(),
+                                            channel: topic_prefix_clone,
+                                            file_name: meta_clone.file_name.clone(),
+                                            direction: "receive".to_string(),
+                                            bytes_transferred: meta_clone.file_size,
+                                            total_bytes: meta_clone.file_size,
+                                            chunks_transferred: meta_clone.total_chunks,
+                                            total_chunks: meta_clone.total_chunks,
+                                            speed_bps: 0.0,
+                                            status: "completed".to_string(),
+                                            error_message: None,
+                                            sha256: meta_clone.sha256.clone(),
+                                            save_path: Some(final_path.to_string_lossy().to_string()),
+                                        },
+                                    );
+                                } else {
+                                    let _ = app_handle_inner.emit(
+                                        "transfer-progress",
+                                        TransferProgress {
+                                            transfer_id: meta_clone.transfer_id.clone(),
+                                            channel: topic_prefix_clone,
+                                            file_name: meta_clone.file_name.clone(),
+                                            direction: "receive".to_string(),
+                                            bytes_transferred: meta_clone.file_size,
+                                            total_bytes: meta_clone.file_size,
+                                            chunks_transferred: meta_clone.total_chunks,
+                                            total_chunks: meta_clone.total_chunks,
+                                            speed_bps: 0.0,
+                                            status: "failed".to_string(),
+                                            error_message: Some("SHA-256 integrity check failed!".to_string()),
+                                            sha256: meta_clone.sha256.clone(),
+                                            save_path: Some(temp_path.to_string_lossy().to_string()),
+                                        },
+                                    );
+                                }
+                            });
+                        }
                     }
                 }
             }

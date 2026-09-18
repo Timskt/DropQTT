@@ -82,6 +82,27 @@ pub struct ConnectionStatus {
     pub client_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MqttGenericMessage {
+    pub id: String,
+    pub topic: String,
+    pub payload: String,
+    pub payload_len: usize,
+    pub qos: u8,
+    pub retain: bool,
+    pub timestamp: String,
+    pub direction: String, // "in" | "out"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicSubscription {
+    pub topic: String,
+    pub qos: u8,
+    pub color: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

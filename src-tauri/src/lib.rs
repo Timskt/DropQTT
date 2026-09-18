@@ -65,10 +65,11 @@ async fn start_send_file(
     file_path: String,
     chunk_size: usize,
     qos: u8,
+    custom_publish_topic: Option<String>,
 ) -> Result<String, String> {
     state
         .mqtt
-        .send_file(app, file_path, chunk_size, qos)
+        .send_file(app, file_path, chunk_size, qos, custom_publish_topic)
         .await
 }
 
@@ -88,6 +89,35 @@ async fn resume_transfer(state: State<'_, AppState>, transfer_id: String) -> Res
 async fn cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
     state.mqtt.cancel_transfer(&transfer_id).await;
     Ok(())
+}
+
+#[tauri::command]
+async fn subscribe_topic(
+    state: State<'_, AppState>,
+    topic: String,
+    qos: u8,
+) -> Result<(), String> {
+    state.mqtt.subscribe_topic(topic, qos).await
+}
+
+#[tauri::command]
+async fn unsubscribe_topic(
+    state: State<'_, AppState>,
+    topic: String,
+) -> Result<(), String> {
+    state.mqtt.unsubscribe_topic(topic).await
+}
+
+#[tauri::command]
+async fn publish_message(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    topic: String,
+    payload: String,
+    qos: u8,
+    retain: bool,
+) -> Result<(), String> {
+    state.mqtt.publish_raw_message(app, topic, payload, qos, retain).await
 }
 
 #[tauri::command]
@@ -135,6 +165,9 @@ pub fn run() {
             pause_transfer,
             resume_transfer,
             cancel_transfer,
+            subscribe_topic,
+            unsubscribe_topic,
+            publish_message,
             reveal_file
         ])
         .run(tauri::generate_context!())

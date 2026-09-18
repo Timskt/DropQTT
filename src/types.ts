@@ -40,6 +40,36 @@ export interface TransferProgress {
   savePath?: string;
 }
 
+export interface MqttGenericMessage {
+  id: string;
+  topic: string;
+  payload: string;
+  payloadLen: number;
+  qos: number;
+  retain: boolean;
+  timestamp: string;
+  direction: 'in' | 'out';
+}
+
+export interface TopicSubscription {
+  topic: string;
+  qos: number;
+  color?: string;
+  createdAt?: string;
+}
+
+export interface BatchFileItem {
+  id: string;
+  path: string;
+  name: string;
+  size: number;
+  status: 'pending' | 'sending' | 'completed' | 'failed';
+  progress?: number;
+  speedBps?: number;
+  transferId?: string;
+  error?: string;
+}
+
 export const BROKER_PRESETS: { name: string; host: string; port: number; useTls: boolean; baseTopic?: string }[] = [
   { name: 'EMQX Public', host: 'broker.emqx.io', port: 1883, useTls: false, baseTopic: 'dropqtt' },
   { name: 'HiveMQ Public', host: 'broker.hivemq.com', port: 1883, useTls: false, baseTopic: 'dropqtt' },
