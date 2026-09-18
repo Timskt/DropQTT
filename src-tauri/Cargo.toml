@@ -1,0 +1,31 @@
+[package]
+name = "dropqtt"
+version = "0.1.0"
+description = "High-speed resilient cross-platform file transfer over MQTT"
+authors = ["Timskt"]
+edition = "2021"
+
+[lib]
+name = "dropqtt_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = [] }
+tauri-plugin-opener = "2.0"
+tauri-plugin-dialog = "2.0"
+tauri-plugin-fs = "2.0"
+rumqttc = "0.24"
+tokio = { version = "1.38", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1.10", features = ["v4", "fast-rng"] }
+bytes = "1.7"
+base64 = "0.22"
+dirs = "5.0"
+thiserror = "1.0"
+chrono = "0.4"

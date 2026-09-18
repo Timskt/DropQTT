@@ -1,0 +1,27 @@
+# Node & Frontend
+node_modules
+dist
+dist-ssr
+*.local
+
+# Rust & Cargo
+/src-tauri/target
+/src-tauri/gen/schemas
+
+# Tauri
+/src-tauri/WixTools
+*.app
+*.dmg
+*.deb
+*.AppImage
+*.msi
+*.exe
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json
+.idea
