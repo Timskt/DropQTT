@@ -1,216 +1,495 @@
-import React, { useState } from 'react';
-import { Search, Trash2, Copy, Check, ArrowDownRight, ArrowUpRight, Code2, AlignLeft, Binary } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Search, Trash2, Copy, Check, ArrowDownRight, ArrowUpRight,
+  Code2, AlignLeft, Binary, Braces, Box, Lock, FileText, Globe,
+  Pause, Play, Download, Eraser, Pin,
+} from 'lucide-react';
 import { MqttGenericMessage } from '../../types';
 import { Translations } from '../../i18n';
+import {
+  base64ToUint8, cborToDisplayJson, decodeCbor,
+  uint8ToBase64, uint8ToHexDump, uint8ToUtf8,
+} from '../../utils/cbor';
+import { ExportFormat, exportMessages } from '../../utils/exportMessages';
+import { HtmlPreview, MarkdownView } from './RichText';
 
 interface MessageStreamProps {
   messages: MqttGenericMessage[];
   onClearMessages: () => void;
+  /** Publish an empty retained message on each topic to wipe broker retain state */
+  onClearRetained: (topics: string[]) => Promise<void>;
+  paused: boolean;
+  pendingCount: number;
+  onTogglePaused: () => void;
   t: Translations;
 }
 
-type ViewMode = 'json' | 'raw' | 'hex';
+type ViewMode = 'auto' | 'json' | 'text' | 'md' | 'html' | 'cbor' | 'base64' | 'hex';
 type DirectionFilter = 'all' | 'in' | 'out';
+
+const VIEW_MODES: { id: ViewMode; label: string; titleKey?: keyof Translations; icon: React.ReactNode }[] = [
+  { id: 'auto', label: 'Auto', icon: <Box className="w-3 h-3" /> },
+  { id: 'json', label: 'JSON', titleKey: 'formatJson', icon: <Braces className="w-3 h-3" /> },
+  { id: 'text', label: 'Text', titleKey: 'formatRaw', icon: <AlignLeft className="w-3 h-3" /> },
+  { id: 'md', label: 'MD', titleKey: 'mdView', icon: <FileText className="w-3 h-3" /> },
+  { id: 'html', label: 'HTML', titleKey: 'htmlView', icon: <Globe className="w-3 h-3" /> },
+  { id: 'cbor', label: 'CBOR', icon: <Code2 className="w-3 h-3" /> },
+  { id: 'base64', label: 'B64', icon: <Lock className="w-3 h-3" /> },
+  { id: 'hex', label: 'Hex', titleKey: 'formatHex', icon: <Binary className="w-3 h-3" /> },
+];
+
+/** Resolve effective view + decoded text for one message (runs inside memoized rows) */
+function resolveView(msg: MqttGenericMessage, mode: ViewMode): { effective: ViewMode; display: string } {
+  const bytes = base64ToUint8(msg.payloadBase64);
+
+  let effective = mode;
+  if (mode === 'auto') {
+    const ct = (msg.contentType || '').toLowerCase();
+    if (ct.includes('cbor')) effective = 'cbor';
+    else if (ct.includes('markdown')) effective = 'md';
+    else if (ct.includes('html')) effective = 'html';
+    else if (ct.includes('json')) effective = 'json';
+    else if (ct.includes('octet-stream')) effective = 'hex';
+    else if (looksLikeJson(bytes)) effective = 'json';
+    else if (looksLikeText(bytes)) effective = 'text';
+    else effective = 'hex';
+  }
+
+  switch (effective) {
+    case 'json': {
+      const text = uint8ToUtf8(bytes);
+      try {
+        return { effective, display: JSON.stringify(JSON.parse(text), null, 2) };
+      } catch {
+        return { effective: 'text', display: text };
+      }
+    }
+    case 'cbor':
+      try {
+        return { effective, display: cborToDisplayJson(decodeCbor(bytes)) };
+      } catch {
+        return { effective: 'base64', display: uint8ToBase64(bytes) };
+      }
+    case 'base64':
+      return { effective, display: uint8ToBase64(bytes) };
+    case 'hex':
+      return { effective, display: uint8ToHexDump(bytes) };
+    default:
+      // text / md / html all show their UTF-8 source in rich mode
+      return { effective, display: uint8ToUtf8(bytes) };
+  }
+}
+
+function looksLikeText(bytes: Uint8Array): boolean {
+  for (const b of bytes) {
+    if (b < 0x09 || (b > 0x0d && b < 0x20)) return false;
+  }
+  return true;
+}
+
+function looksLikeJson(bytes: Uint8Array): boolean {
+  if (bytes.length < 2) return false;
+  const first = bytes[0];
+  if (first !== 0x7b /* { */ && first !== 0x5b /* [ */) return false;
+  try {
+    JSON.parse(uint8ToUtf8(bytes));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface MessageRowProps {
+  msg: MqttGenericMessage;
+  viewMode: ViewMode;
+  copied: boolean;
+  onCopy: (id: string, text: string) => void;
+}
+
+const MessageRow = React.memo(function MessageRow({ msg, viewMode, copied, onCopy }: MessageRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const isOut = msg.direction === 'out';
+
+  const { effective, display } = useMemo(() => resolveView(msg, viewMode), [msg, viewMode]);
+  const rich = effective === 'md' || effective === 'html';
+  const overflow = display.length > 600 || display.split('\n').length > 12;
+
+  return (
+    <div className="pt-2.5 text-xs group">
+      <div className="flex items-center justify-between mb-1.5 gap-2">
+        <div className="flex items-center gap-2 truncate min-w-0">
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex items-center gap-0.5 shrink-0 ${
+              isOut
+                ? 'bg-cyan-950/60 text-cyan-300 border-cyan-800'
+                : 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
+            }`}
+          >
+            {isOut ? <ArrowUpRight className="w-2.5 h-2.5" /> : <ArrowDownRight className="w-2.5 h-2.5" />}
+            <span>{isOut ? 'OUT' : 'IN'}</span>
+          </span>
+
+          <span className="font-semibold truncate inset-box px-2 py-0.5" style={{ color: 'var(--text-primary)' }}>
+            {msg.topic}
+          </span>
+
+          <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>QoS {msg.qos}</span>
+          {msg.retain && (
+            <span className="text-[10px] px-1 py-0.5 bg-amber-950/60 border border-amber-800 text-amber-300 rounded shrink-0">
+              RETAIN
+            </span>
+          )}
+          {msg.contentType && (
+            <span className="text-[10px] px-1 py-0.5 bg-violet-950/60 border border-violet-800 text-violet-300 rounded shrink-0 hidden lg:inline">
+              {msg.contentType}
+            </span>
+          )}
+          {viewMode === 'auto' && (
+            <span className="text-[10px] shrink-0 hidden md:inline" style={{ color: 'var(--text-muted)' }}>{effective}</span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+          {msg.truncated && (
+            <span style={{ color: 'var(--danger)' }} title="Payload truncated in feed">
+              …
+            </span>
+          )}
+          <span>{msg.payloadLen} B</span>
+          <span>{msg.timestamp}</span>
+          <button
+            onClick={() => onCopy(msg.id, display)}
+            className="transition hover:opacity-100 opacity-60"
+            style={{ color: 'var(--accent)' }}
+          >
+            {copied ? <Check className="w-3 h-3" style={{ color: 'var(--success)' }} /> : <Copy className="w-3 h-3" />}
+          </button>
+        </div>
+      </div>
+
+      {msg.userProperties && msg.userProperties.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {msg.userProperties.map(([k, v]) => (
+            <span
+              key={k}
+              className="text-[10px] px-1.5 py-0.5 rounded inset-box font-mono"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {k}: {v}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {rich ? (
+        <div className="rounded-md border p-3 max-h-[24rem] overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)' }}>
+          {effective === 'md' ? <MarkdownView text={display} /> : <HtmlPreview source={display} />}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => overflow && setExpanded((x) => !x)}
+          className={`w-full text-left rounded-md border p-2.5 overflow-x-auto text-[12px] font-mono whitespace-pre leading-relaxed ${
+            expanded || !overflow ? '' : 'max-h-[12rem] overflow-hidden'
+          } ${overflow ? 'cursor-pointer' : 'cursor-default'}`}
+          style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)', color: '#d3dae6' }}
+        >
+          {display}
+          {overflow && !expanded && (
+            <span className="block text-[11px] mt-1 opacity-60" style={{ color: 'var(--accent)' }}>⋯ click to expand</span>
+          )}
+        </button>
+      )}
+    </div>
+  );
+}, (a, b) => a.msg === b.msg && a.viewMode === b.viewMode && a.copied === b.copied);
 
 export const MessageStream: React.FC<MessageStreamProps> = ({
   messages,
   onClearMessages,
+  onClearRetained,
+  paused,
+  pendingCount,
+  onTogglePaused,
   t,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
-  const [viewMode, setViewMode] = useState<ViewMode>('json');
+  const [viewMode, setViewMode] = useState<ViewMode>('auto');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
+  const [exportNote, setExportNote] = useState<string | null>(null);
+  const [retainOpen, setRetainOpen] = useState(false);
+  const [clearingRetain, setClearingRetain] = useState(false);
+  const retainRef = useRef<HTMLDivElement>(null);
 
-  const filteredMessages = messages.filter((msg) => {
-    if (directionFilter !== 'all' && msg.direction !== directionFilter) {
-      return false;
+  // Unique topics that currently hold a retained message (inbound or echoed outbound)
+  const retainedTopics = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of messages) if (m.retain) set.add(m.topic);
+    return [...set].sort();
+  }, [messages]);
+
+  // Close the retained popover on outside click
+  useEffect(() => {
+    if (!retainOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (retainRef.current && !retainRef.current.contains(e.target as Node)) setRetainOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [retainOpen]);
+
+  const handleExport = useCallback(async (format: ExportFormat) => {
+    if (messages.length === 0) return;
+    setExporting(format);
+    try {
+      const saved = await exportMessages(messages, format);
+      if (saved) {
+        setExportNote(t.exportDone.replace('{count}', String(messages.length)));
+        setTimeout(() => setExportNote(null), 2500);
+      }
+    } catch (e) {
+      setExportNote(String(e));
+      setTimeout(() => setExportNote(null), 3500);
+    } finally {
+      setExporting(null);
     }
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    return msg.topic.toLowerCase().includes(term) || msg.payload.toLowerCase().includes(term);
-  });
+  }, [messages, t]);
 
-  const handleCopy = (id: string, text: string) => {
+  const handleClearRetained = useCallback(async () => {
+    if (retainedTopics.length === 0) return;
+    setClearingRetain(true);
+    try {
+      await onClearRetained(retainedTopics);
+      setRetainOpen(false);
+    } finally {
+      setClearingRetain(false);
+    }
+  }, [retainedTopics, onClearRetained]);
+
+  const handleCopy = useCallback((id: string, text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 1500);
-  };
+  }, []);
 
-  const formatPayload = (raw: string, mode: ViewMode) => {
-    if (mode === 'json') {
-      try {
-        const parsed = JSON.parse(raw);
-        return JSON.stringify(parsed, null, 2);
-      } catch {
-        return raw;
-      }
-    }
-    if (mode === 'hex') {
-      // Hex representation of string bytes
-      let hex = '';
-      for (let i = 0; i < raw.length; i++) {
-        const h = raw.charCodeAt(i).toString(16).padStart(2, '0');
-        hex += h + ' ';
-        if ((i + 1) % 16 === 0) hex += '\n';
-      }
-      return hex.trim();
-    }
-    return raw;
-  };
+  const filteredMessages = useMemo(() => {
+    return messages.filter((msg) => {
+      if (directionFilter !== 'all' && msg.direction !== directionFilter) return false;
+      if (!searchTerm.trim()) return true;
+      const term = searchTerm.toLowerCase();
+      return (
+        msg.topic.toLowerCase().includes(term) ||
+        msg.payload.toLowerCase().includes(term) ||
+        (msg.contentType ?? '').toLowerCase().includes(term)
+      );
+    });
+  }, [messages, searchTerm, directionFilter]);
 
   return (
-    <div className="bg-slate-900/80 border border-slate-800 rounded font-mono flex flex-col h-[400px] overflow-hidden">
+    <div className="panel flex flex-col h-full min-h-[260px] max-h-[560px] overflow-hidden">
       {/* Toolbar */}
-      <div className="p-2.5 bg-slate-950/80 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center space-x-2 flex-1 min-w-[200px]">
+      <div className="p-3 border-b flex flex-wrap items-center justify-between gap-2 text-xs" style={{ background: 'var(--bg-inset)', borderColor: 'var(--border-panel)' }}>
+        <div className="flex items-center gap-2 flex-1 min-w-[200px]">
           <div className="relative flex-1">
-            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder={t.filterTopic}
-              className="w-full bg-slate-900 border border-slate-700/80 rounded pl-8 pr-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+              className="field-input w-full pl-8"
             />
           </div>
 
-          {/* Direction Filter */}
-          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 rounded p-0.5">
-            <button
-              onClick={() => setDirectionFilter('all')}
-              className={`px-2 py-0.5 rounded text-[10px] transition ${
-                directionFilter === 'all' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {t.allDirections}
-            </button>
-            <button
-              onClick={() => setDirectionFilter('in')}
-              className={`px-2 py-0.5 rounded text-[10px] transition ${
-                directionFilter === 'in' ? 'bg-emerald-950 text-emerald-300 font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              IN
-            </button>
-            <button
-              onClick={() => setDirectionFilter('out')}
-              className={`px-2 py-0.5 rounded text-[10px] transition ${
-                directionFilter === 'out' ? 'bg-cyan-950 text-cyan-300 font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              OUT
-            </button>
+          <div className="seg-box">
+            {(['all', 'in', 'out'] as DirectionFilter[]).map((d) => (
+              <button
+                key={d}
+                onClick={() => setDirectionFilter(d)}
+                className={`px-2 py-1 rounded text-[11px] transition ${
+                  directionFilter === d ? 'font-semibold' : 'opacity-60 hover:opacity-100'
+                }`}
+                style={
+                  directionFilter === d
+                    ? d === 'in'
+                      ? { background: 'color-mix(in srgb, var(--success) 18%, transparent)', color: 'var(--success)' }
+                      : d === 'out'
+                        ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)', color: 'var(--accent)' }
+                        : { background: 'var(--bg-panel-solid)', color: 'var(--text-primary)' }
+                    : { color: 'var(--text-secondary)' }
+                }
+              >
+                {d === 'all' ? t.allDirections : d.toUpperCase()}
+              </button>
+            ))}
           </div>
+
+          {/* Pause / resume feed with pending badge */}
+          <button
+            onClick={onTogglePaused}
+            title={paused ? t.resumeFeed : t.pauseFeed}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded text-[11px] border transition ${
+              paused ? 'bg-amber-950/60 border-amber-800 text-amber-300 font-semibold' : ''
+            }`}
+            style={
+              paused
+                ? undefined
+                : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-secondary)' }
+            }
+          >
+            {paused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+            {paused ? (
+              <span>{pendingCount > 0 ? `+${pendingCount}` : t.resumeFeed}</span>
+            ) : (
+              <span>{t.pauseFeed}</span>
+            )}
+          </button>
         </div>
 
-        {/* View Mode & Clear */}
-        <div className="flex items-center space-x-2">
-          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 rounded p-0.5">
+        <div className="flex items-center gap-2">
+          <div className="seg-box">
+            {VIEW_MODES.map((vm) => (
+              <button
+                key={vm.id}
+                onClick={() => setViewMode(vm.id)}
+                title={vm.titleKey ? t[vm.titleKey] : vm.label}
+                className={`px-2 py-1 rounded text-[11px] flex items-center gap-1 transition ${
+                  viewMode === vm.id ? 'font-semibold' : 'opacity-60 hover:opacity-100'
+                }`}
+                style={
+                  viewMode === vm.id
+                    ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)', color: 'var(--accent)' }
+                    : { color: 'var(--text-secondary)' }
+                }
+              >
+                {vm.icon}
+                <span>{vm.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Export JSON / CSV */}
+          <div className="seg-box">
             <button
-              onClick={() => setViewMode('json')}
-              title={t.formatJson}
-              className={`px-2 py-0.5 rounded text-[10px] flex items-center space-x-1 transition ${
-                viewMode === 'json' ? 'bg-cyan-950 text-cyan-300 font-semibold' : 'text-slate-400'
-              }`}
+              onClick={() => handleExport('json')}
+              disabled={messages.length === 0 || exporting !== null}
+              title={t.exportJsonTitle}
+              className="px-2 py-1 rounded text-[11px] flex items-center gap-1 transition hover:opacity-100 opacity-60 disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{ color: 'var(--text-secondary)' }}
             >
-              <Code2 className="w-3 h-3" />
+              {exporting === 'json' ? <Check className="w-3 h-3 animate-pulse" /> : <Download className="w-3 h-3" />}
               <span>JSON</span>
             </button>
             <button
-              onClick={() => setViewMode('raw')}
-              title={t.formatRaw}
-              className={`px-2 py-0.5 rounded text-[10px] flex items-center space-x-1 transition ${
-                viewMode === 'raw' ? 'bg-cyan-950 text-cyan-300 font-semibold' : 'text-slate-400'
-              }`}
+              onClick={() => handleExport('csv')}
+              disabled={messages.length === 0 || exporting !== null}
+              title={t.exportCsvTitle}
+              className="px-2 py-1 rounded text-[11px] flex items-center gap-1 transition hover:opacity-100 opacity-60 disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{ color: 'var(--text-secondary)' }}
             >
-              <AlignLeft className="w-3 h-3" />
-              <span>RAW</span>
+              {exporting === 'csv' ? <Check className="w-3 h-3 animate-pulse" /> : <Download className="w-3 h-3" />}
+              <span>CSV</span>
             </button>
+          </div>
+
+          {/* Retained message clearer */}
+          <div className="relative" ref={retainRef}>
             <button
-              onClick={() => setViewMode('hex')}
-              title={t.formatHex}
-              className={`px-2 py-0.5 rounded text-[10px] flex items-center space-x-1 transition ${
-                viewMode === 'hex' ? 'bg-cyan-950 text-cyan-300 font-semibold' : 'text-slate-400'
+              onClick={() => setRetainOpen((x) => !x)}
+              disabled={retainedTopics.length === 0}
+              title={t.clearRetainedTitle}
+              className={`relative p-1.5 rounded border transition ${
+                retainedTopics.length > 0
+                  ? 'bg-amber-950/50 border-amber-800 text-amber-300 hover:border-amber-600'
+                  : 'cursor-not-allowed opacity-40'
               }`}
+              style={
+                retainedTopics.length > 0
+                  ? undefined
+                  : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }
+              }
             >
-              <Binary className="w-3 h-3" />
-              <span>HEX</span>
+              <Pin className="w-3.5 h-3.5" />
+              {retainedTopics.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-slate-950 text-[9px] font-bold flex items-center justify-center">
+                  {retainedTopics.length}
+                </span>
+              )}
             </button>
+            {retainOpen && retainedTopics.length > 0 && (
+              <div className="absolute right-0 top-full mt-1.5 z-20 w-72 rounded-md border shadow-xl p-2.5 animate-fade-in" style={{ background: 'var(--bg-panel-solid)', borderColor: 'var(--border-panel)' }}>
+                <div className="text-[11px] mb-1.5 px-1" style={{ color: 'var(--text-secondary)' }}>{t.retainedOnTopics}</div>
+                <div className="max-h-40 overflow-y-auto space-y-0.5 mb-2">
+                  {retainedTopics.map((tp) => (
+                    <div key={tp} className="text-[11px] font-mono text-amber-200/90 bg-amber-950/30 border border-amber-900/40 rounded px-1.5 py-0.5 truncate">
+                      {tp}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={handleClearRetained}
+                  disabled={clearingRetain}
+                  className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded bg-amber-600/90 hover:bg-amber-500 text-slate-950 text-[11px] font-bold disabled:opacity-50 transition"
+                >
+                  <Eraser className="w-3 h-3" />
+                  <span>{clearingRetain ? t.clearingRetained : t.clearAllRetained.replace('{count}', String(retainedTopics.length))}</span>
+                </button>
+                <div className="text-[10px] mt-1.5 px-1" style={{ color: 'var(--text-muted)' }}>{t.retainClearNote}</div>
+              </div>
+            )}
           </div>
 
           <button
             onClick={onClearMessages}
             title={t.clearMessages}
-            className="p-1 rounded bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-rose-400 transition"
+            className="p-2 rounded border transition hover:opacity-100 opacity-60"
+            style={{ background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--danger)' }}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Message Feed List */}
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60 p-2 space-y-2">
+      {/* Export feedback note */}
+      {exportNote && (
+        <div className="px-3 py-1 bg-cyan-950/40 border-b border-cyan-900/50 text-[10px] text-cyan-300 animate-fade-in">
+          {exportNote}
+        </div>
+      )}
+
+      {/* Frozen-feed hint bar */}
+      {paused && (
+        <div className="px-3 py-1 bg-amber-950/40 border-b border-amber-900/50 text-[10px] text-amber-300 flex items-center justify-between">
+          <span>{t.feedPaused}</span>
+          {pendingCount > 0 && (
+            <button onClick={onTogglePaused} className="font-semibold hover:text-amber-100 underline">
+              {t.flushPending.replace('{count}', String(pendingCount))}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Message feed */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
         {filteredMessages.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-slate-500 text-xs italic">
-            {messages.length === 0 ? 'No MQTT messages recorded yet.' : 'No messages matching current search filter.'}
+          <div className="h-full flex items-center justify-center text-xs italic" style={{ color: 'var(--text-muted)' }}>
+            {messages.length === 0 ? t.noMessages : t.noMessagesFiltered}
           </div>
         ) : (
-          filteredMessages.map((msg) => {
-            const isOut = msg.direction === 'out';
-            const formatted = formatPayload(msg.payload, viewMode);
-            const isCopied = copiedId === msg.id;
-
-            return (
-              <div key={msg.id} className="pt-2 text-xs group">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center space-x-2 truncate max-w-[80%]">
-                    {/* Direction Chip */}
-                    <span
-                      className={`px-1.5 py-0.2 rounded text-[9px] font-bold border flex items-center space-x-0.5 ${
-                        isOut
-                          ? 'bg-cyan-950/60 text-cyan-300 border-cyan-800'
-                          : 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
-                      }`}
-                    >
-                      {isOut ? <ArrowUpRight className="w-2.5 h-2.5" /> : <ArrowDownRight className="w-2.5 h-2.5" />}
-                      <span>{isOut ? 'OUT' : 'IN'}</span>
-                    </span>
-
-                    {/* Topic Badge */}
-                    <span className="font-semibold text-slate-200 truncate bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                      {msg.topic}
-                    </span>
-
-                    {/* QoS & Retain */}
-                    <span className="text-[10px] text-slate-500">QoS {msg.qos}</span>
-                    {msg.retain && (
-                      <span className="text-[9px] px-1 py-0.2 bg-amber-950/60 border border-amber-800 text-amber-300 rounded">
-                        RETAIN
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center space-x-2 text-[10px] text-slate-500">
-                    <span>{msg.payloadLen} B</span>
-                    <span>{msg.timestamp}</span>
-                    <button
-                      onClick={() => handleCopy(msg.id, msg.payload)}
-                      title={t.copy}
-                      className="text-slate-500 hover:text-cyan-400 transition"
-                    >
-                      {isCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Payload Body */}
-                <div className="bg-slate-950/90 rounded p-2 border border-slate-800/80 overflow-x-auto text-[11px] font-mono text-slate-300 whitespace-pre leading-relaxed">
-                  {formatted}
-                </div>
-              </div>
-            );
-          })
+          filteredMessages.map((msg) => (
+            <MessageRow
+              key={msg.id}
+              msg={msg}
+              viewMode={viewMode}
+              copied={copiedId === msg.id}
+              onCopy={handleCopy}
+            />
+          ))
+        )}
+        {filteredMessages.some((m) => m.truncated) && (
+          <div className="text-[11px] text-center pb-1" style={{ color: 'var(--text-muted)' }}>{t.truncatedNote}</div>
         )}
       </div>
     </div>

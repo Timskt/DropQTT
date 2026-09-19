@@ -6,6 +6,7 @@ export interface Translations {
   channel: string;
   connected: string;
   disconnected: string;
+  disconnect: string;
   connect: string;
   saveAndConnect: string;
   cancel: string;
@@ -135,6 +136,49 @@ export interface Translations {
   copied: string;
   publishSuccess: string;
   activeSubs: string;
+  protocolVersion: string;
+  mqttV311: string;
+  mqttV5: string;
+  cleanSession: string;
+  cleanSessionDesc: string;
+  autoAcceptFiles: string;
+  autoAcceptDesc: string;
+  awaitingApproval: string;
+  approve: string;
+  reject: string;
+  sent: string;
+  delivered: string;
+  clearFinished: string;
+  cancelBatch: string;
+  payloadFormat: string;
+  v5Properties: string;
+  contentTypeLabel: string;
+  messageExpiryLabel: string;
+  addProperty: string;
+  propertyKey: string;
+  propertyValue: string;
+  noMessages: string;
+  noMessagesFiltered: string;
+  truncatedNote: string;
+  mdView: string;
+  htmlView: string;
+  pauseFeed: string;
+  resumeFeed: string;
+  feedPaused: string;
+  flushPending: string;
+  preview: string;
+  sendHint: string;
+  hitTotal: string;
+  hitCount: string;
+  resetStats: string;
+  exportJsonTitle: string;
+  exportCsvTitle: string;
+  exportDone: string;
+  clearRetainedTitle: string;
+  retainedOnTopics: string;
+  clearAllRetained: string;
+  clearingRetained: string;
+  retainClearNote: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -144,6 +188,7 @@ export const translations: Record<Language, Translations> = {
     channel: '传输房间频道',
     connected: '已连接',
     disconnected: '未连接',
+    disconnect: '断开连接',
     connect: '连接',
     saveAndConnect: '保存并连接',
     cancel: '取消',
@@ -273,6 +318,49 @@ export const translations: Record<Language, Translations> = {
     copied: '已复制',
     publishSuccess: '报文已成功发布',
     activeSubs: '活跃订阅',
+    protocolVersion: 'MQTT 协议版本',
+    mqttV311: 'MQTT v3.1.1',
+    mqttV5: 'MQTT v5.0',
+    cleanSession: 'Clean Session / Clean Start',
+    cleanSessionDesc: '关闭后 Broker 将保留会话与订阅（断线重连自动恢复）',
+    autoAcceptFiles: '自动接收文件',
+    autoAcceptDesc: '关闭后收到的文件需手动点击确认才会落盘保存',
+    awaitingApproval: '待确认接收',
+    approve: '接收保存',
+    reject: '拒绝',
+    sent: '已发送·待对端确认',
+    delivered: '对端已确认接收',
+    clearFinished: '清除已结束',
+    cancelBatch: '终止批次',
+    payloadFormat: '编码格式',
+    v5Properties: 'MQTT v5 报文属性',
+    contentTypeLabel: 'Content-Type',
+    messageExpiryLabel: '过期时间 (秒)',
+    addProperty: '添加属性',
+    propertyKey: '键',
+    propertyValue: '值',
+    noMessages: '暂无 MQTT 报文记录',
+    noMessagesFiltered: '没有匹配当前筛选的报文',
+    truncatedNote: '载荷过大，已截断显示',
+    mdView: 'Markdown 渲染视图',
+    htmlView: 'HTML 沙箱预览（脚本已禁用）',
+    pauseFeed: '暂停接收',
+    resumeFeed: '继续接收',
+    feedPaused: '消息流已冻结 — 新报文暂存缓冲区',
+    flushPending: '释放 {count} 条缓存消息',
+    preview: '预览',
+    sendHint: '⌘/Ctrl + Enter 发送',
+    hitTotal: '共 {count} 次命中',
+    hitCount: '该过滤器匹配到的入站消息数',
+    resetStats: '重置统计',
+    exportJsonTitle: '导出消息为 JSON',
+    exportCsvTitle: '导出消息为 CSV',
+    exportDone: '已导出 {count} 条消息',
+    clearRetainedTitle: '保留消息管理',
+    retainedOnTopics: '以下主题存在保留消息',
+    clearAllRetained: '清除 {count} 个主题的保留消息',
+    clearingRetained: '清除中…',
+    retainClearNote: '向每个主题发布空载荷（retain=1）以清除 broker 保留状态',
   },
   'en': {
     appName: 'DropQTT',
@@ -280,6 +368,7 @@ export const translations: Record<Language, Translations> = {
     channel: 'Room Channel',
     connected: 'Connected',
     disconnected: 'Disconnected',
+    disconnect: 'Disconnect',
     connect: 'Connect',
     saveAndConnect: 'Save & Connect',
     cancel: 'Cancel',
@@ -409,6 +498,49 @@ export const translations: Record<Language, Translations> = {
     copied: 'Copied',
     publishSuccess: 'Message published successfully',
     activeSubs: 'Active Subs',
+    protocolVersion: 'MQTT Protocol Version',
+    mqttV311: 'MQTT v3.1.1',
+    mqttV5: 'MQTT v5.0',
+    cleanSession: 'Clean Session / Clean Start',
+    cleanSessionDesc: 'When off, the broker persists the session & subscriptions (auto-restored on reconnect)',
+    autoAcceptFiles: 'Auto-accept Files',
+    autoAcceptDesc: 'When off, incoming files require manual approval before being saved',
+    awaitingApproval: 'Awaiting Approval',
+    approve: 'Accept & Save',
+    reject: 'Reject',
+    sent: 'Sent · Awaiting Receipt',
+    delivered: 'Delivered (peer confirmed)',
+    clearFinished: 'Clear Finished',
+    cancelBatch: 'Cancel Batch',
+    payloadFormat: 'Format',
+    v5Properties: 'MQTT v5 Properties',
+    contentTypeLabel: 'Content-Type',
+    messageExpiryLabel: 'Expiry (seconds)',
+    addProperty: 'Add Property',
+    propertyKey: 'Key',
+    propertyValue: 'Value',
+    noMessages: 'No MQTT messages recorded yet.',
+    noMessagesFiltered: 'No messages matching current search filter.',
+    truncatedNote: 'Payload too large — display truncated',
+    mdView: 'Markdown rendered view',
+    htmlView: 'HTML sandbox preview (scripts disabled)',
+    pauseFeed: 'Pause Feed',
+    resumeFeed: 'Resume',
+    feedPaused: 'Feed frozen — incoming messages buffered',
+    flushPending: 'Flush {count} buffered',
+    preview: 'Preview',
+    sendHint: '⌘/Ctrl + Enter to send',
+    hitTotal: '{count} hits total',
+    hitCount: 'Inbound messages matched by this filter',
+    resetStats: 'Reset Stats',
+    exportJsonTitle: 'Export messages as JSON',
+    exportCsvTitle: 'Export messages as CSV',
+    exportDone: 'Exported {count} messages',
+    clearRetainedTitle: 'Retained message manager',
+    retainedOnTopics: 'Retained messages on these topics',
+    clearAllRetained: 'Clear retained on {count} topics',
+    clearingRetained: 'Clearing…',
+    retainClearNote: 'Publishes an empty payload (retain=1) per topic to wipe broker retain state',
   },
   'zh-TW': {
     appName: 'DropQTT',
@@ -416,6 +548,7 @@ export const translations: Record<Language, Translations> = {
     channel: '傳輸房間頻道',
     connected: '已連線',
     disconnected: '未連線',
+    disconnect: '斷開連線',
     connect: '連線',
     saveAndConnect: '儲存並連線',
     cancel: '取消',
@@ -545,6 +678,49 @@ export const translations: Record<Language, Translations> = {
     copied: '已複製',
     publishSuccess: '封包已成功發布',
     activeSubs: '活躍訂閱',
+    protocolVersion: 'MQTT 協議版本',
+    mqttV311: 'MQTT v3.1.1',
+    mqttV5: 'MQTT v5.0',
+    cleanSession: 'Clean Session / Clean Start',
+    cleanSessionDesc: '關閉後 Broker 將保留會話與訂閱（斷線重連自動恢復）',
+    autoAcceptFiles: '自動接收檔案',
+    autoAcceptDesc: '關閉後收到的檔案需手動點擊確認才會落盤儲存',
+    awaitingApproval: '待確認接收',
+    approve: '接收儲存',
+    reject: '拒絕',
+    sent: '已發送·待對端確認',
+    delivered: '對端已確認接收',
+    clearFinished: '清除已結束',
+    cancelBatch: '終止批次',
+    payloadFormat: '編碼格式',
+    v5Properties: 'MQTT v5 報文屬性',
+    contentTypeLabel: 'Content-Type',
+    messageExpiryLabel: '過期時間 (秒)',
+    addProperty: '新增屬性',
+    propertyKey: '鍵',
+    propertyValue: '值',
+    noMessages: '暫無 MQTT 報文記錄',
+    noMessagesFiltered: '沒有符合目前篩選的報文',
+    truncatedNote: '載荷過大，已截斷顯示',
+    mdView: 'Markdown 渲染視圖',
+    htmlView: 'HTML 沙箱預覽（已禁用腳本）',
+    pauseFeed: '暫停接收',
+    resumeFeed: '繼續接收',
+    feedPaused: '訊息流已凍結 — 新報文暫存緩衝區',
+    flushPending: '釋放 {count} 條緩衝訊息',
+    preview: '預覽',
+    sendHint: '⌘/Ctrl + Enter 傳送',
+    hitTotal: '共 {count} 次命中',
+    hitCount: '此過濾器匹配到的入站訊息數',
+    resetStats: '重設統計',
+    exportJsonTitle: '匯出訊息為 JSON',
+    exportCsvTitle: '匯出訊息為 CSV',
+    exportDone: '已匯出 {count} 條訊息',
+    clearRetainedTitle: '保留訊息管理',
+    retainedOnTopics: '以下主題存在保留訊息',
+    clearAllRetained: '清除 {count} 個主題的保留訊息',
+    clearingRetained: '清除中…',
+    retainClearNote: '向每個主題發布空載荷（retain=1）以清除 broker 保留狀態',
   },
   'ja': {
     appName: 'DropQTT',
@@ -552,6 +728,7 @@ export const translations: Record<Language, Translations> = {
     channel: 'ルーム チャンネル',
     connected: '接続済み',
     disconnected: '切断',
+    disconnect: '接続解除',
     connect: '接続',
     saveAndConnect: '保存して接続',
     cancel: 'キャンセル',
@@ -681,5 +858,48 @@ export const translations: Record<Language, Translations> = {
     copied: 'コピー完了',
     publishSuccess: 'メッセージを送信しました',
     activeSubs: '購読中',
+    protocolVersion: 'MQTT プロトコルバージョン',
+    mqttV311: 'MQTT v3.1.1',
+    mqttV5: 'MQTT v5.0',
+    cleanSession: 'Clean Session / Clean Start',
+    cleanSessionDesc: 'オフにするとブローカーがセッションと購読を保持（再接続時に自動復元）',
+    autoAcceptFiles: 'ファイルを自動受領',
+    autoAcceptDesc: 'オフにすると受信ファイルは手動承認まで保存されません',
+    awaitingApproval: '受領確認待ち',
+    approve: '受領して保存',
+    reject: '拒否',
+    sent: '送信完了·相手確認待ち',
+    delivered: '相手が受領確認',
+    clearFinished: '完了分を消去',
+    cancelBatch: 'バッチ中止',
+    payloadFormat: 'エンコード形式',
+    v5Properties: 'MQTT v5 プロパティ',
+    contentTypeLabel: 'Content-Type',
+    messageExpiryLabel: '有効期限 (秒)',
+    addProperty: 'プロパティ追加',
+    propertyKey: 'キー',
+    propertyValue: '値',
+    noMessages: 'MQTT メッセージはまだありません',
+    noMessagesFiltered: 'フィルターに一致するメッセージがありません',
+    truncatedNote: 'ペイロードが大きすぎるため表示を切り詰めました',
+    mdView: 'Markdown レンダリング表示',
+    htmlView: 'HTML サンドボックスプレビュー（スクリプト無効）',
+    pauseFeed: '受信を一時停止',
+    resumeFeed: '再開',
+    feedPaused: 'フィード凍結中 — 新メッセージはバッファに保留',
+    flushPending: '{count} 件の保留を解除',
+    preview: 'プレビュー',
+    sendHint: '⌘/Ctrl + Enter で送信',
+    hitTotal: '合計 {count} ヒット',
+    hitCount: 'このフィルタが一致した受信メッセージ数',
+    resetStats: '統計リセット',
+    exportJsonTitle: 'メッセージを JSON エクスポート',
+    exportCsvTitle: 'メッセージを CSV エクスポート',
+    exportDone: '{count} 件をエクスポートしました',
+    clearRetainedTitle: '保持メッセージ管理',
+    retainedOnTopics: 'これらのトピックに保持メッセージがあります',
+    clearAllRetained: '{count} トピックの保持を削除',
+    clearingRetained: '削除中…',
+    retainClearNote: '各トピックに空ペイロード（retain=1）を発行し、ブローカーの保持状態を解除します',
   },
 };

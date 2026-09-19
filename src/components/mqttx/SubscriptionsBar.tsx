@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Radio, X } from 'lucide-react';
+import { Plus, Radio, X, RotateCcw } from 'lucide-react';
 import { TopicSubscription } from '../../types';
 import { Translations } from '../../i18n';
 
@@ -7,6 +7,9 @@ interface SubscriptionsBarProps {
   subscriptions: TopicSubscription[];
   onAddSubscription: (topic: string, qos: number, color?: string) => void;
   onRemoveSubscription: (topic: string) => void;
+  /** Topic filter -> inbound publish hit count (backend-maintained) */
+  hitStats: Record<string, number>;
+  onResetStats: () => void;
   connected: boolean;
   t: Translations;
 }
@@ -17,6 +20,8 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   subscriptions,
   onAddSubscription,
   onRemoveSubscription,
+  hitStats,
+  onResetStats,
   connected,
   t,
 }) => {
@@ -24,9 +29,11 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   const [qos, setQos] = useState<number>(0);
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
 
+  const totalHits = Object.values(hitStats).reduce((a, b) => a + b, 0);
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!topicInput.trim() || !connected) return;
+    if (!topicInput.trim()) return;
     onAddSubscription(topicInput.trim(), qos, selectedColor);
     setTopicInput('');
     // Cycle to next color
@@ -35,30 +42,47 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   };
 
   return (
-    <div className="bg-slate-900/80 border border-slate-800 rounded font-mono p-3 space-y-3">
-      <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+    <div className="panel p-4 space-y-3.5 font-mono">
+      <div className="flex items-center justify-between text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
         <span className="flex items-center space-x-1.5">
-          <Radio className="w-3.5 h-3.5 text-emerald-400" />
+          <Radio className="w-3.5 h-3.5" style={{ color: 'var(--success)' }} />
           <span>{t.subscriptions} ({subscriptions.length})</span>
+          {totalHits > 0 && (
+            <span className="text-[11px] font-normal" style={{ color: 'var(--text-muted)' }}>
+              · {t.hitTotal.replace('{count}', String(totalHits))}
+            </span>
+          )}
         </span>
+        {totalHits > 0 && (
+          <button
+            onClick={onResetStats}
+            title={t.resetStats}
+            className="flex items-center gap-1 text-[11px] font-normal transition hover:opacity-100 opacity-60"
+            style={{ color: 'var(--accent)' }}
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>{t.resetStats}</span>
+          </button>
+        )}
       </div>
 
       {/* Add Subscription Form */}
-      <form onSubmit={handleAdd} className="flex flex-wrap md:flex-nowrap items-center gap-2">
+      <form onSubmit={handleAdd} className="flex flex-wrap md:flex-nowrap items-center gap-2.5">
         <div className="flex-1 min-w-[200px]">
           <input
             type="text"
             value={topicInput}
             onChange={(e) => setTopicInput(e.target.value)}
             placeholder={t.topicPattern}
-            className="w-full bg-slate-950 border border-slate-700/80 focus:border-emerald-500 rounded px-3 py-1.5 text-xs text-emerald-300 font-mono focus:outline-none transition"
+            className="field-input w-full"
+            style={{ color: 'var(--success)' }}
           />
         </div>
 
         <select
           value={qos}
           onChange={(e) => setQos(Number(e.target.value))}
-          className="bg-slate-950 border border-slate-700/80 rounded px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+          className="field-input px-2.5"
         >
           <option value={0}>QoS 0</option>
           <option value={1}>QoS 1</option>
@@ -66,13 +90,13 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
         </select>
 
         {/* Color picker pills */}
-        <div className="flex items-center space-x-1 px-1 bg-slate-950/80 border border-slate-800 rounded py-1">
+        <div className="flex items-center space-x-1 px-1.5 inset-box py-1.5">
           {COLOR_PALETTE.map((color) => (
             <button
               key={color}
               type="button"
               onClick={() => setSelectedColor(color)}
-              className="w-3.5 h-3.5 rounded-full border border-slate-700 transition"
+              className="w-3.5 h-3.5 rounded-full transition"
               style={{
                 backgroundColor: color,
                 outline: selectedColor === color ? '2px solid white' : 'none',
@@ -84,8 +108,9 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
 
         <button
           type="submit"
-          disabled={!connected || !topicInput.trim()}
-          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded text-xs font-semibold flex items-center space-x-1 transition shadow-sm"
+          disabled={!topicInput.trim()}
+          title={connected ? undefined : t.connectFirst}
+          className="btn-accent px-3.5 py-2 font-semibold flex items-center space-x-1"
         >
           <Plus className="w-3.5 h-3.5" />
           <span>{t.subscribe}</span>
@@ -93,29 +118,46 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
       </form>
 
       {/* Active Subscriptions Chips */}
-      <div className="flex flex-wrap gap-2 pt-1 min-h-[32px] items-center">
+      <div className="flex flex-wrap gap-2 pt-1 min-h-[36px] items-center">
         {subscriptions.length === 0 ? (
-          <div className="text-[11px] text-slate-500 italic">
+          <div className="text-xs italic" style={{ color: 'var(--text-muted)' }}>
             {t.noSubscriptions}
           </div>
         ) : (
           subscriptions.map((sub) => (
             <div
               key={sub.topic}
-              className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-xs text-slate-300 shadow-sm"
+              className="flex items-center space-x-2 px-3 py-1.5 inset-box text-xs shadow-sm"
+              style={{ color: 'var(--text-secondary)' }}
             >
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
                 style={{ backgroundColor: sub.color || '#10b981' }}
               />
-              <span className="font-semibold text-slate-200">{sub.topic}</span>
-              <span className="text-[10px] px-1 py-0.2 rounded bg-slate-900 border border-slate-700 text-slate-400 font-mono">
+              <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{sub.topic}</span>
+              <span className="text-[11px] px-1 py-0.5 inset-box font-mono" style={{ color: 'var(--text-muted)' }}>
                 QoS {sub.qos}
+              </span>
+              <span
+                className={`text-[11px] px-1.5 py-0.5 rounded font-mono border ${
+                  (hitStats[sub.topic] ?? 0) > 0
+                    ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
+                    : ''
+                }`}
+                style={
+                  (hitStats[sub.topic] ?? 0) > 0
+                    ? undefined
+                    : { borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }
+                }
+                title={t.hitCount}
+              >
+                {(hitStats[sub.topic] ?? 0).toLocaleString()} ↓
               </span>
               <button
                 onClick={() => onRemoveSubscription(sub.topic)}
                 title={t.unsubscribe}
-                className="p-0.5 text-slate-500 hover:text-rose-400 transition ml-1"
+                className="p-0.5 transition hover:opacity-100 opacity-50 ml-1"
+                style={{ color: 'var(--danger)' }}
               >
                 <X className="w-3 h-3" />
               </button>

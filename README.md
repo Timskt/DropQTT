@@ -20,6 +20,11 @@
 - 🧩 **Dynamic Chunking & Reassembly**: Conquers broker packet limits by breaking files into customizable chunks (64 KB to 2 MB) with streaming flow control.
 - 🛡️ **Bit-Perfect SHA-256 Verification**: End-to-end cryptographic hashing ensures files are received without corrupted or missing packets.
 - 🌐 **Ubiquitous Broker Support**: Works out of the box with public brokers (EMQX, HiveMQ, Mosquitto) or any private self-hosted MQTT v3.1.1/5.0 broker with optional TLS encryption and authentication.
+- 🤝 **MQTT 5.0 Full Support**: Per-connection protocol selection, clean start semantics, and v5 publish properties (Message Expiry, Content-Type, User Properties) on console publishing.
+- 📡 **MQTTX-style Pub/Sub Console**: Live message feed with Auto/JSON/Text/Markdown/HTML/CBOR/Base64/Hex payload views (dependency-free RFC 8949 codec; DOMPurify-sanitized Markdown & fully-sandboxed HTML previews), a live-preview split editor with byte counters and draft persistence, feed pause/buffer, per-filter subscription hit statistics, JSON/CSV message export, and a retained-message clearer, plus a subscription registry that is automatically re-applied on every reconnect.
+- 🔁 **Resilient Transfers**: NACK-driven missing-chunk retransmission, zombie-task watchdogs, and graceful CONNACK-driven subscription recovery.
+- ✅ **Receive Approval Mode**: Toggle auto-accept off to gate incoming files behind an explicit Approve/Reject review after SHA-256 verification.
+- 🎨 **Themeable UI**: Four design-token driven themes (Cyberpunk, OLED Obsidian, Nord, Solaris light) with CSS custom properties, plus 4-language i18n (简中/English/繁中/日本語).
 - 🚪 **Room / Channel Isolation**: Share files simply by agreeing on a channel code (e.g. `#my-secure-room`).
 - 🎨 **Pristine Modern UI & Brand Identity**: Designed with the `app-logo-design-engine` skill, featuring an origami vector mark rendered via native Swift + CoreGraphics producing true 32-bit RGBA (`ColorType 6`) icons without white squircle borders.
 - 📦 **Cross-Platform Matrix**: Builds native installers for macOS (`.dmg`), Linux (`.deb`, `.AppImage`), and Windows (`.msi`, NSIS `.exe`).

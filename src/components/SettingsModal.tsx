@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { BrokerConfig, BROKER_PRESETS, BrokerProfile } from '../types';
 import { Language, Translations } from '../i18n';
@@ -19,6 +19,7 @@ import {
   Check,
   AlertCircle,
   Hash,
+  Activity,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -63,6 +64,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [newProfileName, setNewProfileName] = useState<string>('');
   const [testing, setTesting] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Re-sync the form whenever the modal opens or the external config changes
+  // (e.g. profile selected from the status bar while modal is open)
+  useEffect(() => {
+    if (isOpen) {
+      setForm(config);
+      setTestResult(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, config]);
 
   if (!isOpen) return null;
 
@@ -267,6 +278,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Protocol Version & Clean Session */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium opacity-80 mb-1.5 flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-violet-400" />
+                <span>{t.protocolVersion}</span>
+              </label>
+              <select
+                value={form.protocolVersion ?? 3}
+                onChange={(e) => {
+                  setForm({ ...form, protocolVersion: parseInt(e.target.value) });
+                  setTestResult(null);
+                }}
+                className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-slate-800 text-white"
+              >
+                <option value={3}>{t.mqttV311}</option>
+                <option value={5}>{t.mqttV5}</option>
+              </select>
+            </div>
+            <div className="flex items-center justify-between rounded-lg bg-black/20 border border-white/10 px-3">
+              <div className="min-w-0 pr-2">
+                <p className="text-xs font-medium">{t.cleanSession}</p>
+                <p className="text-[10px] opacity-60 truncate">{t.cleanSessionDesc}</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={form.cleanSession ?? true}
+                  onChange={(e) => setForm({ ...form, cleanSession: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-violet-500"></div>
+              </label>
+            </div>
+          </div>
+
           {/* TLS Toggle */}
           <div className="flex items-center justify-between p-3 rounded-xl bg-black/20 border border-white/10">
             <div className="flex items-center gap-2.5">
@@ -444,7 +491,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>{t.autoUpdate}</span>
               </p>
               <p className="text-[11px] opacity-60 mt-0.5">
-                {updateStatusText || `${t.currentVersion}: v0.1.3`}
+                {updateStatusText || `${t.currentVersion}: v0.2.0`}
               </p>
             </div>
             <button

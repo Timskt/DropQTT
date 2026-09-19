@@ -12,6 +12,7 @@ interface BatchSenderProps {
   onRemoveFile: (id: string) => void;
   onClearFiles: () => void;
   onStartSendBatch: (chunkSize: number, qos: number) => void;
+  onCancelBatch: () => void;
   isSending: boolean;
   sendingIndex: number;
   connected: boolean;
@@ -34,6 +35,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
   onRemoveFile,
   onClearFiles,
   onStartSendBatch,
+  onCancelBatch,
   isSending,
   sendingIndex,
   connected,
@@ -80,7 +82,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
   const cleanPrefix = publishTopic.trim().replace(/\/\+$/, '').replace(/\/meta$/, '');
 
   return (
-    <div className="bg-slate-900/80 border border-slate-800 rounded p-4 font-mono space-y-4">
+    <div className="panel p-4 font-mono space-y-4">
       {/* 1. Explicit Publish Topic Configuration */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between text-xs">
@@ -96,12 +98,12 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
             value={publishTopic}
             onChange={(e) => setPublishTopic(e.target.value)}
             placeholder="dropqtt/public-lobby"
-            className="flex-1 bg-slate-950 border border-slate-700/80 focus:border-cyan-500 rounded px-3 py-1.5 text-xs text-cyan-300 font-mono focus:outline-none transition"
+            className="field-input flex-1 text-cyan-300 focus:border-cyan-500"
           />
         </div>
 
         {/* Sub-topic Protocol Topology Preview */}
-        <div className="bg-slate-950/60 rounded p-2 border border-slate-800/60 text-[11px] space-y-1">
+        <div className="inset-box p-2 text-[11px] space-y-1">
           <div className="text-[10px] uppercase text-slate-500 font-semibold">{t.topicPreview}:</div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px] text-slate-400">
             <div className="bg-slate-900/80 px-2 py-1 rounded border border-slate-800 truncate">
@@ -211,7 +213,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
             value={chunkSize}
             disabled={isSending}
             onChange={(e) => setChunkSize(Number(e.target.value))}
-            className="w-full bg-slate-950 border border-slate-700/80 rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+            className="field-input w-full text-slate-200 focus:border-cyan-500"
           >
             {CHUNK_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value} className="bg-slate-900 text-slate-200">
@@ -227,7 +229,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
             value={qos}
             disabled={isSending}
             onChange={(e) => setQos(Number(e.target.value))}
-            className="w-full bg-slate-950 border border-slate-700/80 rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+            className="field-input w-full text-slate-200 focus:border-cyan-500"
           >
             <option value={0} className="bg-slate-900 text-slate-200">{t.qos0Desc}</option>
             <option value={1} className="bg-slate-900 text-slate-200">{t.qos1Desc}</option>
@@ -246,24 +248,35 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
           )}
         </div>
 
-        <button
-          onClick={() => onStartSendBatch(chunkSize, qos)}
-          disabled={!connected || files.length === 0 || isSending}
-          className={`flex items-center space-x-2 px-5 py-2 rounded text-xs font-semibold tracking-wide transition border shadow-sm ${
-            !connected || files.length === 0 || isSending
-              ? 'bg-slate-800/60 text-slate-500 border-slate-700/50 cursor-not-allowed'
-              : 'bg-cyan-600 hover:bg-cyan-500 text-white border-cyan-400 hover:shadow-[0_0_12px_rgba(6,182,212,0.4)]'
-          }`}
-        >
-          <Send className={`w-3.5 h-3.5 ${isSending ? 'animate-bounce' : ''}`} />
-          <span>
-            {isSending
-              ? t.sendingBatch
-                  .replace('{current}', String(sendingIndex + 1))
-                  .replace('{total}', String(files.length))
-              : t.sendBatch}
-          </span>
-        </button>
+        <div className="flex items-center space-x-2">
+          {isSending && (
+            <button
+              onClick={onCancelBatch}
+              className="flex items-center space-x-1.5 px-3 py-2 rounded text-xs font-semibold bg-rose-800/70 hover:bg-rose-700 text-rose-100 border border-rose-700 transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{t.cancelBatch}</span>
+            </button>
+          )}
+          <button
+            onClick={() => onStartSendBatch(chunkSize, qos)}
+            disabled={!connected || files.length === 0 || isSending}
+            className={`flex items-center space-x-2 px-5 py-2 rounded text-xs font-semibold tracking-wide transition border shadow-sm ${
+              !connected || files.length === 0 || isSending
+                ? 'bg-slate-800/60 text-slate-500 border-slate-700/50 cursor-not-allowed'
+                : 'bg-cyan-600 hover:bg-cyan-500 text-white border-cyan-400 hover:shadow-[0_0_12px_rgba(6,182,212,0.4)]'
+            }`}
+          >
+            <Send className={`w-3.5 h-3.5 ${isSending ? 'animate-bounce' : ''}`} />
+            <span>
+              {isSending
+                ? t.sendingBatch
+                    .replace('{current}', String(sendingIndex + 1))
+                    .replace('{total}', String(files.length))
+                : t.sendBatch}
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   );

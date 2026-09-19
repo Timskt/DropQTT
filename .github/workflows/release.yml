@@ -72,10 +72,24 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Frontend typecheck & build gate
+        run: |
+          pnpm exec tsc --noEmit
+          pnpm build
+
+      - name: Rust check & test gate
+        working-directory: src-tauri
+        run: |
+          cargo test
+
       - name: Build and package Tauri application
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Minisign key used to sign updater artifacts (latest.json + .sig).
+          # Set both in repo secrets: `tauri signer generate` to create the key.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'DropQTT ${{ github.ref_name }}'

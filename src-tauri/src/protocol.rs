@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_protocol_version() -> u8 {
+    3
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrokerConfig {
@@ -12,6 +16,16 @@ pub struct BrokerConfig {
     pub keep_alive_secs: u64,
     pub default_qos: u8,
     pub base_topic: Option<String>,
+    /// 3 => MQTT v3.1.1, 5 => MQTT v5.0
+    #[serde(default = "default_protocol_version")]
+    pub protocol_version: u8,
+    /// MQTT 3.1.1 clean_session / MQTT 5 clean_start
+    #[serde(default = "default_clean_session")]
+    pub clean_session: bool,
+}
+
+fn default_clean_session() -> bool {
+    true
 }
 
 impl Default for BrokerConfig {
@@ -27,7 +41,15 @@ impl Default for BrokerConfig {
             keep_alive_secs: 60,
             default_qos: 1,
             base_topic: Some("dropqtt".to_string()),
+            protocol_version: 3,
+            clean_session: true,
         }
+    }
+}
+
+impl BrokerConfig {
+    pub fn is_v5(&self) -> bool {
+        self.protocol_version == 5
     }
 }
 
@@ -48,9 +70,10 @@ pub struct TransferMeta {
 #[serde(rename_all = "camelCase")]
 pub struct ControlMessage {
     #[serde(rename = "type")]
-    pub msg_type: String, // "ACK", "PAUSE", "RESUME", "CANCEL", "COMPLETED", "ERROR"
+    pub msg_type: String, // "NACK", "COMPLETED", "ERROR"
     pub transfer_id: String,
     pub chunk_index: Option<usize>,
+    pub missing: Option<Vec<usize>>,
     pub message: Option<String>,
 }
 
@@ -66,7 +89,8 @@ pub struct TransferProgress {
     pub chunks_transferred: usize,
     pub total_chunks: usize,
     pub speed_bps: f64,
-    pub status: String, // "transferring", "paused", "verifying", "completed", "cancelled", "failed"
+    pub status: String, /* "transferring" | "paused" | "verifying" | "awaiting_approval"
+                         * | "completed" | "delivered" | "cancelled" | "failed" */
     pub error_message: Option<String>,
     pub sha256: String,
     pub save_path: Option<String>,
@@ -78,8 +102,31 @@ pub struct ConnectionStatus {
     pub connected: bool,
     pub broker_host: String,
     pub broker_port: u16,
-    pub channel: String,
     pub client_id: String,
+}
+
+/// MQTT v5 user-facing publish properties (ignored on v3.1.1 connections)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PubProperties {
+    #[serde(default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub user_properties: Vec<(String, String)>,
+    #[serde(default)]
+    pub message_expiry: Option<u32>,
+}
+
+/// Console publish request with raw binary payload (base64 on the wire)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsolePublishParams {
+    pub topic: String,
+    pub payload_base64: String,
+    pub qos: u8,
+    pub retain: bool,
+    #[serde(default)]
+    pub properties: PubProperties,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +136,14 @@ pub struct MqttGenericMessage {
     pub topic: String,
     pub payload: String,
     pub payload_len: usize,
+    /// Raw bytes (base64, possibly truncated for very large payloads) so the
+    /// console can render HEX / CBOR / Base64 views losslessly
+    pub payload_base64: String,
+    pub truncated: bool,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub user_properties: Vec<(String, String)>,
     pub qos: u8,
     pub retain: bool,
     pub timestamp: String,
@@ -156,5 +211,31 @@ mod tests {
         assert_eq!(cfg.port, 1883);
         assert!(!cfg.use_tls);
         assert!(cfg.client_id.starts_with("DropQTT_"));
+        assert_eq!(cfg.protocol_version, 3);
+        assert!(!cfg.is_v5());
+    }
+
+    #[test]
+    fn test_broker_config_legacy_json_defaults() {
+        // Old persisted configs without protocolVersion/cleanSession must still parse
+        let legacy = r#"{"host":"h","port":1883,"useTls":false,"clientId":"c","keepAliveSecs":60,"defaultQos":1}"#;
+        let cfg: BrokerConfig = serde_json::from_str(legacy).expect("parse legacy config");
+        assert_eq!(cfg.protocol_version, 3);
+        assert!(cfg.clean_session);
+    }
+
+    #[test]
+    fn test_control_message_nack_roundtrip() {
+        let ctrl = ControlMessage {
+            msg_type: "NACK".to_string(),
+            transfer_id: "t1".to_string(),
+            chunk_index: None,
+            missing: Some(vec![3, 7, 11]),
+            message: None,
+        };
+        let json = serde_json::to_string(&ctrl).unwrap();
+        let back: ControlMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.msg_type, "NACK");
+        assert_eq!(back.missing, Some(vec![3, 7, 11]));
     }
 }

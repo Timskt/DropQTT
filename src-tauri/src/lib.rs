@@ -1,12 +1,13 @@
 pub mod mqtt_manager;
 pub mod protocol;
+pub mod transport;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
 use crate::mqtt_manager::MqttManager;
-use crate::protocol::{BrokerConfig, ConnectionStatus};
+use crate::protocol::{BrokerConfig, ConnectionStatus, ConsolePublishParams};
 
 pub struct AppState {
     pub mqtt: Arc<MqttManager>,
@@ -30,7 +31,8 @@ async fn connect_broker(
     state: State<'_, AppState>,
     config: BrokerConfig,
 ) -> Result<(), String> {
-    state.mqtt.connect(app, config).await
+    let manager = state.mqtt.clone();
+    manager.connect(app, config).await
 }
 
 #[tauri::command]
@@ -50,15 +52,6 @@ async fn get_connection_status(state: State<'_, AppState>) -> Result<ConnectionS
 }
 
 #[tauri::command]
-async fn join_channel(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    channel: String,
-) -> Result<(), String> {
-    state.mqtt.join_channel(app, channel).await
-}
-
-#[tauri::command]
 async fn start_send_file(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -67,8 +60,8 @@ async fn start_send_file(
     qos: u8,
     custom_publish_topic: Option<String>,
 ) -> Result<String, String> {
-    state
-        .mqtt
+    let manager = state.mqtt.clone();
+    manager
         .send_file(app, file_path, chunk_size, qos, custom_publish_topic)
         .await
 }
@@ -109,15 +102,49 @@ async fn unsubscribe_topic(
 }
 
 #[tauri::command]
-async fn publish_message(
+async fn get_subscription_stats(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, u64>, String> {
+    Ok(state.mqtt.get_subscription_stats().await)
+}
+
+#[tauri::command]
+async fn reset_subscription_stats(state: State<'_, AppState>) -> Result<(), String> {
+    state.mqtt.reset_subscription_stats().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn publish_console(
     app: AppHandle,
     state: State<'_, AppState>,
-    topic: String,
-    payload: String,
-    qos: u8,
-    retain: bool,
+    params: ConsolePublishParams,
 ) -> Result<(), String> {
-    state.mqtt.publish_raw_message(app, topic, payload, qos, retain).await
+    state.mqtt.publish_console(app, params).await
+}
+
+#[tauri::command]
+async fn approve_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    state.mqtt.approve_transfer(app, transfer_id).await
+}
+
+#[tauri::command]
+async fn reject_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    state.mqtt.reject_transfer(app, transfer_id).await
+}
+
+#[tauri::command]
+async fn set_auto_receive(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    state.mqtt.set_auto_receive(enabled);
+    Ok(())
 }
 
 #[tauri::command]
@@ -147,7 +174,7 @@ pub fn run() {
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(debug_assertions)]
-                let _ = window.open_devtools();
+                window.open_devtools();
                 #[cfg(not(debug_assertions))]
                 let _ = window;
             }
@@ -160,14 +187,18 @@ pub fn run() {
             disconnect_broker,
             test_broker_connection,
             get_connection_status,
-            join_channel,
             start_send_file,
             pause_transfer,
             resume_transfer,
             cancel_transfer,
             subscribe_topic,
             unsubscribe_topic,
-            publish_message,
+            get_subscription_stats,
+            reset_subscription_stats,
+            publish_console,
+            approve_transfer,
+            reject_transfer,
+            set_auto_receive,
             reveal_file
         ])
         .run(tauri::generate_context!())

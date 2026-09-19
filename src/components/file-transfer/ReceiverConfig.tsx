@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Inbox, Folder, RefreshCw } from 'lucide-react';
+import { Inbox, Folder, RefreshCw, ShieldAlert } from 'lucide-react';
 import { Translations } from '../../i18n';
 
 interface ReceiverConfigProps {
@@ -9,6 +9,8 @@ interface ReceiverConfigProps {
   downloadDir: string;
   onSelectDownloadDir: () => void;
   connected: boolean;
+  autoReceive: boolean;
+  onToggleAutoReceive: (value: boolean) => void;
   t: Translations;
 }
 
@@ -19,6 +21,8 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
   downloadDir,
   onSelectDownloadDir,
   connected,
+  autoReceive,
+  onToggleAutoReceive,
   t,
 }) => {
   const [isApplying, setIsApplying] = useState(false);
@@ -35,7 +39,7 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
   const cleanPrefix = subscribeTopic.trim().replace(/\/\#$/, '').replace(/\/\+$/, '');
 
   return (
-    <div className="bg-slate-900/80 border border-slate-800 rounded p-4 font-mono space-y-4">
+    <div className="panel p-4 font-mono space-y-4">
       {/* 1. Explicit Subscribe Topic Configuration */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between text-xs">
@@ -61,12 +65,12 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
             value={subscribeTopic}
             onChange={(e) => setSubscribeTopic(e.target.value)}
             placeholder="dropqtt/public-lobby/#"
-            className="flex-1 bg-slate-950 border border-slate-700/80 focus:border-emerald-500 rounded px-3 py-1.5 text-xs text-emerald-300 font-mono focus:outline-none transition"
+            className="field-input flex-1 text-emerald-300 focus:border-emerald-500"
           />
           <button
             onClick={handleApply}
             disabled={!connected || isApplying}
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded text-xs transition flex items-center space-x-1 disabled:opacity-50"
+            className="btn-ghost px-3 py-1.5 flex items-center space-x-1"
           >
             <RefreshCw className={`w-3 h-3 ${isApplying ? 'animate-spin' : ''}`} />
             <span>{t.subscribe}</span>
@@ -91,19 +95,45 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
         </div>
       </div>
 
-      {/* 2. Download Save Folder */}
+      {/* 2. Auto-accept toggle */}
+      <div className="inset-box p-3 flex items-center justify-between gap-3">
+        <div className="flex items-start space-x-2 min-w-0">
+          <ShieldAlert className={`w-4 h-4 mt-0.5 shrink-0 ${autoReceive ? 'text-amber-400' : 'text-fuchsia-400'}`} />
+          <div>
+            <div className="text-xs font-semibold text-slate-200">{t.autoAcceptFiles}</div>
+            <div className="text-[10px] text-slate-500">{t.autoAcceptDesc}</div>
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={autoReceive}
+          onClick={() => onToggleAutoReceive(!autoReceive)}
+          className={`relative w-10 h-5 rounded-full border transition shrink-0 ${
+            autoReceive ? 'bg-emerald-600/80 border-emerald-500' : 'bg-slate-800 border-slate-600'
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${
+              autoReceive ? 'left-[calc(100%-1rem)]' : 'left-0.5'
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* 3. Download Save Folder */}
       <div className="space-y-1.5 pt-1">
         <label className="text-[11px] text-slate-400 font-semibold flex items-center space-x-1">
           <Folder className="w-3 h-3 text-slate-400" />
           <span>{t.saveFolder}</span>
         </label>
         <div className="flex items-center space-x-2">
-          <div className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-xs text-slate-300 truncate">
+          <div className="flex-1 inset-box px-3 py-1.5 text-xs text-slate-300 truncate">
             {downloadDir || './downloads'}
           </div>
           <button
             onClick={onSelectDownloadDir}
-            className="px-3 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-xs transition"
+            className="btn-ghost px-3 py-1.5 text-xs"
           >
             {t.browse}
           </button>

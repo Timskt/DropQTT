@@ -9,6 +9,18 @@ export default defineConfig(async () => ({
   base: './',
   plugins: [react()],
 
+  build: {
+    // Rich-text vendor libs (highlight.js/marked/dompurify) split out — cached separately
+    chunkSizeWarningLimit: 500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          richtext: ['highlight.js/lib/common', 'marked', 'dompurify'],
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors

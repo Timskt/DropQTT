@@ -31,7 +31,10 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
   t,
 }) => {
   return (
-    <header className="h-11 bg-slate-950/90 border-b border-slate-800/80 px-4 flex items-center justify-between text-xs font-mono select-none">
+    <header
+      className="h-11 border-b px-4 flex items-center justify-between text-xs font-mono select-none"
+      style={{ background: 'var(--bg-panel)', borderColor: 'var(--border-panel)', color: 'var(--text-secondary)' }}
+    >
       {/* Left: Mode Title + Target Broker */}
       <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
@@ -92,6 +95,16 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
 
         {/* Client ID pill */}
         <div className="hidden md:flex items-center space-x-1 text-slate-500 text-[11px] px-2 py-0.5 bg-slate-900/40 rounded border border-slate-800/60">
+          <span
+            className={`text-[9px] px-1 rounded border ${
+              config.protocolVersion === 5
+                ? 'text-violet-300 border-violet-800 bg-violet-950/60'
+                : 'text-slate-500 border-slate-700'
+            }`}
+            title={t.protocolVersion}
+          >
+            {config.protocolVersion === 5 ? 'v5' : 'v3'}
+          </span>
           <span>ID:</span>
           <span className="text-slate-400 truncate max-w-[120px]">{config.clientId}</span>
         </div>
@@ -108,11 +121,7 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
         >
           <Power className={`w-3 h-3 ${isConnecting ? 'animate-spin' : ''}`} />
           <span>
-            {isConnecting
-              ? 'Connecting...'
-              : connected
-              ? t.disconnected.replace('未', '断开') || 'Disconnect'
-              : t.connect}
+            {isConnecting ? '...' : connected ? t.disconnect : t.connect}
           </span>
         </button>
       </div>

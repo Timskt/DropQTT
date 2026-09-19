@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layers, Terminal, Settings, Globe, Palette, Radio } from 'lucide-react';
+import { Layers, Terminal, Settings, Globe, Palette, Server } from 'lucide-react';
 import { Language, Translations } from '../i18n';
 import { Theme } from '../themes';
 import { DropQTTLogo } from './DropQTTLogo';
@@ -8,12 +8,13 @@ interface SidebarProps {
   activeMode: 'transfer' | 'mqttx';
   setActiveMode: (mode: 'transfer' | 'mqttx') => void;
   activeTransfersCount: number;
+  awaitingApprovalCount: number;
   activeSubsCount: number;
   connected: boolean;
   brokerHost: string;
   brokerPort: number;
+  protocolVersion: number;
   latency: number | null;
-  channel: string;
   onOpenSettings: () => void;
   lang: Language;
   setLang: (lang: Language) => void;
@@ -26,12 +27,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeMode,
   setActiveMode,
   activeTransfersCount,
+  awaitingApprovalCount,
   activeSubsCount,
   connected,
   brokerHost,
   brokerPort,
+  protocolVersion,
   latency,
-  channel,
   onOpenSettings,
   lang,
   setLang,
@@ -40,7 +42,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   t,
 }) => {
   return (
-    <aside className="w-60 flex-shrink-0 bg-slate-950/80 border-r border-slate-800/80 flex flex-col justify-between select-none h-screen text-slate-300">
+    <aside
+      className="w-60 flex-shrink-0 border-r flex flex-col justify-between select-none h-screen"
+      style={{ background: 'var(--bg-panel)', borderColor: 'var(--border-panel)', color: 'var(--text-secondary)' }}
+    >
       {/* Top Header */}
       <div>
         <div className="p-4 border-b border-slate-800/70 flex items-center justify-between">
@@ -85,7 +90,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
             {activeTransfersCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 animate-pulse">
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 animate-pulse">
                 {activeTransfersCount}
               </span>
             )}
@@ -107,32 +112,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
             {activeSubsCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 {activeSubsCount}
               </span>
             )}
           </button>
+
+          {awaitingApprovalCount > 0 && (
+            <div className="px-3 py-1.5">
+              <div className="rounded border border-fuchsia-700/60 bg-fuchsia-950/40 px-2.5 py-1.5 text-[10px] text-fuchsia-300 flex items-center justify-between animate-pulse">
+                <span>{t.awaitingApproval}</span>
+                <span className="font-bold">{awaitingApprovalCount}</span>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Current Channel Info */}
+        {/* Broker & Protocol Info */}
         <div className="px-3 py-2">
           <div className="bg-slate-900/70 rounded p-2.5 border border-slate-800/80">
             <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1">
               <span className="flex items-center space-x-1">
-                <Radio className="w-3 h-3 text-cyan-400" />
-                <span>{t.channel}</span>
+                <Server className="w-3 h-3 text-cyan-400" />
+                <span>{t.brokerProfiles}</span>
               </span>
-              <span className="text-[10px] text-slate-500">Lobby</span>
+              <span
+                className={`text-[9px] px-1 py-0.5 rounded border ${
+                  protocolVersion === 5
+                    ? 'text-violet-300 bg-violet-950/60 border-violet-800'
+                    : 'text-slate-400 bg-slate-900 border-slate-700'
+                }`}
+              >
+                {protocolVersion === 5 ? 'MQTT 5.0' : 'MQTT 3.1.1'}
+              </span>
             </div>
             <div className="font-mono text-xs text-cyan-300 truncate bg-slate-950/90 px-2 py-1 rounded border border-slate-800">
-              #{channel}
+              {brokerHost}:{brokerPort}
             </div>
           </div>
         </div>
       </div>
 
       {/* Bottom Status & Quick Preferences */}
-      <div className="p-3 border-t border-slate-800/80 space-y-2.5 bg-slate-950/40">
+      <div className="p-3 border-t space-y-2.5" style={{ borderColor: 'var(--border-panel)', background: 'var(--bg-inset)' }}>
         {/* Connection Widget */}
         <div className="bg-slate-900/60 rounded p-2 border border-slate-800 text-[11px] font-mono">
           <div className="flex items-center justify-between mb-1">

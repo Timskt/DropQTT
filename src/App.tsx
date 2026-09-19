@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { check } from '@tauri-apps/plugin-updater';
-import confetti from 'canvas-confetti';
+import { open } from '@tauri-apps/plugin-dialog';
+import { AlertCircle, WifiOff } from 'lucide-react';
 
 import { Sidebar } from './components/Sidebar';
 import { BrokerStatusBar } from './components/BrokerStatusBar';
@@ -14,413 +14,103 @@ import { MessageStream } from './components/mqttx/MessageStream';
 import { MessagePublisher } from './components/mqttx/MessagePublisher';
 import { SettingsModal } from './components/SettingsModal';
 
-import {
-  BrokerConfig,
-  BrokerProfile,
-  ConnectionStatus,
-  TransferProgress,
-  MqttGenericMessage,
-  TopicSubscription,
-  BatchFileItem,
-} from './types';
+import { BrokerConfig } from './types';
 import { Language, translations } from './i18n';
-import { Theme, themes } from './themes';
+import { applyTheme, Theme } from './themes';
+import { usePersistentString } from './hooks/usePersistentState';
+import { useBroker } from './hooks/useBroker';
+import { useMqttMessages } from './hooks/useMqttMessages';
+import { useSubscriptionStats } from './hooks/useSubscriptionStats';
+import { useTransfers } from './hooks/useTransfers';
+import { useBatchSender } from './hooks/useBatchSender';
 
 export function App() {
-  // 1. Workspace mode ('transfer' | 'mqttx')
-  const [activeMode, setActiveMode] = useState<'transfer' | 'mqttx'>(() => {
-    return (localStorage.getItem('dropqtt_workspace_mode') as 'transfer' | 'mqttx') || 'transfer';
-  });
+  // ---- Workspace preferences (raw-string localStorage keys, back-compat) ----
+  const [modeStr, setModeStr] = usePersistentString('dropqtt_workspace_mode', 'transfer');
+  const activeMode: 'transfer' | 'mqttx' = modeStr === 'mqttx' ? 'mqttx' : 'transfer';
 
-  // 2. Language & Theme
-  const [lang, setLang] = useState<Language>(() => {
-    return (localStorage.getItem('dropqtt_lang') as Language) || 'zh-CN';
-  });
+  const [langStr, setLangStr] = usePersistentString('dropqtt_lang', 'zh-CN');
+  const lang = langStr as Language;
 
-  const [theme, setTheme] = useState<Theme>(() => {
-    return (localStorage.getItem('dropqtt_theme') as Theme) || 'cyberpunk';
-  });
+  const [themeStr, setThemeStr] = usePersistentString('dropqtt_theme', 'cyberpunk');
+  const theme = themeStr as Theme;
 
   const t = translations[lang] || translations['zh-CN'];
-  const currentTheme = themes[theme] || themes.cyberpunk;
 
-  // 3. Broker Configuration & Profiles
-  const [config, setConfig] = useState<BrokerConfig>(() => {
-    try {
-      const saved = localStorage.getItem('dropqtt_active_broker');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  // ---- File-transfer topic configuration ----
+  const [publishTopic, setPublishTopic] = usePersistentString('dropqtt_publish_topic', 'dropqtt/public-lobby');
+  const [subscribeTopic, setSubscribeTopic] = usePersistentString('dropqtt_subscribe_topic', 'dropqtt/public-lobby/#');
+
+  // ---- Core state hooks ----
+  // Break the broker <-> messages dependency cycle: broker needs the topic
+  // registry at connect time, messages need the connection flag.
+  const getConsoleTopicsRef = useRef<() => { topic: string; qos: number }[]>(() => []);
+  const subscribeTopicRef = useRef(subscribeTopic);
+  subscribeTopicRef.current = subscribeTopic;
+
+  const broker = useBroker({
+    getTopicsToRegister: () => [
+      ...(subscribeTopicRef.current.trim() ? [{ topic: subscribeTopicRef.current.trim(), qos: 1 }] : []),
+      ...getConsoleTopicsRef.current(),
+    ],
+  });
+
+  const mqtt = useMqttMessages(broker.isConnected);
+  getConsoleTopicsRef.current = mqtt.getTopicsToRegister;
+
+  // Subscription hit stats: polled only while the console is open and connected
+  const subStats = useSubscriptionStats(broker.isConnected && activeMode === 'mqttx');
+
+  const handleClearRetained = async (topics: string[]) => {
+    for (const topic of topics) {
+      await mqtt.publish({
+        topic,
+        payloadBase64: '',
+        qos: 0,
+        retain: true,
+        properties: { userProperties: [] },
+      });
     }
-    return {
-      host: 'broker.emqx.io',
-      port: 1883,
-      useTls: false,
-      clientId: `DropQTT_${Math.random().toString(36).substring(2, 8)}`,
-      keepAliveSecs: 60,
-      defaultQos: 1,
-      baseTopic: 'dropqtt',
-    };
+  };
+
+  const transferState = useTransfers();
+  const batch = useBatchSender({
+    publishTopic,
+    waitForSendComplete: transferState.waitForSendComplete,
   });
 
-  const [profiles, setProfiles] = useState<BrokerProfile[]>(() => {
-    try {
-      const saved = localStorage.getItem('dropqtt_broker_profiles');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
-    }
-    return [
-      {
-        id: 'emqx-default',
-        name: 'EMQX Public',
-        config: {
-          host: 'broker.emqx.io',
-          port: 1883,
-          useTls: false,
-          clientId: `DropQTT_${Math.random().toString(36).substring(2, 8)}`,
-          keepAliveSecs: 60,
-          defaultQos: 1,
-          baseTopic: 'dropqtt',
-        },
-      },
-      {
-        id: 'local-mosquitto',
-        name: 'Localhost (1883)',
-        config: {
-          host: '127.0.0.1',
-          port: 1883,
-          useTls: false,
-          clientId: `DropQTT_${Math.random().toString(36).substring(2, 8)}`,
-          keepAliveSecs: 60,
-          defaultQos: 1,
-          baseTopic: 'dropqtt',
-        },
-      },
-    ];
-  });
-
-  const [status, setStatus] = useState<ConnectionStatus>({
-    connected: false,
-    brokerHost: config.host,
-    brokerPort: config.port,
-    channel: 'public-lobby',
-    clientId: config.clientId,
-  });
-
-  // 4. Topic configuration for File Transfer
-  const [publishTopic, setPublishTopic] = useState<string>(() => {
-    return localStorage.getItem('dropqtt_publish_topic') || 'dropqtt/public-lobby';
-  });
-
-  const [subscribeTopic, setSubscribeTopic] = useState<string>(() => {
-    return localStorage.getItem('dropqtt_subscribe_topic') || 'dropqtt/public-lobby/#';
-  });
-
-  // 5. File Batch & Transfer state
-  const [batchFiles, setBatchFiles] = useState<BatchFileItem[]>([]);
-  const [isSendingBatch, setIsSendingBatch] = useState<boolean>(false);
-  const [sendingIndex, setSendingIndex] = useState<number>(0);
-  const [transfers, setTransfers] = useState<Record<string, TransferProgress>>({});
-  const transfersRef = useRef(transfers);
-  transfersRef.current = transfers;
-
-  // 6. Generic MQTT Subscriptions & Message Stream
-  const [subscriptions, setSubscriptions] = useState<TopicSubscription[]>(() => {
-    try {
-      const saved = localStorage.getItem('dropqtt_subscriptions');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
-    }
-    return [
-      { topic: 'dropqtt/#', qos: 1, color: '#06b6d4' },
-      { topic: 'test/topic', qos: 0, color: '#10b981' },
-    ];
-  });
-
-  const [messages, setMessages] = useState<MqttGenericMessage[]>([]);
-
-  // 7. System / UI state
+  // ---- UI / system state ----
   const [downloadDir, setDownloadDir] = useState<string>('');
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
-  const [latency, setLatency] = useState<number | null>(null);
-  const [isTestingLatency, setIsTestingLatency] = useState<boolean>(false);
-  const [isConnecting, setIsConnecting] = useState<boolean>(false);
   const [updateStatusText, setUpdateStatusText] = useState<string | null>(null);
 
-  // Persistence helpers
-  const handleModeChange = (mode: 'transfer' | 'mqttx') => {
-    setActiveMode(mode);
-    localStorage.setItem('dropqtt_workspace_mode', mode);
-  };
-
-  const handleLangChange = (newLang: Language) => {
-    setLang(newLang);
-    localStorage.setItem('dropqtt_lang', newLang);
-  };
-
-  const handleThemeChange = (newTheme: Theme) => {
-    setTheme(newTheme);
-    localStorage.setItem('dropqtt_theme', newTheme);
-  };
-
-  const handlePublishTopicChange = (top: string) => {
-    setPublishTopic(top);
-    localStorage.setItem('dropqtt_publish_topic', top);
-  };
-
-  const handleSubscribeTopicChange = (top: string) => {
-    setSubscribeTopic(top);
-    localStorage.setItem('dropqtt_subscribe_topic', top);
-  };
-
-  // 8. Event Listeners (Broker events, file progress, generic MQTT messages)
   useEffect(() => {
-    let unlistenProgress: (() => void) | undefined;
-    let unlistenStatus: (() => void) | undefined;
-    let unlistenDisconnect: (() => void) | undefined;
-    let unlistenMqttMsg: (() => void) | undefined;
-
-    const setupListeners = async () => {
-      // Transfer progress
-      unlistenProgress = await listen<TransferProgress>('transfer-progress', (event) => {
-        const item = event.payload;
-        setTransfers((prev) => ({
-          ...prev,
-          [item.transferId]: item,
-        }));
-
-        if (item.status === 'completed' && item.direction === 'receive') {
-          confetti({
-            particleCount: 50,
-            spread: 60,
-            origin: { y: 0.8 },
-          });
-        }
-      });
-
-      // Broker status
-      unlistenStatus = await listen<ConnectionStatus>('broker-status', (event) => {
-        setStatus(event.payload);
-      });
-
-      // Broker disconnected
-      unlistenDisconnect = await listen<string>('broker-disconnected', () => {
-        setStatus((prev) => ({ ...prev, connected: false }));
-      });
-
-      // Generic MQTT messages
-      unlistenMqttMsg = await listen<MqttGenericMessage>('mqtt-message', (event) => {
-        setMessages((prev) => [event.payload, ...prev.slice(0, 499)]);
-      });
-
-      // Initial defaults
-      try {
-        const defaultDir = await invoke<string>('get_default_download_dir');
-        setDownloadDir(defaultDir);
-        const curStatus = await invoke<ConnectionStatus>('get_connection_status');
-        setStatus(curStatus);
-      } catch (err) {
-        console.error('Initialization error:', err);
-      }
-    };
-
-    setupListeners();
-
-    return () => {
-      if (unlistenProgress) unlistenProgress();
-      if (unlistenStatus) unlistenStatus();
-      if (unlistenDisconnect) unlistenDisconnect();
-      if (unlistenMqttMsg) unlistenMqttMsg();
-    };
+    invoke<string>('get_default_download_dir')
+      .then(setDownloadDir)
+      .catch((e) => console.error('Download dir init error:', e));
   }, []);
 
-  // 9. Broker Connection & Switch
-  const handleConnect = async (cfgToConnect: BrokerConfig = config) => {
-    setIsConnecting(true);
-    try {
-      await invoke('connect_broker', { config: cfgToConnect });
-      setConfig(cfgToConnect);
-      localStorage.setItem('dropqtt_active_broker', JSON.stringify(cfgToConnect));
-      setIsSettingsOpen(false);
-
-      // Subscribe to configured receive topic
-      if (subscribeTopic) {
-        await invoke('subscribe_topic', { topic: subscribeTopic, qos: 1 }).catch(() => {});
-      }
-
-      // Re-subscribe all MQTT console custom topics
-      for (const sub of subscriptions) {
-        await invoke('subscribe_topic', { topic: sub.topic, qos: sub.qos }).catch(() => {});
-      }
-
-      // Test latency once connected
-      handleTestLatency(cfgToConnect);
-    } catch (err: any) {
+  // ---- Connections & topics wiring ----
+  const handleConnect = (cfg: BrokerConfig) => {
+    broker.connect(cfg).catch((err) => {
       console.error('Connection failed:', err);
-      alert(`Connection failed: ${err}`);
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const handleDisconnect = async () => {
-    try {
-      await invoke('disconnect_broker');
-      setStatus((prev) => ({ ...prev, connected: false }));
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleToggleConnect = () => {
-    if (status.connected) {
-      handleDisconnect();
-    } else {
-      handleConnect(config);
-    }
-  };
-
-  const handleSelectProfile = (profile: BrokerProfile) => {
-    setConfig(profile.config);
-    handleConnect(profile.config);
-  };
-
-  const handleSaveProfile = (name: string, pConfig: BrokerConfig) => {
-    const newProfile: BrokerProfile = {
-      id: `prof_${Date.now()}`,
-      name,
-      config: pConfig,
-    };
-    const updated = [...profiles, newProfile];
-    setProfiles(updated);
-    localStorage.setItem('dropqtt_broker_profiles', JSON.stringify(updated));
-  };
-
-  const handleDeleteProfile = (id: string) => {
-    const updated = profiles.filter((p) => p.id !== id);
-    setProfiles(updated);
-    localStorage.setItem('dropqtt_broker_profiles', JSON.stringify(updated));
-  };
-
-  const handleTestLatency = async (cfg: BrokerConfig = config) => {
-    setIsTestingLatency(true);
-    try {
-      const ms = await invoke<number>('test_broker_connection', { config: cfg });
-      setLatency(ms);
-    } catch (e) {
-      console.error('Ping error:', e);
-      setLatency(null);
-    } finally {
-      setIsTestingLatency(false);
-    }
-  };
-
-  // 10. File Batch Operations & Sequential Sender
-  const handleAddBatchFiles = (newFiles: { path: string; name: string; size: number }[]) => {
-    const items: BatchFileItem[] = newFiles.map((f) => ({
-      id: `batch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      path: f.path,
-      name: f.name,
-      size: f.size,
-      status: 'pending',
-    }));
-    setBatchFiles((prev) => [...prev, ...items]);
-  };
-
-  const handleRemoveBatchFile = (id: string) => {
-    setBatchFiles((prev) => prev.filter((f) => f.id !== id));
-  };
-
-  const handleClearBatchFiles = () => {
-    setBatchFiles([]);
-  };
-
-  const handleStartSendBatch = async (chunkSize: number, qos: number) => {
-    if (batchFiles.length === 0 || isSendingBatch) return;
-
-    setIsSendingBatch(true);
-
-    for (let i = 0; i < batchFiles.length; i++) {
-      const current = batchFiles[i];
-      if (current.status === 'completed') continue;
-
-      setSendingIndex(i);
-      setBatchFiles((prev) =>
-        prev.map((item, idx) => (idx === i ? { ...item, status: 'sending' } : item))
-      );
-
-      try {
-        const transferId = await invoke<string>('start_send_file', {
-          filePath: current.path,
-          chunkSize,
-          qos,
-          customPublishTopic: publishTopic.trim() || undefined,
-        });
-
-        // Wait until this transfer completes, fails, or is cancelled
-        await new Promise<void>((resolve) => {
-          const checkInterval = setInterval(() => {
-            const currentTransfer = transfersRef.current[transferId];
-            if (currentTransfer) {
-              if (
-                currentTransfer.status === 'completed' ||
-                currentTransfer.status === 'failed' ||
-                currentTransfer.status === 'cancelled'
-              ) {
-                clearInterval(checkInterval);
-                resolve();
-              }
-            }
-          }, 300);
-        });
-
-        const finalStatus = transfersRef.current[transferId]?.status;
-        setBatchFiles((prev) =>
-          prev.map((item, idx) =>
-            idx === i
-              ? {
-                  ...item,
-                  status: finalStatus === 'completed' ? 'completed' : 'failed',
-                  transferId,
-                }
-              : item
-          )
-        );
-      } catch (err: any) {
-        console.error(`Failed to send file ${current.name}:`, err);
-        setBatchFiles((prev) =>
-          prev.map((item, idx) =>
-            idx === i ? { ...item, status: 'failed', error: String(err) } : item
-          )
-        );
-      }
-    }
-
-    setIsSendingBatch(false);
-    confetti({
-      particleCount: 80,
-      spread: 80,
-      origin: { y: 0.7 },
     });
   };
 
-  // 11. Receiver topic apply & Download folder
   const handleApplySubscribeTopic = async (top: string) => {
-    handleSubscribeTopicChange(top);
-    if (status.connected) {
-      await invoke('subscribe_topic', { topic: top.trim(), qos: 1 });
+    setSubscribeTopic(top);
+    if (broker.isConnected) {
+      await broker.registerTopic(top.trim(), 1).catch((e) => console.error('registerTopic:', e));
     }
   };
 
   const handleChangeDownloadDir = async () => {
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const selected = await open({
-        directory: true,
-        multiple: false,
-      });
+      const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === 'string') {
         await invoke('set_download_dir', { path: selected });
         setDownloadDir(selected);
@@ -430,69 +120,7 @@ export function App() {
     }
   };
 
-  // 12. Transfer controls (Pause/Resume/Cancel/Reveal)
-  const handlePause = async (id: string) => {
-    await invoke('pause_transfer', { transferId: id });
-  };
-
-  const handleResume = async (id: string) => {
-    await invoke('resume_transfer', { transferId: id });
-  };
-
-  const handleCancel = async (id: string) => {
-    await invoke('cancel_transfer', { transferId: id });
-  };
-
-  const handleReveal = async (path: string) => {
-    await invoke('reveal_file', { filePath: path });
-  };
-
-  // 13. MQTTX Client topic subscriptions & message publishing
-  const handleAddSubscription = async (topic: string, qos: number, color?: string) => {
-    if (subscriptions.some((s) => s.topic === topic)) return;
-    const newSub: TopicSubscription = {
-      topic,
-      qos,
-      color,
-      createdAt: new Date().toLocaleTimeString(),
-    };
-    const updated = [...subscriptions, newSub];
-    setSubscriptions(updated);
-    localStorage.setItem('dropqtt_subscriptions', JSON.stringify(updated));
-
-    if (status.connected) {
-      await invoke('subscribe_topic', { topic, qos }).catch((e) => {
-        console.error('Subscribe error:', e);
-      });
-    }
-  };
-
-  const handleRemoveSubscription = async (topic: string) => {
-    const updated = subscriptions.filter((s) => s.topic !== topic);
-    setSubscriptions(updated);
-    localStorage.setItem('dropqtt_subscriptions', JSON.stringify(updated));
-
-    if (status.connected) {
-      await invoke('unsubscribe_topic', { topic }).catch((e) => {
-        console.error('Unsubscribe error:', e);
-      });
-    }
-  };
-
-  const handlePublishMessage = async (
-    topic: string,
-    payload: string,
-    qos: number,
-    retain: boolean
-  ) => {
-    await invoke('publish_message', { topic, payload, qos, retain });
-  };
-
-  const handleClearMessages = () => {
-    setMessages([]);
-  };
-
-  // 14. Auto updater
+  // ---- Auto updater ----
   const handleCheckUpdate = async () => {
     setUpdateStatusText(t.checkingUpdate);
     try {
@@ -512,121 +140,142 @@ export function App() {
     setTimeout(() => setUpdateStatusText(null), 4000);
   };
 
-  const activeTransfersCount = Object.values(transfers).filter(
-    (t) => t.status === 'transferring' || t.status === 'verifying'
-  ).length;
+  const isV5 = (broker.config.protocolVersion ?? 3) === 5;
 
   return (
-    <div
-      className="min-h-screen flex overflow-hidden font-sans select-none"
-      style={{
-        background: currentTheme.bodyBg,
-        color: currentTheme.textPrimary,
-      }}
-    >
+    <div className="min-h-screen flex overflow-hidden font-sans select-none">
       {/* 1. Left Vertical Dock Navigation */}
       <Sidebar
         activeMode={activeMode}
-        setActiveMode={handleModeChange}
-        activeTransfersCount={activeTransfersCount}
-        activeSubsCount={subscriptions.length}
-        connected={status.connected}
-        brokerHost={status.brokerHost}
-        brokerPort={status.brokerPort}
-        latency={latency}
-        channel={status.channel}
+        setActiveMode={setModeStr}
+        activeTransfersCount={transferState.activeCount}
+        awaitingApprovalCount={transferState.awaitingApproval.length}
+        activeSubsCount={mqtt.subscriptions.length}
+        connected={broker.isConnected}
+        brokerHost={broker.status.brokerHost}
+        brokerPort={broker.status.brokerPort}
+        protocolVersion={broker.config.protocolVersion ?? 3}
+        latency={broker.latency}
         onOpenSettings={() => setIsSettingsOpen(true)}
         lang={lang}
-        setLang={handleLangChange}
+        setLang={setLangStr}
         theme={theme}
-        setTheme={handleThemeChange}
+        setTheme={setThemeStr}
         t={t}
       />
 
       {/* 2. Main Workspace Layout */}
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-        {/* Top Status Bar */}
         <BrokerStatusBar
           activeMode={activeMode}
-          connected={status.connected}
-          config={config}
-          profiles={profiles}
-          onSelectProfile={handleSelectProfile}
-          latency={latency}
-          isTesting={isTestingLatency}
-          onTestLatency={() => handleTestLatency(config)}
-          onToggleConnect={handleToggleConnect}
-          isConnecting={isConnecting}
+          connected={broker.isConnected}
+          config={broker.config}
+          profiles={broker.profiles}
+          onSelectProfile={broker.selectProfile}
+          latency={broker.latency}
+          isTesting={broker.isTestingLatency}
+          onTestLatency={() => broker.testLatency(broker.config)}
+          onToggleConnect={broker.toggleConnect}
+          isConnecting={broker.isConnecting}
           t={t}
         />
 
-        {/* Scrollable Main Workspace Content */}
+        {/* Connection error banner (backend events) */}
+        {broker.connectionError && !broker.isConnecting && (
+          <div className="px-4 py-1.5 bg-rose-950/60 border-b border-rose-900/60 flex items-center gap-2 text-[11px] text-rose-300 font-mono">
+            <WifiOff className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate flex-1">{broker.connectionError}</span>
+            <button
+              onClick={() => broker.toggleConnect()}
+              className="px-2 py-0.5 rounded border border-rose-700 hover:bg-rose-900/50 font-semibold shrink-0"
+            >
+              {t.connect}
+            </button>
+          </div>
+        )}
+
         <main className="flex-1 overflow-y-auto p-4 space-y-4">
           {activeMode === 'transfer' ? (
             /* Mode 1: File Transfer Hub */
             <div className="space-y-4 max-w-5xl mx-auto">
-              {/* Top Configuration Grid: Batch Sender (Left) & Receiver (Right) */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <BatchSender
                   publishTopic={publishTopic}
-                  setPublishTopic={handlePublishTopicChange}
-                  files={batchFiles}
-                  onAddFiles={handleAddBatchFiles}
-                  onRemoveFile={handleRemoveBatchFile}
-                  onClearFiles={handleClearBatchFiles}
-                  onStartSendBatch={handleStartSendBatch}
-                  isSending={isSendingBatch}
-                  sendingIndex={sendingIndex}
-                  connected={status.connected}
+                  setPublishTopic={setPublishTopic}
+                  files={batch.batchFiles}
+                  onAddFiles={batch.addBatchFiles}
+                  onRemoveFile={batch.removeBatchFile}
+                  onClearFiles={batch.clearBatchFiles}
+                  onStartSendBatch={batch.startSendBatch}
+                  onCancelBatch={batch.requestBatchCancel}
+                  isSending={batch.isSendingBatch}
+                  sendingIndex={batch.sendingIndex}
+                  connected={broker.isConnected}
                   t={t}
                 />
 
                 <ReceiverConfig
                   subscribeTopic={subscribeTopic}
-                  setSubscribeTopic={handleSubscribeTopicChange}
+                  setSubscribeTopic={setSubscribeTopic}
                   onApplySubscribeTopic={handleApplySubscribeTopic}
                   downloadDir={downloadDir}
                   onSelectDownloadDir={handleChangeDownloadDir}
-                  connected={status.connected}
+                  connected={broker.isConnected}
+                  autoReceive={transferState.autoReceive}
+                  onToggleAutoReceive={transferState.setAutoReceive}
                   t={t}
                 />
               </div>
 
-              {/* Full Width Transfer Queue */}
               <TransferQueue
-                transfers={transfers}
-                onPause={handlePause}
-                onResume={handleResume}
-                onCancel={handleCancel}
-                onReveal={handleReveal}
+                transfers={transferState.transfers}
+                onPause={transferState.pauseTransfer}
+                onResume={transferState.resumeTransfer}
+                onCancel={transferState.cancelTransfer}
+                onReveal={transferState.revealFile}
+                onApprove={transferState.approveTransfer}
+                onReject={transferState.rejectTransfer}
+                onClearFinished={transferState.clearFinished}
                 t={t}
               />
             </div>
           ) : (
             /* Mode 2: Generic MQTTX Client Console */
-            <div className="space-y-4 max-w-5xl mx-auto">
-              {/* Subscriptions Bar */}
+            <div className="space-y-4 max-w-6xl mx-auto flex flex-col">
               <SubscriptionsBar
-                subscriptions={subscriptions}
-                onAddSubscription={handleAddSubscription}
-                onRemoveSubscription={handleRemoveSubscription}
-                connected={status.connected}
+                subscriptions={mqtt.subscriptions}
+                onAddSubscription={mqtt.addSubscription}
+                onRemoveSubscription={mqtt.removeSubscription}
+                hitStats={subStats.stats}
+                onResetStats={subStats.resetStats}
+                connected={broker.isConnected}
                 t={t}
               />
 
-              {/* Live Message Monitor Feed */}
               <MessageStream
-                messages={messages}
-                onClearMessages={handleClearMessages}
+                messages={mqtt.messages}
+                onClearMessages={mqtt.clearMessages}
+                onClearRetained={handleClearRetained}
+                paused={mqtt.paused}
+                pendingCount={mqtt.pendingCount}
+                onTogglePaused={mqtt.togglePaused}
                 t={t}
               />
 
-              {/* Message Publisher */}
               <MessagePublisher
-                onPublishMessage={handlePublishMessage}
-                connected={status.connected}
+                onPublishMessage={mqtt.publish}
+                connected={broker.isConnected}
+                isV5={isV5}
                 t={t}
               />
+
+              {/* Console-side error surface for failed publishes */}
+              {broker.connectionError && (
+                <div className="flex items-center gap-2 text-[11px] text-rose-400 font-mono px-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>{broker.connectionError}</span>
+                </div>
+              )}
             </div>
           )}
         </main>
@@ -636,20 +285,20 @@ export function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        config={config}
-        onSaveAndConnect={(cfg) => handleConnect(cfg)}
-        onDisconnect={handleDisconnect}
-        isConnected={status.connected}
+        config={broker.config}
+        onSaveAndConnect={handleConnect}
+        onDisconnect={broker.disconnect}
+        isConnected={broker.isConnected}
         lang={lang}
-        onLangChange={handleLangChange}
+        onLangChange={setLangStr}
         theme={theme}
-        onThemeChange={handleThemeChange}
+        onThemeChange={setThemeStr}
         t={t}
         onCheckUpdate={handleCheckUpdate}
         updateStatusText={updateStatusText}
-        profiles={profiles}
-        onSaveProfile={handleSaveProfile}
-        onDeleteProfile={handleDeleteProfile}
+        profiles={broker.profiles}
+        onSaveProfile={broker.saveProfile}
+        onDeleteProfile={broker.deleteProfile}
       />
     </div>
   );
