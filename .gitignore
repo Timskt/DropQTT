@@ -27,3 +27,7 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# updater signing key backups & local password
+*.old.bak
+src-tauri/.updater-key-password
