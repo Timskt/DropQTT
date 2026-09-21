@@ -11,6 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use base64::Engine;
+use bytes::Bytes;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
@@ -18,7 +21,16 @@ use tokio::task::JoinHandle;
 
 use crate::mqtt_manager::wildcard_match;
 use crate::protocol::{BrokerConfig, PubProperties};
+use crate::transform::{apply_transform, TransformOutcome, SCRIPT_SIZE_LIMIT};
 use crate::transport::{build_connection, MqttClient, NetEvent, NormalizedPublish};
+
+/// One exact/wildcard topic mapping entry for "map" mode
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicMapEntry {
+    pub from: String,
+    pub to: String,
+}
 
 /// One forwarding rule: source topic filter -> target connection + topic map
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,7 +40,8 @@ pub struct BridgeRule {
     pub name: String,
     /// Logical connection id acting as the source ("src" | "dst")
     pub source_conn: String,
-    /// Source topic filter; '+' / '#' wildcards allowed
+    /// Source topic filter; '+' / '#' wildcards allowed. May contain multiple
+    /// newline-separated filters (one broad subscription rule for many topics).
     pub source_filter: String,
     /// Subscription QoS applied on the source connection
     #[serde(default = "default_qos1")]
@@ -36,12 +49,43 @@ pub struct BridgeRule {
     /// Logical connection id receiving the forwarded publish
     pub target_conn: String,
     /// "same" (keep original topic) | "prefix" (replace prefix)
+    /// | "fixed" (single aggregate topic) | "regex" (capture-group rewrite)
+    /// | "map" (per-topic mapping table, exact then wildcard)
     #[serde(default = "default_topic_mode")]
     pub topic_mode: String,
     #[serde(default)]
     pub prefix_from: String,
     #[serde(default)]
     pub prefix_to: String,
+    /// Target topic when topic_mode == "fixed"
+    #[serde(default)]
+    pub fixed_topic: String,
+    /// Regex pattern / replacement ($1 groups) when topic_mode == "regex"
+    #[serde(default)]
+    pub regex_pattern: String,
+    #[serde(default)]
+    pub regex_replacement: String,
+    /// Per-topic mapping rows when topic_mode == "map"
+    #[serde(default)]
+    pub topic_map: Vec<TopicMapEntry>,
+    /// Optional JS `function transform(topic, payload, qos, retain)` applied
+    /// to the payload before forwarding; returning null drops the message
+    #[serde(default)]
+    pub transform_script: String,
+    /// Wildcard filters whose matching topics are NOT forwarded by this rule
+    #[serde(default)]
+    pub exclude_filters: Vec<String>,
+    /// Literal text prepended / appended to the payload (byte-safe for text)
+    #[serde(default)]
+    pub payload_prefix: String,
+    #[serde(default)]
+    pub payload_suffix: String,
+    /// Wrap the payload into a JSON envelope {topic, ts, payload|payload_b64}
+    #[serde(default)]
+    pub wrap_json: bool,
+    /// Max messages forwarded per second by this rule (0 = unlimited)
+    #[serde(default)]
+    pub rate_limit: u32,
     /// "source" (follow incoming) | "fixed"
     #[serde(default = "default_qos_mode")]
     pub qos_mode: String,
@@ -78,6 +122,8 @@ fn default_enabled() -> bool {
 pub struct BridgeRuleStats {
     pub forwarded: u64,
     pub errors: u64,
+    /// Messages skipped by exclusion or rate limiting
+    pub dropped: u64,
     pub last_topic: String,
 }
 
@@ -114,6 +160,28 @@ struct BridgeConn {
     info: BridgeConnInfo,
 }
 
+/// Per-rule one-second rate-limit window
+#[derive(Default)]
+struct RateWindow {
+    window_sec: u64,
+    count: u32,
+}
+
+fn gate_allow(window: &mut RateWindow, now_sec: u64, limit: u32) -> bool {
+    if limit == 0 {
+        return true;
+    }
+    if window.window_sec != now_sec {
+        window.window_sec = now_sec;
+        window.count = 0;
+    }
+    if window.count >= limit {
+        return false;
+    }
+    window.count += 1;
+    true
+}
+
 /// Eventloop task handle + cooperative shutdown flag
 pub type LoopControl = (JoinHandle<()>, Arc<AtomicBool>);
 
@@ -123,6 +191,7 @@ pub struct BridgeManager {
     tasks: Mutex<HashMap<String, LoopControl>>,
     rules: Mutex<HashMap<String, BridgeRule>>,
     stats: Mutex<HashMap<String, BridgeRuleStats>>,
+    gates: Mutex<HashMap<String, RateWindow>>,
     /// Currently registered subscription filters per connection
     subs: Mutex<HashMap<String, HashSet<String>>>,
 }
@@ -151,8 +220,71 @@ pub fn map_topic(rule: &BridgeRule, topic: &str) -> String {
                 topic.to_string()
             }
         }
+        "fixed" => {
+            if rule.fixed_topic.trim().is_empty() {
+                topic.to_string()
+            } else {
+                rule.fixed_topic.trim().to_string()
+            }
+        }
+        "regex" => Regex::new(&rule.regex_pattern)
+            .ok()
+            .and_then(|re| re.replace(topic, rule.regex_replacement.as_str()).into_owned().into())
+            .unwrap_or_else(|| topic.to_string()),
+        "map" => {
+            // Exact rows win, then the first matching wildcard row
+            if let Some(e) = rule.topic_map.iter().find(|e| e.from == topic && !e.to.is_empty()) {
+                return e.to.clone();
+            }
+            if let Some(e) = rule
+                .topic_map
+                .iter()
+                .find(|e| !e.to.is_empty() && wildcard_match(&e.from, topic))
+            {
+                return e.to.clone();
+            }
+            topic.to_string()
+        }
         _ => topic.to_string(),
     }
+}
+
+/// True when the topic matches any of the rule's exclusion filters
+pub fn is_excluded(rule: &BridgeRule, topic: &str) -> bool {
+    rule.exclude_filters
+        .iter()
+        .any(|f| !f.trim().is_empty() && wildcard_match(f.trim(), topic))
+}
+
+/// Apply the rule's payload edits: optional JSON envelope + prefix/suffix.
+/// Returns the original bytes untouched when no edits are configured.
+pub fn build_payload(rule: &BridgeRule, topic: &str, payload: &Bytes) -> Bytes {
+    if rule.payload_prefix.is_empty() && rule.payload_suffix.is_empty() && !rule.wrap_json {
+        return payload.clone();
+    }
+    let body: Vec<u8> = if rule.wrap_json {
+        let envelope = match std::str::from_utf8(payload) {
+            Ok(text) => serde_json::json!({
+                "topic": topic,
+                "ts": chrono::Utc::now().timestamp_millis(),
+                "payload": text,
+            }),
+            Err(_) => serde_json::json!({
+                "topic": topic,
+                "ts": chrono::Utc::now().timestamp_millis(),
+                "payload_b64": base64::engine::general_purpose::STANDARD.encode(payload),
+            }),
+        };
+        envelope.to_string().into_bytes()
+    } else {
+        payload.to_vec()
+    };
+    let mut out =
+        Vec::with_capacity(rule.payload_prefix.len() + body.len() + rule.payload_suffix.len());
+    out.extend_from_slice(rule.payload_prefix.as_bytes());
+    out.extend_from_slice(&body);
+    out.extend_from_slice(rule.payload_suffix.as_bytes());
+    Bytes::from(out)
 }
 
 fn resolve_qos(rule: &BridgeRule, incoming: u8) -> u8 {
@@ -175,11 +307,20 @@ impl BridgeManager {
         Arc::new(Self::default())
     }
 
+    /// All newline-separated source filters of a rule
+    pub fn rule_filters(rule: &BridgeRule) -> Vec<String> {
+        rule.source_filter
+            .split('\n')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
     fn desired_filters(rules: &HashMap<String, BridgeRule>, conn_id: &str) -> HashSet<String> {
         rules
             .values()
-            .filter(|r| r.enabled && r.source_conn == conn_id && !r.source_filter.trim().is_empty())
-            .map(|r| r.source_filter.trim().to_string())
+            .filter(|r| r.enabled && r.source_conn == conn_id)
+            .flat_map(Self::rule_filters)
             .collect()
     }
 
@@ -343,19 +484,42 @@ impl BridgeManager {
     /// Replace the full rule set (frontend owns persistence)
     pub async fn sync_rules(self: &Arc<Self>, app: AppHandle, rules: Vec<BridgeRule>) -> Result<(), String> {
         for r in &rules {
-            if r.source_filter.trim().is_empty() {
+            let filters = Self::rule_filters(r);
+            if filters.is_empty() {
                 return Err(format!("Rule '{}' has an empty source filter", r.name));
             }
             if r.source_conn == r.target_conn {
                 return Err(format!("Rule '{}' must use two different connections", r.name));
             }
+            if r.topic_mode == "fixed" && r.fixed_topic.trim().is_empty() {
+                return Err(format!("Rule '{}' uses fixed-topic mode without a target topic", r.name));
+            }
+            if r.topic_mode == "map" && r.topic_map.iter().all(|e| e.from.trim().is_empty() || e.to.trim().is_empty()) {
+                return Err(format!("Rule '{}' has an empty topic mapping table", r.name));
+            }
+            if r.topic_mode == "regex" && !r.regex_pattern.is_empty() {
+                Regex::new(&r.regex_pattern)
+                    .map_err(|e| format!("Rule '{}' has an invalid regex: {}", r.name, e))?;
+            }
+            let script = r.transform_script.trim();
+            if script.len() > SCRIPT_SIZE_LIMIT {
+                return Err(format!("Rule '{}' script exceeds {} B", r.name, SCRIPT_SIZE_LIMIT));
+            }
+            if !script.is_empty() && !script.contains("function transform") {
+                return Err(format!(
+                    "Rule '{}' script must define function transform(topic, payload, qos, retain)",
+                    r.name
+                ));
+            }
         }
         let map: HashMap<String, BridgeRule> = rules.into_iter().map(|r| (r.id.clone(), r)).collect();
 
-        // Purge stats of removed rules
+        // Purge stats / rate windows of removed rules
         {
             let mut stats = self.stats.lock().await;
             stats.retain(|id, _| map.contains_key(id));
+            let mut gates = self.gates.lock().await;
+            gates.retain(|id, _| map.contains_key(id));
         }
         *self.rules.lock().await = map;
         self.resync_subs().await?;
@@ -387,6 +551,24 @@ impl BridgeManager {
         entry.last_topic = topic.to_string();
     }
 
+    async fn bump_dropped(&self, rule_id: &str, topic: &str) {
+        let mut stats = self.stats.lock().await;
+        let entry = stats.entry(rule_id.to_string()).or_default();
+        entry.dropped += 1;
+        entry.last_topic = topic.to_string();
+    }
+
+    /// True when the rule's per-second budget still has room (0 = unlimited)
+    async fn rate_allow(&self, rule_id: &str, limit: u32) -> bool {
+        if limit == 0 {
+            return true;
+        }
+        let now = chrono::Utc::now().timestamp().max(0) as u64;
+        let mut gates = self.gates.lock().await;
+        let window = gates.entry(rule_id.to_string()).or_default();
+        gate_allow(window, now, limit)
+    }
+
     async fn route(self: &Arc<Self>, app: &AppHandle, src_id: &str, publish: NormalizedPublish) {
         let rules = self.rules.lock().await.clone();
         if rules.is_empty() {
@@ -398,13 +580,26 @@ impl BridgeManager {
             if !rule.enabled || rule.source_conn != src_id {
                 continue;
             }
-            if !wildcard_match(&rule.source_filter, &publish.topic) {
+            // Any of the rule's (possibly multi-line) filters matches -> proceed
+            if !Self::rule_filters(rule)
+                .iter()
+                .any(|f| wildcard_match(f, &publish.topic))
+            {
                 continue;
             }
-            let target_topic = map_topic(rule, &publish.topic);
+            // Exclusion sub-filters carve topics out of a broad wildcard rule
+            if is_excluded(rule, &publish.topic) {
+                self.bump_dropped(&rule.id, &publish.topic).await;
+                continue;
+            }
             // Loop guard: never bounce a message back onto the same topic it
             // arrived on (would ping-pong through the same connection).
+            let target_topic = map_topic(rule, &publish.topic);
             if rule.target_conn == src_id && target_topic == publish.topic {
+                continue;
+            }
+            if !self.rate_allow(&rule.id, rule.rate_limit).await {
+                self.bump_dropped(&rule.id, &publish.topic).await;
                 continue;
             }
             let target = match conns.get(&rule.target_conn) {
@@ -426,9 +621,52 @@ impl BridgeManager {
                 None
             };
 
-            let payload_len = publish.payload.len();
+            // Static edits first (prefix/suffix/envelope), then the JS transform
+            // overrides everything when configured.
+            let mut payload_out = build_payload(rule, &publish.topic, &publish.payload);
+            let mut payload_len = payload_out.len();
+
+            // JS transform wins over static payload edits when configured
+            if !rule.transform_script.trim().is_empty() {
+                match apply_transform(
+                    rule.transform_script.trim(),
+                    &publish.topic,
+                    &payload_out,
+                    qos,
+                    retain,
+                ) {
+                    Ok(TransformOutcome::Send(b)) => {
+                        payload_len = b.len();
+                        payload_out = b;
+                    }
+                    Ok(TransformOutcome::Drop) => {
+                        self.bump_dropped(&rule.id, &publish.topic).await;
+                        continue;
+                    }
+                    Err(e) => {
+                        self.bump(&rule.id, false, &publish.topic).await;
+                        let _ = app.emit(
+                            "bridge-event",
+                            BridgeEvent {
+                                rule_id: rule.id.clone(),
+                                rule_name: rule.name.clone(),
+                                from_topic: publish.topic.clone(),
+                                to_topic: target_topic.clone(),
+                                bytes: 0,
+                                qos,
+                                retain,
+                                ok: false,
+                                error: Some(e),
+                                timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                            },
+                        );
+                        continue;
+                    }
+                }
+            }
+
             let result = target
-                .publish(&target_topic, qos, retain, publish.payload.clone(), props.as_ref())
+                .publish(&target_topic, qos, retain, payload_out, props.as_ref())
                 .await;
 
             let (ok, error) = match result {
@@ -474,6 +712,16 @@ mod tests {
             topic_mode: mode.into(),
             prefix_from: from.into(),
             prefix_to: to.into(),
+            fixed_topic: String::new(),
+            regex_pattern: String::new(),
+            regex_replacement: String::new(),
+            topic_map: Vec::new(),
+            transform_script: String::new(),
+            exclude_filters: Vec::new(),
+            payload_prefix: String::new(),
+            payload_suffix: String::new(),
+            wrap_json: false,
+            rate_limit: 0,
             qos_mode: "source".into(),
             fixed_qos: 0,
             retain_mode: "source".into(),
@@ -520,6 +768,112 @@ mod tests {
         assert!(!resolve_retain(&r, true));
         r.retain_mode = "source".into();
         assert!(resolve_retain(&r, true));
+    }
+
+    #[test]
+    fn topic_fixed_aggregation() {
+        let mut r = rule("fixed", "", "");
+        r.fixed_topic = "all/aggregate".into();
+        assert_eq!(map_topic(&r, "sensor/1/data"), "all/aggregate");
+        // Empty fixed topic keeps the original (defensive)
+        r.fixed_topic = "".into();
+        assert_eq!(map_topic(&r, "sensor/1/data"), "sensor/1/data");
+    }
+
+    #[test]
+    fn topic_regex_capture_groups() {
+        let mut r = rule("regex", "", "");
+        r.regex_pattern = r"^sensor/(\w+)/data$".into();
+        r.regex_replacement = "up.$1".into();
+        assert_eq!(map_topic(&r, "sensor/abc/data"), "up.abc");
+        // Non-matching topics and invalid patterns keep the original
+        assert_eq!(map_topic(&r, "other/topic"), "other/topic");
+        r.regex_pattern = "([".into();
+        assert_eq!(map_topic(&r, "sensor/abc/data"), "sensor/abc/data");
+    }
+
+    #[test]
+    fn exclusion_carves_out_wildcard_scope() {
+        let mut r = rule("same", "", "");
+        r.exclude_filters = vec!["a/private/#".into(), "a/exact".into()];
+        assert!(is_excluded(&r, "a/private/secret"));
+        assert!(is_excluded(&r, "a/exact"));
+        assert!(!is_excluded(&r, "a/public/data"));
+    }
+
+    #[test]
+    fn multi_line_source_filters_subscribe_every_row() {
+        let mut r = rule("same", "", "");
+        r.source_filter = "/device/2\n/device/4\n".into();
+        assert_eq!(
+            BridgeManager::rule_filters(&r),
+            vec!["/device/2".to_string(), "/device/4".to_string()]
+        );
+        let mut rules = HashMap::new();
+        rules.insert("r1".into(), r);
+        let desired = BridgeManager::desired_filters(&rules, "src");
+        assert_eq!(desired, HashSet::from(["/device/2".to_string(), "/device/4".to_string()]));
+    }
+
+    #[test]
+    fn topic_map_exact_then_wildcard() {
+        let mut r = rule("map", "", "");
+        r.topic_map = vec![
+            TopicMapEntry { from: "/device/2".into(), to: "/device/20".into() },
+            TopicMapEntry { from: "/device/4".into(), to: "/device/40".into() },
+            TopicMapEntry { from: "legacy/#".into(), to: "modern/all".into() },
+        ];
+        assert_eq!(map_topic(&r, "/device/2"), "/device/20");
+        assert_eq!(map_topic(&r, "/device/4"), "/device/40");
+        assert_eq!(map_topic(&r, "legacy/any/deep"), "modern/all");
+        // Unmapped topics pass through unchanged
+        assert_eq!(map_topic(&r, "/device/99"), "/device/99");
+    }
+
+    #[test]
+    fn payload_passthrough_when_no_edits() {
+        let r = rule("same", "", "");
+        let p = Bytes::from_static(b"hello");
+        assert_eq!(build_payload(&r, "t", &p), p);
+    }
+
+    #[test]
+    fn payload_prefix_and_suffix() {
+        let mut r = rule("same", "", "");
+        r.payload_prefix = "[brg] ".into();
+        r.payload_suffix = "\n".into();
+        let p = Bytes::from_static(b"hi");
+        assert_eq!(build_payload(&r, "t", &p), Bytes::from_static(b"[brg] hi\n"));
+    }
+
+    #[test]
+    fn payload_json_envelope_text_and_binary() {
+        let mut r = rule("same", "", "");
+        r.wrap_json = true;
+        let text = build_payload(&r, "s/t", &Bytes::from_static(b"42"));
+        let v: serde_json::Value = serde_json::from_slice(&text).unwrap();
+        assert_eq!(v["topic"], "s/t");
+        assert_eq!(v["payload"], "42");
+        assert!(v["ts"].is_i64());
+
+        // Non-UTF-8 bytes ride the envelope as base64
+        let bin = build_payload(&r, "s/t", &Bytes::from_static(&[0xFF, 0xFE]));
+        let v: serde_json::Value = serde_json::from_slice(&bin).unwrap();
+        assert_eq!(v["payload_b64"], "//4=");
+    }
+
+    #[test]
+    fn rate_window_allows_up_to_limit_per_second() {
+        let mut w = RateWindow::default();
+        assert!(gate_allow(&mut w, 100, 2));
+        assert!(gate_allow(&mut w, 100, 2));
+        assert!(!gate_allow(&mut w, 100, 2)); // budget exhausted in window
+        assert!(gate_allow(&mut w, 101, 2)); // next second resets
+        // limit 0 = unlimited
+        let mut w0 = RateWindow::default();
+        for _ in 0..1000 {
+            assert!(gate_allow(&mut w0, 7, 0));
+        }
     }
 
     #[test]

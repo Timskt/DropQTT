@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Trash2, Copy, Check, ArrowDownRight, ArrowUpRight,
   Code2, AlignLeft, Binary, Braces, Box, Lock, FileText, Globe,
-  Pause, Play, Download, Eraser, Pin,
+  Pause, Play, Download, Eraser, Pin, RotateCcw,
 } from 'lucide-react';
 import { MqttGenericMessage } from '../../types';
 import { Translations } from '../../i18n';
@@ -11,6 +11,7 @@ import {
   uint8ToBase64, uint8ToHexDump, uint8ToUtf8,
 } from '../../utils/cbor';
 import { ExportFormat, exportMessages } from '../../utils/exportMessages';
+import { copyToClipboard } from '../../utils/clipboard';
 import { HtmlPreview, MarkdownView } from './RichText';
 
 interface MessageStreamProps {
@@ -18,6 +19,11 @@ interface MessageStreamProps {
   onClearMessages: () => void;
   /** Publish an empty retained message on each topic to wipe broker retain state */
   onClearRetained: (topics: string[]) => Promise<void>;
+  /** Re-publish this exact message (topic/payload/qos/retain) to the broker */
+  onReplay: (msg: MqttGenericMessage) => Promise<void>;
+  /** Add this message's topic to the subscription registry */
+  onQuickSubscribe: (topic: string) => void;
+  connected: boolean;
   paused: boolean;
   pendingCount: number;
   onTogglePaused: () => void;
@@ -103,10 +109,17 @@ interface MessageRowProps {
   msg: MqttGenericMessage;
   viewMode: ViewMode;
   copied: boolean;
+  replayed: boolean;
+  connected: boolean;
   onCopy: (id: string, text: string) => void;
+  onReplay: (msg: MqttGenericMessage) => void;
+  onQuickSubscribe: (topic: string) => void;
+  t: Translations;
 }
 
-const MessageRow = React.memo(function MessageRow({ msg, viewMode, copied, onCopy }: MessageRowProps) {
+const MessageRow = React.memo(function MessageRow({
+  msg, viewMode, copied, replayed, connected, onCopy, onReplay, onQuickSubscribe, t,
+}: MessageRowProps) {
   const [expanded, setExpanded] = useState(false);
   const isOut = msg.direction === 'out';
 
@@ -129,9 +142,15 @@ const MessageRow = React.memo(function MessageRow({ msg, viewMode, copied, onCop
             <span>{isOut ? 'OUT' : 'IN'}</span>
           </span>
 
-          <span className="font-semibold truncate inset-box px-2 py-0.5" style={{ color: 'var(--text-primary)' }}>
+          <button
+            type="button"
+            onClick={() => onQuickSubscribe(msg.topic)}
+            className="font-semibold truncate inset-box px-2 py-0.5 text-left transition hover:opacity-100"
+            style={{ color: 'var(--text-primary)' }}
+            title={t.quickSubscribe}
+          >
             {msg.topic}
-          </span>
+          </button>
 
           <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>QoS {msg.qos}</span>
           {msg.retain && (
@@ -157,6 +176,15 @@ const MessageRow = React.memo(function MessageRow({ msg, viewMode, copied, onCop
           )}
           <span>{msg.payloadLen} B</span>
           <span>{msg.timestamp}</span>
+          <button
+            onClick={() => onReplay(msg)}
+            disabled={!connected || msg.truncated}
+            className="transition hover:opacity-100 opacity-60 disabled:opacity-25 disabled:cursor-not-allowed"
+            style={{ color: replayed ? 'var(--success)' : 'var(--accent)' }}
+            title={msg.truncated ? t.replayTruncated : t.replay}
+          >
+            {replayed ? <Check className="w-3 h-3" /> : <RotateCcw className="w-3 h-3" />}
+          </button>
           <button
             onClick={() => onCopy(msg.id, display)}
             className="transition hover:opacity-100 opacity-60"
@@ -186,28 +214,36 @@ const MessageRow = React.memo(function MessageRow({ msg, viewMode, copied, onCop
           {effective === 'md' ? <MarkdownView text={display} /> : <HtmlPreview source={display} />}
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => overflow && setExpanded((x) => !x)}
-          className={`w-full text-left rounded-md border p-2.5 overflow-x-auto text-[12px] font-mono whitespace-pre leading-relaxed ${
-            expanded || !overflow ? '' : 'max-h-[12rem] overflow-hidden'
-          } ${overflow ? 'cursor-pointer' : 'cursor-default'}`}
+        <pre
+          onClick={() => {
+            // Don't toggle expansion while the user is selecting text
+            if (window.getSelection()?.toString()) return;
+            if (overflow) setExpanded((x) => !x);
+          }}
+          className={`select-text w-full text-left rounded-md border p-2.5 overflow-x-auto text-[12px] font-mono whitespace-pre leading-relaxed ${
+            overflow ? 'cursor-pointer' : 'cursor-default'
+          } ${expanded || !overflow ? '' : 'max-h-[12rem] overflow-hidden'}`}
           style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)', color: '#d3dae6' }}
         >
           {display}
           {overflow && !expanded && (
             <span className="block text-[11px] mt-1 opacity-60" style={{ color: 'var(--accent)' }}>⋯ click to expand</span>
           )}
-        </button>
+        </pre>
       )}
     </div>
   );
-}, (a, b) => a.msg === b.msg && a.viewMode === b.viewMode && a.copied === b.copied);
+}, (a, b) =>
+  a.msg === b.msg && a.viewMode === b.viewMode && a.copied === b.copied &&
+  a.replayed === b.replayed && a.connected === b.connected);
 
 export const MessageStream: React.FC<MessageStreamProps> = ({
   messages,
   onClearMessages,
   onClearRetained,
+  onReplay,
+  onQuickSubscribe,
+  connected,
   paused,
   pendingCount,
   onTogglePaused,
@@ -217,6 +253,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('auto');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [replayedId, setReplayedId] = useState<string | null>(null);
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
   const [exportNote, setExportNote] = useState<string | null>(null);
   const [retainOpen, setRetainOpen] = useState(false);
@@ -268,11 +305,25 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
     }
   }, [retainedTopics, onClearRetained]);
 
-  const handleCopy = useCallback((id: string, text: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopy = useCallback(async (id: string, text: string) => {
+    const ok = await copyToClipboard(text);
+    if (!ok) {
+      console.warn('Clipboard copy failed for', id);
+      return;
+    }
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 1500);
   }, []);
+
+  const handleReplay = useCallback(async (msg: MqttGenericMessage) => {
+    try {
+      await onReplay(msg);
+      setReplayedId(msg.id);
+      setTimeout(() => setReplayedId((cur) => (cur === msg.id ? null : cur)), 1500);
+    } catch (e) {
+      console.error('Replay failed:', e);
+    }
+  }, [onReplay]);
 
   const filteredMessages = useMemo(() => {
     return messages.filter((msg) => {
@@ -484,7 +535,12 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
               msg={msg}
               viewMode={viewMode}
               copied={copiedId === msg.id}
+              replayed={replayedId === msg.id}
+              connected={connected}
               onCopy={handleCopy}
+              onReplay={handleReplay}
+              onQuickSubscribe={onQuickSubscribe}
+              t={t}
             />
           ))
         )}

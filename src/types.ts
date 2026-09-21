@@ -94,9 +94,15 @@ export interface TopicSubscription {
 
 // ---- Bridge (broker-to-broker forwarding) ----
 
-export type BridgeTopicMode = 'same' | 'prefix';
+export type BridgeTopicMode = 'same' | 'prefix' | 'fixed' | 'regex' | 'map';
 export type BridgeQosMode = 'source' | 'fixed';
 export type BridgeRetainMode = 'source' | 'on' | 'off';
+
+/** One "from => to" row of the map topic-rewrite mode */
+export interface TopicMapEntry {
+  from: string;
+  to: string;
+}
 
 export interface BridgeRule {
   id: string;
@@ -110,6 +116,24 @@ export interface BridgeRule {
   topicMode: BridgeTopicMode;
   prefixFrom: string;
   prefixTo: string;
+  /** Target topic when topicMode === 'fixed' (aggregation) */
+  fixedTopic: string;
+  /** Regex pattern + replacement ($1 groups) when topicMode === 'regex' */
+  regexPattern: string;
+  regexReplacement: string;
+  /** Per-topic mapping rows when topicMode === 'map' */
+  topicMap: TopicMapEntry[];
+  /** JS "function transform(topic, payload, qos, retain)" rewriting the payload */
+  transformScript: string;
+  /** Wildcard filters whose matching topics are NOT forwarded */
+  excludeFilters: string[];
+  /** Literal text prepended / appended to the forwarded payload */
+  payloadPrefix: string;
+  payloadSuffix: string;
+  /** Wrap payload into JSON envelope {topic, ts, payload|payloadB64} */
+  wrapJson: boolean;
+  /** Max messages forwarded per second (0 = unlimited) */
+  rateLimit: number;
   qosMode: BridgeQosMode;
   fixedQos: number;
   retainMode: BridgeRetainMode;
@@ -117,6 +141,32 @@ export interface BridgeRule {
   forwardProps: boolean;
   enabled: boolean;
 }
+
+/** Default-filled view of a persisted rule (older saves lack new fields) */
+export const bridgeRuleDefaults: Pick<
+  BridgeRule,
+  | 'fixedTopic'
+  | 'regexPattern'
+  | 'regexReplacement'
+  | 'topicMap'
+  | 'transformScript'
+  | 'excludeFilters'
+  | 'payloadPrefix'
+  | 'payloadSuffix'
+  | 'wrapJson'
+  | 'rateLimit'
+> = {
+  fixedTopic: '',
+  regexPattern: '',
+  regexReplacement: '',
+  topicMap: [],
+  transformScript: '',
+  excludeFilters: [],
+  payloadPrefix: '',
+  payloadSuffix: '',
+  wrapJson: false,
+  rateLimit: 0,
+};
 
 export interface BridgeConnInfo {
   id: string;
@@ -130,6 +180,8 @@ export interface BridgeConnInfo {
 export interface BridgeRuleStats {
   forwarded: number;
   errors: number;
+  /** Skipped by exclusion filters or rate limiting */
+  dropped: number;
   lastTopic: string;
 }
 

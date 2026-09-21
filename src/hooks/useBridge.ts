@@ -7,6 +7,7 @@ import {
   BridgeEvent,
   BridgeRule,
   BridgeRuleStats,
+  bridgeRuleDefaults,
 } from '../types';
 import { usePersistentState } from './usePersistentState';
 
@@ -79,8 +80,10 @@ export function useBridge(visible: boolean) {
 
   // ---- Push rule set to the backend whenever it changes ----
   useEffect(() => {
-    invoke('bridge_sync_rules', { rules })
-      .catch((e) => console.warn('bridge sync rules:', e));
+    invoke('bridge_sync_rules', { rules }).catch((e) => {
+      // Surface validation failures (empty filter, src===dst, …) in the UI
+      setLastError(String(e));
+    });
   }, [rules]);
 
   // ---- Stats polling while the page is visible and something is connected ----
@@ -161,6 +164,24 @@ export function useBridge(visible: boolean) {
     [setRules],
   );
 
+  /** Replace all rules from an imported JSON file (ids regenerated on clash) */
+  const importRules = useCallback(
+    (incoming: BridgeRule[]) => {
+      setRules((prev) => {
+        const existing = new Set(prev.map((r) => r.id));
+        return incoming.map((r) => {
+          const base = r.id || `rule_${Date.now()}`;
+          let id = base;
+          let n = 0;
+          while (existing.has(id)) id = `${base}_${++n}`;
+          existing.add(id);
+          return { ...bridgeRuleDefaults, ...r, id } as BridgeRule;
+        });
+      });
+    },
+    [setRules],
+  );
+
   const resetStats = useCallback(async () => {
     try {
       await invoke('bridge_reset_stats');
@@ -173,6 +194,8 @@ export function useBridge(visible: boolean) {
 
   const clearEvents = useCallback(() => setEvents([]), []);
 
+  const totalSent = Object.values(stats).reduce((acc, s) => acc + s.forwarded, 0);
+
   return {
     conns,
     rules,
@@ -181,6 +204,7 @@ export function useBridge(visible: boolean) {
     busy,
     lastError,
     anyConnected,
+    totalSent,
     remember,
     autoReconnect,
     setAutoReconnect,
@@ -190,6 +214,7 @@ export function useBridge(visible: boolean) {
     updateRule,
     removeRule,
     toggleRule,
+    importRules,
     resetStats,
     clearEvents,
   };

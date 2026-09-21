@@ -208,7 +208,7 @@ export function App() {
         <main className="flex-1 overflow-y-auto p-4 space-y-4">
           {activeMode === 'bridge' ? (
             /* Mode 3: Broker-to-Broker Data Bridge */
-            <BridgePanel options={bridgeOptions} bridge={bridge} t={t} />
+            <BridgePanel options={bridgeOptions} bridge={bridge} onOpenSettings={() => setIsSettingsOpen(true)} t={t} />
           ) : activeMode === 'transfer' ? (
             /* Mode 1: File Transfer Hub */
             <div className="space-y-4 max-w-5xl mx-auto">
@@ -270,6 +270,22 @@ export function App() {
                 messages={mqtt.messages}
                 onClearMessages={mqtt.clearMessages}
                 onClearRetained={handleClearRetained}
+                connected={broker.isConnected}
+                onReplay={(m) =>
+                  mqtt.publish({
+                    topic: m.topic,
+                    payloadBase64: m.payloadBase64,
+                    qos: m.qos,
+                    retain: m.retain,
+                    properties: {
+                      contentType: m.contentType,
+                      userProperties: m.userProperties ?? [],
+                    },
+                  })
+                }
+                onQuickSubscribe={(topic) => {
+                  mqtt.addSubscription(topic, 1).catch((e) => console.error('subscribe:', e));
+                }}
                 paused={mqtt.paused}
                 pendingCount={mqtt.pendingCount}
                 onTogglePaused={mqtt.togglePaused}

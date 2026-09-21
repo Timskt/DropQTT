@@ -1,6 +1,6 @@
 [package]
 name = "dropqtt"
-version = "0.4.0"
+version = "0.5.0"
 description = "High-speed resilient cross-platform file transfer over MQTT"
 authors = ["Timskt"]
 edition = "2021"
@@ -13,6 +13,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
+regex = "1"
+rquickjs = "0.8"
 tauri = { version = "2.0", features = ["devtools"] }
 tauri-plugin-opener = "2.0"
 tauri-plugin-dialog = "2.0"

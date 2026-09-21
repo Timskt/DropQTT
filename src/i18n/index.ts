@@ -106,6 +106,42 @@ export interface Translations {
   portPlaceholder: string;
   bridgeRules: string;
   addRule: string;
+  editRule: string;
+  saveChanges: string;
+  manageConfigs: string;
+  ruleDuplicate: string;
+  logSummary: string;
+  topicFixed: string;
+  topicRegex: string;
+  fixedTopicPlaceholder: string;
+  regexPatternPlaceholder: string;
+  regexReplacePlaceholder: string;
+  advanced: string;
+  excludeTopics: string;
+  payloadPrefixPlaceholder: string;
+  payloadSuffixPlaceholder: string;
+  wrapJson: string;
+  rateLimit: string;
+  perSec: string;
+  dropped: string;
+  topicMapMode: string;
+  topicMapPlaceholder: string;
+  topicMapEmpty: string;
+  sourceFiltersMulti: string;
+  sourceFilterMultiPlaceholder: string;
+  transformScriptLabel: string;
+  transformScriptPlaceholder: string;
+  insertSample: string;
+  scriptHint: string;
+  runTest: string;
+  testPayloadPlaceholder: string;
+  testDropped: string;
+  exportRules: string;
+  importRules: string;
+  importFailed: string;
+  quickSubscribe: string;
+  replay: string;
+  replayTruncated: string;
   deleteRule: string;
   noBridgeRules: string;
   ruleName: string;
@@ -319,6 +355,42 @@ export const translations: Record<Language, Translations> = {
     portPlaceholder: '端口',
     bridgeRules: '转发规则',
     addRule: '添加规则',
+    editRule: '编辑规则',
+    saveChanges: '保存修改',
+    manageConfigs: '管理配置',
+    ruleDuplicate: '与规则「{name}」的源过滤器+目标完全重复，请换主题过滤器或目标连接',
+    logSummary: '累计转发 {sent} 条 · 缓存 {kept}/{cap} 条 · 显示最新 {shown}',
+    topicFixed: '固定目标主题（聚合）',
+    topicRegex: '正则捕获替换',
+    fixedTopicPlaceholder: '固定主题 (如 all/aggregate)',
+    regexPatternPlaceholder: '正则 (如 sensor/(\\w+)/data)',
+    regexReplacePlaceholder: '替换 (如 up.$1)',
+    advanced: '高级选项',
+    excludeTopics: '排除主题过滤器（每行一条，支持通配符）',
+    payloadPrefixPlaceholder: '载荷前缀文本 (如 [bridge] )',
+    payloadSuffixPlaceholder: '载荷后缀文本 (如 \\n)',
+    wrapJson: '包成 JSON 信封',
+    rateLimit: '限速',
+    perSec: '条/秒',
+    dropped: '被排除/限流丢弃',
+    topicMapMode: '映射表（逐主题改写）',
+    topicMapPlaceholder: '每行一条：/device/2 => /device/20，支持通配符行 legacy/# => modern/all',
+    topicMapEmpty: '映射表至少需要一行有效的“from => to”',
+    sourceFiltersMulti: '支持多行：每行一个主题过滤器，一条规则订阅多个主题',
+    sourceFilterMultiPlaceholder: '主题过滤器，可多行（每行一个）…\n例: sensor/+/data\n例: /device/2',
+    transformScriptLabel: 'JS 转换脚本 transform(topic, payload, qos, retain)',
+    transformScriptPlaceholder: 'function transform(topic, payload, qos, retain) {\n  return payload;\n}',
+    insertSample: '插入示例',
+    scriptHint: '返回值即新载荷；返回 null 丢弃消息；超时 100ms / 内存 4MB 限制',
+    runTest: '试运行',
+    testPayloadPlaceholder: '示例载荷，如 {"temp":23.5}',
+    testDropped: '消息被脚本丢弃（返回 null）',
+    exportRules: '导出规则',
+    importRules: '导入规则',
+    importFailed: '导入失败：文件不是有效的桥接规则 JSON',
+    quickSubscribe: '点击订阅此主题',
+    replay: '重发此消息',
+    replayTruncated: '载荷被截断，无法原样重发',
     deleteRule: '删除规则',
     noBridgeRules: '暂无规则 — 点击"添加规则"开始配置转发链路',
     ruleName: '规则名称 (例如: 传感器上云)',
@@ -530,6 +602,42 @@ export const translations: Record<Language, Translations> = {
     portPlaceholder: 'Port',
     bridgeRules: 'Forwarding Rules',
     addRule: 'Add Rule',
+    editRule: 'Edit rule',
+    saveChanges: 'Save changes',
+    manageConfigs: 'Manage configs',
+    ruleDuplicate: 'Duplicates rule "{name}" (same filter + target) — change the filter or target connection',
+    logSummary: 'total {sent} forwarded · buffer {kept}/{cap} · showing {shown}',
+    topicFixed: 'Fixed target topic (aggregate)',
+    topicRegex: 'Regex rewrite',
+    fixedTopicPlaceholder: 'Fixed topic (e.g. all/aggregate)',
+    regexPatternPlaceholder: 'Regex (e.g. sensor/(\\w+)/data)',
+    regexReplacePlaceholder: 'Replacement (e.g. up.$1)',
+    advanced: 'Advanced',
+    excludeTopics: 'Excluded topic filters (one per line, wildcards ok)',
+    payloadPrefixPlaceholder: 'Payload prefix (e.g. [bridge] )',
+    payloadSuffixPlaceholder: 'Payload suffix (e.g. \\n)',
+    wrapJson: 'Wrap in JSON envelope',
+    rateLimit: 'Rate limit',
+    perSec: 'msgs/sec',
+    dropped: 'Dropped by exclusion / rate limit',
+    topicMapMode: 'Mapping table (per-topic rewrite)',
+    topicMapPlaceholder: 'One row per line: /device/2 => /device/20, wildcard rows like legacy/# => modern/all',
+    topicMapEmpty: 'Mapping table needs at least one valid "from => to" row',
+    sourceFiltersMulti: 'Multiple lines supported: one topic filter per line, a single rule subscribes to many topics',
+    sourceFilterMultiPlaceholder: 'Topic filters, one per line…\ne.g. sensor/+/data\ne.g. /device/2',
+    transformScriptLabel: 'JS transform script transform(topic, payload, qos, retain)',
+    transformScriptPlaceholder: 'function transform(topic, payload, qos, retain) {\n  return payload;\n}',
+    insertSample: 'Insert sample',
+    scriptHint: 'Return value becomes the payload; returning null drops the message; 100ms / 4MB sandbox limits',
+    runTest: 'Run test',
+    testPayloadPlaceholder: 'Sample payload, e.g. {"temp":23.5}',
+    testDropped: 'message dropped by script (returned null)',
+    exportRules: 'Export rules',
+    importRules: 'Import rules',
+    importFailed: 'Import failed: not a valid bridge rules JSON',
+    quickSubscribe: 'Click to subscribe this topic',
+    replay: 'Replay this message',
+    replayTruncated: 'Payload truncated — cannot replay verbatim',
     deleteRule: 'Delete rule',
     noBridgeRules: 'No rules yet — click "Add Rule" to wire up a bridge',
     ruleName: 'Rule name (e.g. Sensors to cloud)',
@@ -741,6 +849,42 @@ export const translations: Record<Language, Translations> = {
     portPlaceholder: '埠號',
     bridgeRules: '轉發規則',
     addRule: '新增規則',
+    editRule: '編輯規則',
+    saveChanges: '儲存變更',
+    manageConfigs: '管理設定',
+    ruleDuplicate: '與規則「{name}」的來源過濾器+目標完全重複，請更換過濾器或目標連線',
+    logSummary: '累計轉發 {sent} 則 · 快取 {kept}/{cap} 則 · 顯示最新 {shown}',
+    topicFixed: '固定目標主題（聚合）',
+    topicRegex: '正則捕獲替換',
+    fixedTopicPlaceholder: '固定主題 (如 all/aggregate)',
+    regexPatternPlaceholder: '正則 (如 sensor/(\\w+)/data)',
+    regexReplacePlaceholder: '替換 (如 up.$1)',
+    advanced: '進階選項',
+    excludeTopics: '排除主題過濾器（每行一條，支援萬用字元）',
+    payloadPrefixPlaceholder: '載入前綴文字 (如 [bridge] )',
+    payloadSuffixPlaceholder: '載入後綴文字 (如 \\n)',
+    wrapJson: '包成 JSON 信封',
+    rateLimit: '限速',
+    perSec: '則/秒',
+    dropped: '被排除/限流丟棄',
+    topicMapMode: '對應表（逐主題改寫）',
+    topicMapPlaceholder: '每行一條：/device/2 => /device/20，支援萬用字元行 legacy/# => modern/all',
+    topicMapEmpty: '對應表至少需要一行有效的「from => to」',
+    sourceFiltersMulti: '支援多行：每行一個主題過濾器，一條規則訂閱多個主題',
+    sourceFilterMultiPlaceholder: '主題過濾器，可多行（每行一個）…\n例: sensor/+/data\n例: /device/2',
+    transformScriptLabel: 'JS 轉換腳本 transform(topic, payload, qos, retain)',
+    transformScriptPlaceholder: 'function transform(topic, payload, qos, retain) {\n  return payload;\n}',
+    insertSample: '插入範例',
+    scriptHint: '回傳值即新載入；回傳 null 丟棄訊息；100ms / 4MB 沙箱限制',
+    runTest: '試運行',
+    testPayloadPlaceholder: '範例載入，如 {"temp":23.5}',
+    testDropped: '訊息被腳本丟棄（回傳 null）',
+    exportRules: '匯出規則',
+    importRules: '匯入規則',
+    importFailed: '匯入失敗：檔案不是有效的橋接規則 JSON',
+    quickSubscribe: '點擊訂閱此主題',
+    replay: '重發此訊息',
+    replayTruncated: '載入已截斷，無法原樣重發',
     deleteRule: '刪除規則',
     noBridgeRules: '尚無規則 — 點擊「新增規則」開始配置轉發鏈路',
     ruleName: '規則名稱 (例如: 感測器上雲)',
@@ -952,6 +1096,42 @@ export const translations: Record<Language, Translations> = {
     portPlaceholder: 'ポート',
     bridgeRules: '転送ルール',
     addRule: 'ルール追加',
+    editRule: 'ルール編集',
+    saveChanges: '変更を保存',
+    manageConfigs: '設定管理',
+    ruleDuplicate: 'ルール「{name}」と同じフィルタ+転送先です。フィルタか接続先を変更してください',
+    logSummary: '累計 {sent} 件転送 · バッファ {kept}/{cap} · 直近 {shown} 件表示',
+    topicFixed: '固定ターゲットトピック（集約）',
+    topicRegex: '正規表現書き換え',
+    fixedTopicPlaceholder: '固定トピック (例: all/aggregate)',
+    regexPatternPlaceholder: '正規表現 (例: sensor/(\\w+)/data)',
+    regexReplacePlaceholder: '置換 (例: up.$1)',
+    advanced: '詳細オプション',
+    excludeTopics: '除外トピックフィルタ（1行1つ、ワイルドカード可）',
+    payloadPrefixPlaceholder: 'ペイロード接頭辞 (例: [bridge] )',
+    payloadSuffixPlaceholder: 'ペイロード接尾辞 (例: \\n)',
+    wrapJson: 'JSON エンベロープ化',
+    rateLimit: 'レート制限',
+    perSec: '件/秒',
+    dropped: '除外/制限で破棄',
+    topicMapMode: 'マッピングテーブル（トピック単位書換）',
+    topicMapPlaceholder: '1行1件: /device/2 => /device/20、ワイルドカード行 legacy/# => modern/all も可',
+    topicMapEmpty: 'マッピングテーブルに有効な「from => to」行が少なくとも1件必要です',
+    sourceFiltersMulti: '複数行対応：1行1トピックフィルタで1ルール複数トピック購読',
+    sourceFilterMultiPlaceholder: 'トピックフィルタ（1行1件）…\n例: sensor/+/data\n例: /device/2',
+    transformScriptLabel: 'JS 変換スクリプト transform(topic, payload, qos, retain)',
+    transformScriptPlaceholder: 'function transform(topic, payload, qos, retain) {\n  return payload;\n}',
+    insertSample: 'サンプル挿入',
+    scriptHint: '戻り値が新しいペイロード；null で破棄；100ms / 4MB サンドボックス制限',
+    runTest: 'テスト実行',
+    testPayloadPlaceholder: 'サンプルペイロード 例: {"temp":23.5}',
+    testDropped: 'スクリプトにより破棄（null 返却）',
+    exportRules: 'ルールエクスポート',
+    importRules: 'ルールインポート',
+    importFailed: 'インポート失敗：有効なブリッジルール JSON ではありません',
+    quickSubscribe: 'クリックでこのトピックを購読',
+    replay: 'このメッセージを再送',
+    replayTruncated: 'ペイロードが切り詰められており再送不可',
     deleteRule: 'ルール削除',
     noBridgeRules: 'ルールがありません —「ルール追加」から設定を始めましょう',
     ruleName: 'ルール名 (例: センサー上雲)',

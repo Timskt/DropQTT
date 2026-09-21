@@ -2,6 +2,7 @@ pub mod bridge;
 pub mod mqtt_manager;
 pub mod protocol;
 pub mod transport;
+pub mod transform;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -199,6 +200,37 @@ async fn bridge_reset_stats(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Dry-run a rule transform script against a sample payload (no forwarding,
+/// no connection required) — backs the rule editor's "run test" panel.
+#[tauri::command]
+async fn bridge_test_transform(
+    script: String,
+    topic: String,
+    payload_base64: String,
+) -> Result<serde_json::Value, String> {
+    use base64::Engine;
+    use bytes::Bytes;
+    let trimmed = script.trim();
+    if trimmed.is_empty() {
+        return Err("script is empty".to_string());
+    }
+    if !trimmed.contains("function transform") {
+        return Err("script must define function transform(topic, payload, qos, retain)".to_string());
+    }
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(payload_base64.as_bytes())
+        .map_err(|e| format!("invalid base64: {}", e))?;
+    match transform::apply_transform(trimmed, &topic, &Bytes::from(raw), 1, false) {
+        Ok(transform::TransformOutcome::Send(b)) => Ok(serde_json::json!({
+            "action": "send",
+            "payload": String::from_utf8_lossy(&b).to_string(),
+            "bytes": b.len(),
+        })),
+        Ok(transform::TransformOutcome::Drop) => Ok(serde_json::json!({ "action": "drop" })),
+        Err(e) => Err(e),
+    }
+}
+
 #[tauri::command]
 async fn reveal_file(app: AppHandle, file_path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
@@ -259,7 +291,8 @@ pub fn run() {
             bridge_status,
             bridge_sync_rules,
             bridge_stats,
-            bridge_reset_stats
+            bridge_reset_stats,
+            bridge_test_transform
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { marked, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
+import { copyToClipboard } from '../../utils/clipboard';
 
 /**
  * Rich-text renderers for untrusted MQTT payloads.
@@ -103,21 +104,18 @@ export const MarkdownView: React.FC<{ text: string; className?: string }> = ({ t
     if (!btn) return;
     const block = btn.closest('.md-pre');
     const code = block?.querySelector('code')?.textContent ?? '';
-    try {
-      await navigator.clipboard.writeText(code);
-      btn.textContent = 'Copied ✓';
-      btn.classList.add('md-copy-done');
-      setTimeout(() => {
-        btn.textContent = 'Copy';
-        btn.classList.remove('md-copy-done');
-      }, 1400);
-    } catch {
-      /* clipboard unavailable */
-    }
+    const ok = await copyToClipboard(code);
+    if (!ok) return;
+    btn.textContent = 'Copied ✓';
+    btn.classList.add('md-copy-done');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('md-copy-done');
+    }, 1400);
   }, []);
 
   if (html === null) {
-    return <pre className="text-[12px] whitespace-pre-wrap" style={{ color: 'var(--danger)' }}>{text}</pre>;
+    return <pre className="select-text text-[12px] whitespace-pre-wrap" style={{ color: 'var(--danger)' }}>{text}</pre>;
   }
 
   return (
