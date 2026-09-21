@@ -1282,7 +1282,7 @@ fn expected_chunk_len(file_size: u64, chunk_size: usize, total_chunks: usize, id
 
 /// MQTT topic filter matching (RFC 3.1.1 §4.7): '+' one level, '#' tail levels,
 /// and topics beginning with '$' are excluded from leading wildcards.
-fn wildcard_match(filter: &str, topic: &str) -> bool {
+pub(crate) fn wildcard_match(filter: &str, topic: &str) -> bool {
     let f: Vec<&str> = filter.split('/').collect();
     let t: Vec<&str> = topic.split('/').collect();
     // System topics ($...) are only matched by filters that name them explicitly

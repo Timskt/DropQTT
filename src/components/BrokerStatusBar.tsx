@@ -2,9 +2,10 @@ import React from 'react';
 import { Activity, Power, Server, ChevronDown, Check } from 'lucide-react';
 import { BrokerConfig, BrokerProfile } from '../types';
 import { Translations } from '../i18n';
+import { WorkspaceMode } from './Sidebar';
 
 interface BrokerStatusBarProps {
-  activeMode: 'transfer' | 'mqttx';
+  activeMode: WorkspaceMode;
   connected: boolean;
   config: BrokerConfig;
   profiles: BrokerProfile[];
@@ -39,8 +40,16 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
       <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
           <span className="text-[10px] text-slate-500 uppercase tracking-wider">MODE:</span>
-          <span className={activeMode === 'transfer' ? 'text-cyan-400 font-semibold' : 'text-emerald-400 font-semibold'}>
-            {activeMode === 'transfer' ? t.modeFileTransfer : t.modeMqttClient}
+          <span
+            className={
+              activeMode === 'transfer'
+                ? 'text-cyan-400 font-semibold'
+                : activeMode === 'bridge'
+                  ? 'text-amber-400 font-semibold'
+                  : 'text-emerald-400 font-semibold'
+            }
+          >
+            {activeMode === 'transfer' ? t.modeFileTransfer : activeMode === 'bridge' ? t.modeBridge : t.modeMqttClient}
           </span>
         </div>
 

@@ -1,3 +1,4 @@
+pub mod bridge;
 pub mod mqtt_manager;
 pub mod protocol;
 pub mod transport;
@@ -6,11 +7,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
+use crate::bridge::{BridgeManager, BridgeRule};
 use crate::mqtt_manager::MqttManager;
 use crate::protocol::{BrokerConfig, ConnectionStatus, ConsolePublishParams};
 
 pub struct AppState {
     pub mqtt: Arc<MqttManager>,
+    pub bridge: Arc<BridgeManager>,
 }
 
 #[tauri::command]
@@ -147,6 +150,55 @@ async fn set_auto_receive(state: State<'_, AppState>, enabled: bool) -> Result<(
     Ok(())
 }
 
+// ---------------------------------------------------------------------
+// Bridge (broker-to-broker forwarding) commands
+// ---------------------------------------------------------------------
+
+#[tauri::command]
+async fn bridge_connect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    config: BrokerConfig,
+) -> Result<(), String> {
+    state.bridge.clone().connect(app, id, config).await
+}
+
+#[tauri::command]
+async fn bridge_disconnect(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    state.bridge.disconnect(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn bridge_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<bridge::BridgeConnInfo>, String> {
+    Ok(state.bridge.bridge_status().await)
+}
+
+#[tauri::command]
+async fn bridge_sync_rules(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    rules: Vec<BridgeRule>,
+) -> Result<(), String> {
+    state.bridge.clone().sync_rules(app, rules).await
+}
+
+#[tauri::command]
+async fn bridge_stats(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, bridge::BridgeRuleStats>, String> {
+    Ok(state.bridge.stats().await)
+}
+
+#[tauri::command]
+async fn bridge_reset_stats(state: State<'_, AppState>) -> Result<(), String> {
+    state.bridge.reset_stats().await;
+    Ok(())
+}
+
 #[tauri::command]
 async fn reveal_file(app: AppHandle, file_path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
@@ -162,6 +214,7 @@ async fn reveal_file(app: AppHandle, file_path: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mqtt_manager = Arc::new(MqttManager::new());
+    let bridge_manager = BridgeManager::new();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -170,6 +223,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             mqtt: mqtt_manager,
+            bridge: bridge_manager,
         })
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
@@ -199,7 +253,13 @@ pub fn run() {
             approve_transfer,
             reject_transfer,
             set_auto_receive,
-            reveal_file
+            reveal_file,
+            bridge_connect,
+            bridge_disconnect,
+            bridge_status,
+            bridge_sync_rules,
+            bridge_stats,
+            bridge_reset_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

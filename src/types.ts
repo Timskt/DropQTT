@@ -92,6 +92,60 @@ export interface TopicSubscription {
   createdAt?: string;
 }
 
+// ---- Bridge (broker-to-broker forwarding) ----
+
+export type BridgeTopicMode = 'same' | 'prefix';
+export type BridgeQosMode = 'source' | 'fixed';
+export type BridgeRetainMode = 'source' | 'on' | 'off';
+
+export interface BridgeRule {
+  id: string;
+  name: string;
+  /** Logical bridge connection id acting as the message source */
+  sourceConn: string;
+  /** Source topic filter ('+' / '#' wildcards allowed) */
+  sourceFilter: string;
+  sourceQos: number;
+  targetConn: string;
+  topicMode: BridgeTopicMode;
+  prefixFrom: string;
+  prefixTo: string;
+  qosMode: BridgeQosMode;
+  fixedQos: number;
+  retainMode: BridgeRetainMode;
+  /** Forward MQTT5 content-type / user properties */
+  forwardProps: boolean;
+  enabled: boolean;
+}
+
+export interface BridgeConnInfo {
+  id: string;
+  connected: boolean;
+  brokerHost: string;
+  brokerPort: number;
+  clientId: string;
+  error?: string | null;
+}
+
+export interface BridgeRuleStats {
+  forwarded: number;
+  errors: number;
+  lastTopic: string;
+}
+
+export interface BridgeEvent {
+  ruleId: string;
+  ruleName: string;
+  fromTopic: string;
+  toTopic: string;
+  bytes: number;
+  qos: number;
+  retain: boolean;
+  ok: boolean;
+  error?: string | null;
+  timestamp: string;
+}
+
 export interface BatchFileItem {
   id: string;
   path: string;

@@ -4,7 +4,7 @@ import { check } from '@tauri-apps/plugin-updater';
 import { open } from '@tauri-apps/plugin-dialog';
 import { AlertCircle, WifiOff } from 'lucide-react';
 
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, WorkspaceMode } from './components/Sidebar';
 import { BrokerStatusBar } from './components/BrokerStatusBar';
 import { BatchSender } from './components/file-transfer/BatchSender';
 import { ReceiverConfig } from './components/file-transfer/ReceiverConfig';
@@ -12,6 +12,7 @@ import { TransferQueue } from './components/file-transfer/TransferQueue';
 import { SubscriptionsBar } from './components/mqttx/SubscriptionsBar';
 import { MessageStream } from './components/mqttx/MessageStream';
 import { MessagePublisher } from './components/mqttx/MessagePublisher';
+import { BridgePanel } from './components/bridge/BridgePanel';
 import { SettingsModal } from './components/SettingsModal';
 
 import { BrokerConfig } from './types';
@@ -19,6 +20,7 @@ import { Language, translations } from './i18n';
 import { applyTheme, Theme } from './themes';
 import { usePersistentString } from './hooks/usePersistentState';
 import { useBroker } from './hooks/useBroker';
+import { useBridge } from './hooks/useBridge';
 import { useMqttMessages } from './hooks/useMqttMessages';
 import { useSubscriptionStats } from './hooks/useSubscriptionStats';
 import { useTransfers } from './hooks/useTransfers';
@@ -27,7 +29,8 @@ import { useBatchSender } from './hooks/useBatchSender';
 export function App() {
   // ---- Workspace preferences (raw-string localStorage keys, back-compat) ----
   const [modeStr, setModeStr] = usePersistentString('dropqtt_workspace_mode', 'transfer');
-  const activeMode: 'transfer' | 'mqttx' = modeStr === 'mqttx' ? 'mqttx' : 'transfer';
+  const activeMode: WorkspaceMode =
+    modeStr === 'mqttx' || modeStr === 'bridge' ? modeStr : 'transfer';
 
   const [langStr, setLangStr] = usePersistentString('dropqtt_lang', 'zh-CN');
   const lang = langStr as Language;
@@ -61,6 +64,13 @@ export function App() {
 
   const mqtt = useMqttMessages(broker.isConnected);
   getConsoleTopicsRef.current = mqtt.getTopicsToRegister;
+
+  // Bridge (broker-to-broker forwarding) — events keep accumulating across tabs
+  const bridge = useBridge(activeMode === 'bridge');
+  const bridgeOptions = [
+    { id: 'session', name: t.currentConfig, config: broker.config },
+    ...broker.profiles,
+  ];
 
   // Subscription hit stats: polled only while the console is open and connected
   const subStats = useSubscriptionStats(broker.isConnected && activeMode === 'mqttx');
@@ -151,6 +161,7 @@ export function App() {
         activeTransfersCount={transferState.activeCount}
         awaitingApprovalCount={transferState.awaitingApproval.length}
         activeSubsCount={mqtt.subscriptions.length}
+        activeBridgeRulesCount={bridge.rules.filter((r) => r.enabled).length}
         connected={broker.isConnected}
         brokerHost={broker.status.brokerHost}
         brokerPort={broker.status.brokerPort}
@@ -195,7 +206,10 @@ export function App() {
         )}
 
         <main className="flex-1 overflow-y-auto p-4 space-y-4">
-          {activeMode === 'transfer' ? (
+          {activeMode === 'bridge' ? (
+            /* Mode 3: Broker-to-Broker Data Bridge */
+            <BridgePanel options={bridgeOptions} bridge={bridge} t={t} />
+          ) : activeMode === 'transfer' ? (
             /* Mode 1: File Transfer Hub */
             <div className="space-y-4 max-w-5xl mx-auto">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

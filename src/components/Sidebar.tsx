@@ -1,15 +1,18 @@
 import React from 'react';
-import { Layers, Terminal, Settings, Globe, Palette, Server } from 'lucide-react';
+import { Layers, Terminal, Settings, Globe, Palette, Server, GitBranch } from 'lucide-react';
 import { Language, Translations } from '../i18n';
 import { Theme } from '../themes';
 import { DropQTTLogo } from './DropQTTLogo';
 
+export type WorkspaceMode = 'transfer' | 'mqttx' | 'bridge';
+
 interface SidebarProps {
-  activeMode: 'transfer' | 'mqttx';
-  setActiveMode: (mode: 'transfer' | 'mqttx') => void;
+  activeMode: WorkspaceMode;
+  setActiveMode: (mode: WorkspaceMode) => void;
   activeTransfersCount: number;
   awaitingApprovalCount: number;
   activeSubsCount: number;
+  activeBridgeRulesCount: number;
   connected: boolean;
   brokerHost: string;
   brokerPort: number;
@@ -29,6 +32,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeTransfersCount,
   awaitingApprovalCount,
   activeSubsCount,
+  activeBridgeRulesCount,
   connected,
   brokerHost,
   brokerPort,
@@ -55,7 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span className="font-mono font-bold tracking-wider text-sm text-white">DropQTT</span>
               <div className="flex items-center space-x-1">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
-                <span className="text-[10px] text-slate-400 font-mono">v0.2.0-core</span>
+                <span className="text-[10px] text-slate-400 font-mono">v0.4.0-core</span>
               </div>
             </div>
           </div>
@@ -126,6 +130,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           )}
+
+          <button
+            onClick={() => setActiveMode('bridge')}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded text-xs font-mono transition border ${
+              activeMode === 'bridge'
+                ? 'bg-amber-950/40 text-amber-300 border-amber-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 border-transparent'
+            }`}
+          >
+            <div className="flex items-center space-x-2.5">
+              <GitBranch className="w-4 h-4 text-amber-400" />
+              <div className="text-left">
+                <div className="font-medium">{t.modeBridge}</div>
+                <div className="text-[10px] text-slate-500 truncate max-w-[120px]">Broker ↔ Broker</div>
+              </div>
+            </div>
+            {activeBridgeRulesCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                {activeBridgeRulesCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Broker & Protocol Info */}

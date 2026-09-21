@@ -94,6 +94,37 @@ export interface Translations {
   modeMqttClient: string;
   modeFileTransferDesc: string;
   modeMqttClientDesc: string;
+  modeBridge: string;
+  modeBridgeDesc: string;
+  bridgeSource: string;
+  bridgeTarget: string;
+  currentConfig: string;
+  lastUsed: string;
+  bridgeAutoReconnect: string;
+  customEndpoint: string;
+  hostPlaceholder: string;
+  portPlaceholder: string;
+  bridgeRules: string;
+  addRule: string;
+  deleteRule: string;
+  noBridgeRules: string;
+  ruleName: string;
+  sourceTopicFilter: string;
+  topicKeepSame: string;
+  topicPrefixMap: string;
+  prefixFrom: string;
+  prefixTo: string;
+  qosFollowSource: string;
+  qosFixed: string;
+  retainFollow: string;
+  retainForceOn: string;
+  retainForceOff: string;
+  forwardV5Props: string;
+  bridgeHint: string;
+  forwarded: string;
+  bridgeLog: string;
+  clearLog: string;
+  noBridgeEvents: string;
   publishTopic: string;
   publishTopicHint: string;
   subscribeTopic: string;
@@ -276,6 +307,37 @@ export const translations: Record<Language, Translations> = {
     modeMqttClient: 'MQTT 客户端控制台',
     modeFileTransferDesc: '大文件切片流式发送与自动校验重组',
     modeMqttClientDesc: '通用 MQTT 消息订阅、发布与实时数据流检测',
+    modeBridge: '数据桥接转发',
+    modeBridgeDesc: '两个 Broker 之间按主题规则原样转发消息',
+    bridgeSource: '转发源',
+    bridgeTarget: '转发目标',
+    currentConfig: '当前会话配置',
+    lastUsed: '上次连接',
+    bridgeAutoReconnect: '启动时自动重连',
+    customEndpoint: '手动指定 Broker…',
+    hostPlaceholder: '主机 (IP / 域名)',
+    portPlaceholder: '端口',
+    bridgeRules: '转发规则',
+    addRule: '添加规则',
+    deleteRule: '删除规则',
+    noBridgeRules: '暂无规则 — 点击"添加规则"开始配置转发链路',
+    ruleName: '规则名称 (例如: 传感器上云)',
+    sourceTopicFilter: '源主题过滤器 (支持 + / # 通配符, 如 sensor/+/data)',
+    topicKeepSame: '保持原主题',
+    topicPrefixMap: '前缀替换',
+    prefixFrom: '原前缀 (如 home/bedroom)',
+    prefixTo: '新前缀 (如 cloud/uplink)',
+    qosFollowSource: '跟随源 QoS',
+    qosFixed: '固定 QoS',
+    retainFollow: 'Retain 跟随源',
+    retainForceOn: 'Retain 强制开',
+    retainForceOff: 'Retain 强制关',
+    forwardV5Props: '转发 v5 属性',
+    bridgeHint: '消息载荷原样转发；源与目标需为不同连接',
+    forwarded: '已转发',
+    bridgeLog: '转发明细',
+    clearLog: '清空日志',
+    noBridgeEvents: '暂无转发事件 — 连接源/目标并开始发布后这里会实时滚动',
     publishTopic: '发送主题 (Publish Topic)',
     publishTopicHint: '自定义发送主题前缀，例如: dropqtt/lobby 或 iot/dev01/files',
     subscribeTopic: '接收订阅主题 (Subscribe Topic)',
@@ -456,6 +518,37 @@ export const translations: Record<Language, Translations> = {
     modeMqttClient: 'MQTT Console',
     modeFileTransferDesc: 'Chunked file transmission with SHA-256 validation',
     modeMqttClientDesc: 'Full MQTT topic subscriptions, live stream & message publishing',
+    modeBridge: 'Data Bridge',
+    modeBridgeDesc: 'Forward messages verbatim between two brokers by topic rules',
+    bridgeSource: 'Source',
+    bridgeTarget: 'Target',
+    currentConfig: 'Current session',
+    lastUsed: 'Last used',
+    bridgeAutoReconnect: 'Auto-reconnect on startup',
+    customEndpoint: 'Custom broker endpoint…',
+    hostPlaceholder: 'Host (IP / domain)',
+    portPlaceholder: 'Port',
+    bridgeRules: 'Forwarding Rules',
+    addRule: 'Add Rule',
+    deleteRule: 'Delete rule',
+    noBridgeRules: 'No rules yet — click "Add Rule" to wire up a bridge',
+    ruleName: 'Rule name (e.g. Sensors to cloud)',
+    sourceTopicFilter: 'Source topic filter (+ / # wildcards, e.g. sensor/+/data)',
+    topicKeepSame: 'Keep original topic',
+    topicPrefixMap: 'Replace prefix',
+    prefixFrom: 'From prefix (e.g. home/bedroom)',
+    prefixTo: 'To prefix (e.g. cloud/uplink)',
+    qosFollowSource: 'Follow source QoS',
+    qosFixed: 'Fixed QoS',
+    retainFollow: 'Retain follows source',
+    retainForceOn: 'Retain forced on',
+    retainForceOff: 'Retain forced off',
+    forwardV5Props: 'Forward v5 properties',
+    bridgeHint: 'Payloads forwarded verbatim; source & target must differ',
+    forwarded: 'sent',
+    bridgeLog: 'Forward Log',
+    clearLog: 'Clear log',
+    noBridgeEvents: 'No events yet — connect source/target and publish to see live traffic',
     publishTopic: 'Publish Topic',
     publishTopicHint: 'Custom target topic prefix, e.g. dropqtt/lobby or factory/edge1/files',
     subscribeTopic: 'Subscribe Topic',
@@ -636,6 +729,37 @@ export const translations: Record<Language, Translations> = {
     modeMqttClient: 'MQTT 用戶端控制台',
     modeFileTransferDesc: '大檔案切片串流發送與自動校驗重組',
     modeMqttClientDesc: '通用 MQTT 訊息訂閱、發布與即時資料流檢測',
+    modeBridge: '資料橋接轉發',
+    modeBridgeDesc: '兩個 Broker 之間依主題規則原樣轉發訊息',
+    bridgeSource: '轉發來源',
+    bridgeTarget: '轉發目標',
+    currentConfig: '目前工作階段設定',
+    lastUsed: '上次連線',
+    bridgeAutoReconnect: '啟動時自動重連',
+    customEndpoint: '手動指定 Broker…',
+    hostPlaceholder: '主機 (IP / 網域)',
+    portPlaceholder: '埠號',
+    bridgeRules: '轉發規則',
+    addRule: '新增規則',
+    deleteRule: '刪除規則',
+    noBridgeRules: '尚無規則 — 點擊「新增規則」開始配置轉發鏈路',
+    ruleName: '規則名稱 (例如: 感測器上雲)',
+    sourceTopicFilter: '來源主題過濾器 (支援 + / # 萬用字元, 如 sensor/+/data)',
+    topicKeepSame: '保持原主題',
+    topicPrefixMap: '前綴替換',
+    prefixFrom: '原前綴 (如 home/bedroom)',
+    prefixTo: '新前綴 (如 cloud/uplink)',
+    qosFollowSource: '跟隨來源 QoS',
+    qosFixed: '固定 QoS',
+    retainFollow: 'Retain 跟隨來源',
+    retainForceOn: 'Retain 強制開',
+    retainForceOff: 'Retain 強制關',
+    forwardV5Props: '轉發 v5 屬性',
+    bridgeHint: '訊息載入原樣轉發；來源與目標須為不同連線',
+    forwarded: '已轉發',
+    bridgeLog: '轉發明細',
+    clearLog: '清空日誌',
+    noBridgeEvents: '尚無轉發事件 — 連線來源/目標並開始發佈後會即時捲動',
     publishTopic: '發送主題 (Publish Topic)',
     publishTopicHint: '自訂發送主題前綴，例如: dropqtt/lobby 或 iot/dev01/files',
     subscribeTopic: '接收訂閱主題 (Subscribe Topic)',
@@ -815,7 +939,38 @@ export const translations: Record<Language, Translations> = {
     modeFileTransfer: 'ファイル転送ハブ',
     modeMqttClient: 'MQTT コンソール',
     modeFileTransferDesc: 'ファイルチャンク分割ストリーミングと自動整合性検証',
-    modeMqttClientDesc: '汎用 MQTT トピック購読・パブリッシュおよびライブストリーム検査',
+    modeMqttClientDesc: '汎用 MQTT トピック購読・パブリッシュおよびライブス トリーム検査',
+    modeBridge: 'データブリッジ転送',
+    modeBridgeDesc: '2つのBroker間をトピックルールでそのまま転送',
+    bridgeSource: '転送ソース',
+    bridgeTarget: '転送先',
+    currentConfig: '現在のセッション設定',
+    lastUsed: '前回接続',
+    bridgeAutoReconnect: '起動時に自動再接続',
+    customEndpoint: 'ブローカーを手動指定…',
+    hostPlaceholder: 'ホスト (IP / ドメイン)',
+    portPlaceholder: 'ポート',
+    bridgeRules: '転送ルール',
+    addRule: 'ルール追加',
+    deleteRule: 'ルール削除',
+    noBridgeRules: 'ルールがありません —「ルール追加」から設定を始めましょう',
+    ruleName: 'ルール名 (例: センサー上雲)',
+    sourceTopicFilter: 'ソーストピックフィルタ (+ / # ワイルドカード対応, 例: sensor/+/data)',
+    topicKeepSame: 'トピックを維持',
+    topicPrefixMap: 'プレフィックス置換',
+    prefixFrom: '元の接頭辞 (例: home/bedroom)',
+    prefixTo: '新しい接頭辞 (例: cloud/uplink)',
+    qosFollowSource: 'ソース QoS に追従',
+    qosFixed: 'QoS 固定',
+    retainFollow: 'Retain はソースに追従',
+    retainForceOn: 'Retain 強制オン',
+    retainForceOff: 'Retain 強制オフ',
+    forwardV5Props: 'v5 プロパティを転送',
+    bridgeHint: 'ペイロードはそのまま転送。ソースと転送先は別の接続である必要があります',
+    forwarded: '送信済',
+    bridgeLog: '転送ログ',
+    clearLog: 'ログをクリア',
+    noBridgeEvents: '転送イベントはまだありません — 接続して発行するとライブ表示されます',
     publishTopic: '送信トピック (Publish Topic)',
     publishTopicHint: 'カスタム送信トピックプレフィックス、例: dropqtt/lobby または factory/line1/files',
     subscribeTopic: '受信購読トピック (Subscribe Topic)',
