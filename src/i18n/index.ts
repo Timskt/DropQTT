@@ -142,6 +142,26 @@ export interface Translations {
   quickSubscribe: string;
   replay: string;
   replayTruncated: string;
+  topicTraffic: string;
+  noTraffic: string;
+  msgsPerSec: string;
+  totalMsgs: string;
+  totalBytes: string;
+  peakRate: string;
+  lastActive: string;
+  trafficMore: string;
+  feedDroppedNotice: string;
+  actualTopicNote: string;
+  trafficCap: string;
+  benchLab: string;
+  benchTopicPh: string;
+  benchRate: string;
+  benchSize: string;
+  benchDuration: string;
+  benchStart: string;
+  benchHint: string;
+  benchSent: string;
+  benchFailed: string;
   deleteRule: string;
   noBridgeRules: string;
   ruleName: string;
@@ -391,6 +411,26 @@ export const translations: Record<Language, Translations> = {
     quickSubscribe: '点击订阅此主题',
     replay: '重发此消息',
     replayTruncated: '载荷被截断，无法原样重发',
+    topicTraffic: '主题流量统计',
+    noTraffic: '暂无流量数据 — 订阅主题收到消息后实时统计，最热主题排首位',
+    msgsPerSec: '速率',
+    totalMsgs: '消息数',
+    totalBytes: '数据量',
+    peakRate: '峰值',
+    lastActive: '最后活跃',
+    trafficMore: '另有 {n} 个低频主题未显示',
+    feedDroppedNotice: '高吞吐：报文展示已丢弃 {n} 条旧消息（流量统计仍精确）',
+    actualTopicNote: '按实际到达主题统计，非通配符过滤器',
+    trafficCap: '主题数已达 1000 上限，新主题不再统计',
+    benchLab: '压测台',
+    benchTopicPh: '压测主题 (回环计入自己的订阅统计)',
+    benchRate: '速率/s',
+    benchSize: '字节',
+    benchDuration: '秒',
+    benchStart: '开始压测',
+    benchHint: '向本地 broker 发布高压流量，验证统计精度与界面流畅度',
+    benchSent: '已发送',
+    benchFailed: '启动失败：检查连接状态',
     deleteRule: '删除规则',
     noBridgeRules: '暂无规则 — 点击"添加规则"开始配置转发链路',
     ruleName: '规则名称 (例如: 传感器上云)',
@@ -638,6 +678,26 @@ export const translations: Record<Language, Translations> = {
     quickSubscribe: 'Click to subscribe this topic',
     replay: 'Replay this message',
     replayTruncated: 'Payload truncated — cannot replay verbatim',
+    topicTraffic: 'Topic Traffic',
+    noTraffic: 'No traffic yet — topics appear here live once messages arrive; hottest first',
+    msgsPerSec: 'Rate',
+    totalMsgs: 'Msgs',
+    totalBytes: 'Volume',
+    peakRate: 'Peak',
+    lastActive: 'Last active',
+    trafficMore: '{n} more low-rate topics hidden',
+    feedDroppedNotice: 'High throughput: {n} old messages dropped from feed display (traffic stats remain exact)',
+    actualTopicNote: 'Counted per actual arrived topic, not wildcard filter',
+    trafficCap: 'Topic tracking hit the 1000 cap — new topics not counted',
+    benchLab: 'Bench Lab',
+    benchTopicPh: 'Bench topic (loops back into your subscriptions)',
+    benchRate: 'rate/s',
+    benchSize: 'bytes',
+    benchDuration: 'secs',
+    benchStart: 'Start bench',
+    benchHint: 'Publishes high-rate load to the broker to verify stat accuracy & UI smoothness',
+    benchSent: 'sent',
+    benchFailed: 'Start failed: check connection',
     deleteRule: 'Delete rule',
     noBridgeRules: 'No rules yet — click "Add Rule" to wire up a bridge',
     ruleName: 'Rule name (e.g. Sensors to cloud)',
@@ -885,6 +945,26 @@ export const translations: Record<Language, Translations> = {
     quickSubscribe: '點擊訂閱此主題',
     replay: '重發此訊息',
     replayTruncated: '載入已截斷，無法原樣重發',
+    topicTraffic: '主題流量統計',
+    noTraffic: '暫無流量資料 — 訂閱主題收到訊息後即時統計，最熱主題排首位',
+    msgsPerSec: '速率',
+    totalMsgs: '訊息數',
+    totalBytes: '資料量',
+    peakRate: '峰值',
+    lastActive: '最後活躍',
+    trafficMore: '另有 {n} 個低頻主題未顯示',
+    feedDroppedNotice: '高吞吐：報文展示已丟棄 {n} 條舊訊息（流量統計仍精確）',
+    actualTopicNote: '按實際到達主題統計，非萬用字元過濾器',
+    trafficCap: '主題數已達 1000 上限，新主題不再統計',
+    benchLab: '壓測台',
+    benchTopicPh: '壓測主題（回環計入自己的訂閱統計）',
+    benchRate: '速率/s',
+    benchSize: '位元組',
+    benchDuration: '秒',
+    benchStart: '開始壓測',
+    benchHint: '向本地 broker 發布高壓流量，驗證統計精度與介面流暢度',
+    benchSent: '已發送',
+    benchFailed: '啟動失敗：檢查連線狀態',
     deleteRule: '刪除規則',
     noBridgeRules: '尚無規則 — 點擊「新增規則」開始配置轉發鏈路',
     ruleName: '規則名稱 (例如: 感測器上雲)',
@@ -1132,6 +1212,26 @@ export const translations: Record<Language, Translations> = {
     quickSubscribe: 'クリックでこのトピックを購読',
     replay: 'このメッセージを再送',
     replayTruncated: 'ペイロードが切り詰められており再送不可',
+    topicTraffic: 'トピックトラフィック統計',
+    noTraffic: 'トラフィックなし — メッセージ受信後にリアルタイム集計、最多のトピックが先頭に',
+    msgsPerSec: '速度',
+    totalMsgs: '件数',
+    totalBytes: 'データ量',
+    peakRate: 'ピーク',
+    lastActive: '最終アクティブ',
+    trafficMore: '他 {n} 件の低頻度トピックは非表示',
+    feedDroppedNotice: '高スループット：表示から {n} 件の旧メッセージを破棄（トラフィック統計は正確）',
+    actualTopicNote: '実際に届いたトピック単位で集計（ワイルドカードではない）',
+    trafficCap: 'トピック追跡が 1000 上限に到達 — 新規は非集計',
+    benchLab: 'ベンチ台',
+    benchTopicPh: 'ベンチトピック（自分の購読にループバック）',
+    benchRate: '速度/s',
+    benchSize: 'バイト',
+    benchDuration: '秒',
+    benchStart: 'ベンチ開始',
+    benchHint: 'ブローカーへ高負荷送信し統計精度と UI 応答性を検証',
+    benchSent: '送信済',
+    benchFailed: '開始失敗：接続を確認してください',
     deleteRule: 'ルール削除',
     noBridgeRules: 'ルールがありません —「ルール追加」から設定を始めましょう',
     ruleName: 'ルール名 (例: センサー上雲)',

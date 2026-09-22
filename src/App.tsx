@@ -12,6 +12,7 @@ import { TransferQueue } from './components/file-transfer/TransferQueue';
 import { SubscriptionsBar } from './components/mqttx/SubscriptionsBar';
 import { MessageStream } from './components/mqttx/MessageStream';
 import { MessagePublisher } from './components/mqttx/MessagePublisher';
+import { TopicTrafficPanel } from './components/mqttx/TopicTrafficPanel';
 import { BridgePanel } from './components/bridge/BridgePanel';
 import { SettingsModal } from './components/SettingsModal';
 
@@ -23,6 +24,7 @@ import { useBroker } from './hooks/useBroker';
 import { useBridge } from './hooks/useBridge';
 import { useMqttMessages } from './hooks/useMqttMessages';
 import { useSubscriptionStats } from './hooks/useSubscriptionStats';
+import { useTopicStats } from './hooks/useTopicStats';
 import { useTransfers } from './hooks/useTransfers';
 import { useBatchSender } from './hooks/useBatchSender';
 
@@ -74,6 +76,9 @@ export function App() {
 
   // Subscription hit stats: polled only while the console is open and connected
   const subStats = useSubscriptionStats(broker.isConnected && activeMode === 'mqttx');
+
+  // Live per-topic traffic ranking (hot-topic finder)
+  const topicStats = useTopicStats(activeMode === 'mqttx');
 
   const handleClearRetained = async (topics: string[]) => {
     for (const topic of topics) {
@@ -266,6 +271,8 @@ export function App() {
                 t={t}
               />
 
+              <TopicTrafficPanel rows={topicStats.rows} onReset={topicStats.resetTopicStats} connected={broker.isConnected} t={t} />
+
               <MessageStream
                 messages={mqtt.messages}
                 onClearMessages={mqtt.clearMessages}
@@ -288,6 +295,7 @@ export function App() {
                 }}
                 paused={mqtt.paused}
                 pendingCount={mqtt.pendingCount}
+                feedDropped={mqtt.feedDropped}
                 onTogglePaused={mqtt.togglePaused}
                 t={t}
               />

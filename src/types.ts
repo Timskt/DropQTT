@@ -92,6 +92,32 @@ export interface TopicSubscription {
   createdAt?: string;
 }
 
+/** Batched console-feed emission from the backend (100 ms cadence) */
+export interface FeedBatch {
+  /** Oldest-first; the feed renders newest on top */
+  messages: MqttGenericMessage[];
+  /** Cumulative feed drops under overload (traffic stats stay exact) */
+  dropped: number;
+}
+
+/** Live per-topic traffic snapshot (backend-second-window based) */
+export interface TopicStatRow {
+  topic: string;
+  /** Total messages received since last reset */
+  count: number;
+  /** Total payload bytes received */
+  bytes: number;
+  /** Messages in the last completed second */
+  rate: number;
+  /** Payload bytes in the last completed second */
+  bytesRate: number;
+  /** Highest per-second message rate ever observed */
+  peakRate: number;
+  peakBytesRate: number;
+  /** Unix seconds of the last received message */
+  lastSeen: number;
+}
+
 // ---- Bridge (broker-to-broker forwarding) ----
 
 export type BridgeTopicMode = 'same' | 'prefix' | 'fixed' | 'regex' | 'map';

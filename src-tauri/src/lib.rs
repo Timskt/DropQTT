@@ -118,6 +118,34 @@ async fn reset_subscription_stats(state: State<'_, AppState>) -> Result<(), Stri
     Ok(())
 }
 
+/// Live per-topic traffic table (count / bytes / msgs-per-sec), hottest first
+#[tauri::command]
+async fn get_topic_stats(
+    state: State<'_, AppState>,
+) -> Result<Vec<mqtt_manager::TopicStatRow>, String> {
+    Ok(state.mqtt.get_topic_stats().await)
+}
+
+#[tauri::command]
+async fn reset_topic_stats(state: State<'_, AppState>) -> Result<(), String> {
+    state.mqtt.reset_topic_stats().await;
+    Ok(())
+}
+
+/// Built-in publish stress generator (loops back through our own subscription,
+/// exercising the batched feed + traffic stats under real load)
+#[tauri::command]
+async fn start_bench(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    topic: String,
+    rate: u32,
+    size: u32,
+    duration: u32,
+) -> Result<(), String> {
+    state.mqtt.start_bench(app, topic, rate, size, duration).await
+}
+
 #[tauri::command]
 async fn publish_console(
     app: AppHandle,
@@ -281,6 +309,9 @@ pub fn run() {
             unsubscribe_topic,
             get_subscription_stats,
             reset_subscription_stats,
+            get_topic_stats,
+            reset_topic_stats,
+            start_bench,
             publish_console,
             approve_transfer,
             reject_transfer,

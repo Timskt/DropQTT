@@ -27,6 +27,8 @@
 - ✅ **Receive Approval Mode**: Toggle auto-accept off to gate incoming files behind an explicit Approve/Reject review after SHA-256 verification.
 - 🎨 **Themeable UI**: Four design-token driven themes (Cyberpunk, OLED Obsidian, Nord, Solaris light) with CSS custom properties, plus 4-language i18n (简中/English/繁中/日本語).
 - 🚪 **Room / Channel Isolation**: Share files simply by agreeing on a channel code (e.g. `#my-secure-room`).
+- 🔥 **Live Topic Traffic & Bench Lab**: Per-actual-topic traffic ranking (msgs/sec, byte volume, peak rate, last-active) with second-accurate counters that stay exact under load, a hot-topic flame highlight, and a built-in publish stress lab (up to 20k msg/sec) that loops back through your own subscriptions to verify stat accuracy and UI responsiveness.
+- 🚦 **Overload-Proof Console Feed**: The backend batches the message feed at ~10 Hz (200 msgs/emit) with counted overflow drops — thousands of msgs/sec never flood the webview, and the UI shows a red notice when display rows were dropped while stats remain precise.
 - 🎨 **Pristine Modern UI & Brand Identity**: Designed with the `app-logo-design-engine` skill, featuring an origami vector mark rendered via native Swift + CoreGraphics producing true 32-bit RGBA (`ColorType 6`) icons without white squircle borders.
 - 📦 **Cross-Platform Matrix**: Builds native installers for macOS (`.dmg`), Linux (`.deb`, `.AppImage`), and Windows (`.msi`, NSIS `.exe`).
 

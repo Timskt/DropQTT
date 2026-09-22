@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ConsolePublishParams, MqttGenericMessage, TopicSubscription } from '../types';
+import { ConsolePublishParams, FeedBatch, MqttGenericMessage, TopicSubscription } from '../types';
 import { usePersistentState } from './usePersistentState';
 
 const MAX_MESSAGES = 500;
@@ -23,6 +23,8 @@ export function useMqttMessages(isConnected: boolean) {
   const [messages, setMessages] = useState<MqttGenericMessage[]>([]);
   const [paused, setPaused] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  // Cumulative backend feed drops under overload (stats stay exact)
+  const [feedDropped, setFeedDropped] = useState(0);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const pendingRef = useRef<MqttGenericMessage[]>([]);
@@ -34,15 +36,20 @@ export function useMqttMessages(isConnected: boolean) {
     let unlisten: (() => void) | undefined;
 
     const setup = async () => {
-      unlisten = await listen<MqttGenericMessage>('mqtt-message', (event) => {
+      // Backend batches the feed at ~10 Hz — one IPC event per batch, so
+      // thousands of msgs/sec no longer flood the webview.
+      unlisten = await listen<FeedBatch>('mqtt-messages', (event) => {
         if (disposed) return;
+        setFeedDropped(event.payload.dropped);
+        // Backend sends oldest-first; the feed renders newest on top
+        const incoming = event.payload.messages.slice().reverse();
         if (pausedRef.current) {
-          // Buffer while the feed is frozen; flush on resume
-          pendingRef.current.unshift(event.payload);
+          // Buffer while the feed is frozen; flush on resume (capped)
+          pendingRef.current = [...incoming, ...pendingRef.current].slice(0, MAX_MESSAGES);
           setPendingCount(pendingRef.current.length);
           return;
         }
-        setMessages((prev) => [event.payload, ...prev.slice(0, MAX_MESSAGES - 1)]);
+        setMessages((prev) => [...incoming, ...prev].slice(0, MAX_MESSAGES));
       });
     };
     setup();
@@ -126,6 +133,7 @@ export function useMqttMessages(isConnected: boolean) {
     getTopicsToRegister,
     paused,
     pendingCount,
+    feedDropped,
     pauseFeed,
     resumeFeed,
     togglePaused,

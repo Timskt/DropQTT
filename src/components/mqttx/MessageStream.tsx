@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Trash2, Copy, Check, ArrowDownRight, ArrowUpRight,
   Code2, AlignLeft, Binary, Braces, Box, Lock, FileText, Globe,
-  Pause, Play, Download, Eraser, Pin, RotateCcw,
+  Pause, Play, Download, Eraser, Pin, RotateCcw, Activity,
 } from 'lucide-react';
 import { MqttGenericMessage } from '../../types';
 import { Translations } from '../../i18n';
@@ -26,6 +26,8 @@ interface MessageStreamProps {
   connected: boolean;
   paused: boolean;
   pendingCount: number;
+  /** Backend feed drops under overload (stats stay exact) */
+  feedDropped?: number;
   onTogglePaused: () => void;
   t: Translations;
 }
@@ -246,6 +248,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   connected,
   paused,
   pendingCount,
+  feedDropped = 0,
   onTogglePaused,
   t,
 }) => {
@@ -519,6 +522,14 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
               {t.flushPending.replace('{count}', String(pendingCount))}
             </button>
           )}
+        </div>
+      )}
+
+      {/* High-throughput feed drop notice (traffic stats remain exact) */}
+      {feedDropped > 0 && (
+        <div className="px-3 py-1 border-b text-[10px] font-mono flex items-center gap-1.5" style={{ background: 'color-mix(in srgb, var(--danger) 10%, transparent)', borderColor: 'var(--border-inset)', color: 'var(--danger)' }}>
+          <Activity className="w-3 h-3" />
+          {t.feedDroppedNotice.replace('{n}', feedDropped.toLocaleString())}
         </div>
       )}
 
