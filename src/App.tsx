@@ -271,7 +271,14 @@ export function App() {
                 t={t}
               />
 
-              <TopicTrafficPanel rows={topicStats.rows} onReset={topicStats.resetTopicStats} connected={broker.isConnected} t={t} />
+              <TopicTrafficPanel
+                rows={topicStats.rows}
+                onReset={topicStats.resetTopicStats}
+                connected={broker.isConnected}
+                cap={topicStats.cap}
+                setCap={topicStats.setCap}
+                t={t}
+              />
 
               <MessageStream
                 messages={mqtt.messages}

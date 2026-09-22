@@ -268,7 +268,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 type="number"
                 value={form.port}
                 onChange={(e) => {
-                  setForm({ ...form, port: parseInt(e.target.value) || 1883 });
+                  setForm({ ...form, port: Math.min(65535, Math.max(1, parseInt(e.target.value) || 1883)) });
                   setTestResult(null);
                 }}
                 required
@@ -477,7 +477,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <input
                 type="number"
                 value={form.keepAliveSecs}
-                onChange={(e) => setForm({ ...form, keepAliveSecs: parseInt(e.target.value) || 60 })}
+                onChange={(e) => setForm({ ...form, keepAliveSecs: Math.min(600, Math.max(5, parseInt(e.target.value) || 60)) })}
                 className="w-full px-3 py-2 text-sm rounded-lg glass-input bg-black/40 text-white font-mono"
               />
             </div>

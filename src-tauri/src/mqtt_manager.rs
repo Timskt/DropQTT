@@ -24,6 +24,9 @@ const CONSOLE_PAYLOAD_CAP: usize = 64 * 1024;
 /// so messages ride 100 ms batches; overflow drops oldest (counted).
 const FEED_FLUSH_MILLIS: u64 = 100;
 const FEED_BATCH_MAX: usize = 200;
+/// Byte ceiling per emit so one batch can never stall the flusher task
+/// (200 x 64 KB base64 payloads would otherwise serialize ~12 MB per tick)
+const FEED_BATCH_BYTES: usize = 512 * 1024;
 const FEED_BUFFER_MAX: usize = 2000;
 /// Progress event throttle
 const PROGRESS_EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
@@ -114,9 +117,12 @@ pub struct FeedBatch {
     pub dropped: u64,
 }
 
-/// Cardinality guard: brokers can fan out to thousands of topics; we track a
-/// bounded set and stop admitting new ones beyond this cap.
-const MAX_TRACKED_TOPICS: usize = 1000;
+/// Cardinality guard for the traffic table. Configurable at runtime
+/// (platforms with tens of thousands of topics can raise it); when full we
+/// batch-evict the least recently active topics instead of refusing new ones.
+const DEFAULT_TOPIC_STATS_CAP: usize = 5_000;
+const MIN_TOPIC_STATS_CAP: usize = 100;
+const MAX_TOPIC_STATS_CAP: usize = 200_000;
 
 pub struct MqttManager {
     client: RwLock<Option<MqttClient>>,
@@ -128,6 +134,8 @@ pub struct MqttManager {
     subscription_hits: Mutex<HashMap<String, u64>>,
     /// Actual topic -> live traffic meter (resettable)
     topic_stats: Mutex<HashMap<String, TopicTraffic>>,
+    /// Runtime-configurable tracking cap (LRU eviction when full)
+    topic_stats_cap: std::sync::atomic::AtomicUsize,
     base_topic: RwLock<String>,
     download_dir: RwLock<PathBuf>,
     auto_receive: AtomicBool,
@@ -155,6 +163,7 @@ impl MqttManager {
             subscriptions: Mutex::new(HashMap::new()),
             subscription_hits: Mutex::new(HashMap::new()),
             topic_stats: Mutex::new(HashMap::new()),
+            topic_stats_cap: std::sync::atomic::AtomicUsize::new(DEFAULT_TOPIC_STATS_CAP),
             base_topic: RwLock::new("dropqtt".to_string()),
             download_dir: RwLock::new(def_download),
             auto_receive: AtomicBool::new(true),
@@ -248,50 +257,58 @@ impl MqttManager {
         let flag = shutdown.clone();
 
         let handle = tokio::spawn(async move {
-            // Console feed drains on a fixed cadence, decoupled from message
-            // arrival rate — 1000+ msgs/sec ride as ~10 IPC batches instead.
-            let mut ticker = tokio::time::interval(std::time::Duration::from_millis(FEED_FLUSH_MILLIS));
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // IMPORTANT: rumqttc's EventLoop::poll is NOT cancellation-safe —
+            // wrapping it in select! (previous design) cancelled it mid-flight
+            // every 100 ms tick, corrupting connection state and causing the
+            // sporadic auto-disconnects. Keep this loop pure; the feed flusher
+            // runs on its own task so batch serialization never blocks keepalive.
             while !flag.load(Ordering::SeqCst) {
-                tokio::select! {
-                    _ = ticker.tick() => {
-                        this.flush_feed(&app_handle).await;
-                    }
-                    ev = eventloop.poll() => {
-                        match ev {
-                            NetEvent::Connected => {
-                                // (Re)apply every registered subscription after CONNACK,
-                                // including automatic reconnects.
-                                if let Some(client) = this.client.read().await.clone() {
-                                    let subs: Vec<(String, u8)> =
-                                        this.subscriptions.lock().await.iter().map(|(t, q)| (t.clone(), *q)).collect();
-                                    for (topic, qos) in subs {
-                                        let _ = client.subscribe(&topic, qos).await;
-                                    }
-                                }
-                                let first = !this.is_connected.swap(true, Ordering::SeqCst);
-                                if first {
-                                    let _ = app_handle.emit("broker-connected", ());
-                                }
-                                let _ = app_handle.emit("broker-status", this.get_connection_status().await);
+                match eventloop.poll().await {
+                    NetEvent::Connected => {
+                        // (Re)apply every registered subscription after CONNACK,
+                        // including automatic reconnects.
+                        if let Some(client) = this.client.read().await.clone() {
+                            let subs: Vec<(String, u8)> =
+                                this.subscriptions.lock().await.iter().map(|(t, q)| (t.clone(), *q)).collect();
+                            for (topic, qos) in subs {
+                                let _ = client.subscribe(&topic, qos).await;
                             }
-                            NetEvent::ConnectionError(e) => {
-                                if this.is_connected.swap(false, Ordering::SeqCst) {
-                                    let _ = app_handle.emit("broker-status", this.get_connection_status().await);
-                                }
-                                let _ = app_handle.emit("broker-disconnected", e);
-                                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                            }
-                            NetEvent::Publish(publish) => {
-                                this.route_message(&app_handle, publish).await;
-                            }
-                            NetEvent::Other => {}
                         }
+                        let first = !this.is_connected.swap(true, Ordering::SeqCst);
+                        if first {
+                            let _ = app_handle.emit("broker-connected", ());
+                        }
+                        let _ = app_handle.emit("broker-status", this.get_connection_status().await);
                     }
+                    NetEvent::ConnectionError(e) => {
+                        if this.is_connected.swap(false, Ordering::SeqCst) {
+                            let _ = app_handle.emit("broker-status", this.get_connection_status().await);
+                        }
+                        let _ = app_handle.emit("broker-disconnected", e);
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                    }
+                    NetEvent::Publish(publish) => {
+                        this.route_message(&app_handle, publish).await;
+                    }
+                    NetEvent::Other => {}
                 }
             }
-            // Final drain so no staged rows are lost on disconnect
-            this.flush_feed(&app_handle).await;
+        });
+
+        // Dedicated feed flusher: drains staged rows on a fixed cadence on its
+        // own task; performs the final drain when the connection shuts down.
+        let this_flush = self.clone();
+        let app_flush = app.clone();
+        let flag_flush = shutdown.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(FEED_FLUSH_MILLIS)).await;
+                let stopping = flag_flush.load(Ordering::SeqCst);
+                this_flush.flush_feed(&app_flush).await;
+                if stopping {
+                    break;
+                }
+            }
         });
 
         *self.loop_control.lock().await = Some((handle, shutdown));
@@ -355,16 +372,25 @@ impl MqttManager {
         buf.push_back(msg);
     }
 
-    /// Drain staged messages into batched `mqtt-messages` events
+    /// Drain staged messages into batched `mqtt-messages` events, capped by
+    /// both message count and serialized size so emits stay cheap.
     async fn flush_feed(self: &Arc<Self>, app: &AppHandle) {
         let batch: Vec<MqttGenericMessage> = {
             let mut buf = self.feed_buffer.lock().await;
-            if buf.is_empty() {
-                return;
+            let mut bytes = 0usize;
+            let mut batch: Vec<MqttGenericMessage> = Vec::with_capacity(64);
+            while let Some(m) = buf.pop_front() {
+                bytes += m.payload_base64.len();
+                batch.push(m);
+                if batch.len() >= FEED_BATCH_MAX || bytes >= FEED_BATCH_BYTES {
+                    break;
+                }
             }
-            let take = buf.len().min(FEED_BATCH_MAX);
-            buf.drain(..take).collect()
+            batch
         };
+        if batch.is_empty() {
+            return;
+        }
         let dropped = self.feed_dropped.load(Ordering::SeqCst);
         let _ = app.emit(
             "mqtt-messages",
@@ -383,7 +409,9 @@ impl MqttManager {
         }
     }
 
-    /// Record one inbound publish against its actual topic (O(1), second buckets)
+    /// Record one inbound publish against its actual topic (O(1), second buckets).
+    /// When the tracking cap is full, batch-evict the least recently active 10%
+    /// so fresh topics always get admitted.
     async fn record_topic(&self, topic: &str, bytes: u64) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -393,8 +421,20 @@ impl MqttManager {
         let entry = match stats.get_mut(topic) {
             Some(e) => e,
             None => {
-                if stats.len() >= MAX_TRACKED_TOPICS {
-                    return; // cardinality guard
+                let cap = self.topic_stats_cap.load(Ordering::SeqCst);
+                if stats.len() >= cap {
+                    let evict_n = (cap / 10).max(1);
+                    let mut by_age: Vec<(&String, u64)> =
+                        stats.iter().map(|(t, e)| (t, e.last_seen)).collect();
+                    by_age.sort_by_key(|(_, ts)| *ts);
+                    let victims: Vec<String> = by_age
+                        .into_iter()
+                        .take(evict_n)
+                        .map(|(t, _)| t.clone())
+                        .collect();
+                    for v in victims {
+                        stats.remove(&v);
+                    }
                 }
                 stats.entry(topic.to_string()).or_default()
             }
@@ -447,6 +487,16 @@ impl MqttManager {
 
     pub async fn reset_topic_stats(&self) {
         self.topic_stats.lock().await.clear();
+    }
+
+    /// Runtime-configurable tracking cap (clamped to 100..=200_000)
+    pub fn set_topic_stats_cap(&self, cap: usize) {
+        self.topic_stats_cap
+            .store(cap.clamp(MIN_TOPIC_STATS_CAP, MAX_TOPIC_STATS_CAP), Ordering::SeqCst);
+    }
+
+    pub fn get_topic_stats_cap(&self) -> usize {
+        self.topic_stats_cap.load(Ordering::SeqCst)
     }
 
     /// Built-in publish stress generator: pushes `rate` msgs/sec of `size`
@@ -1692,11 +1742,11 @@ async fn run_watchdog(
                 continue;
             }
 
-            if stale_secs < 6 {
+            if stale_secs < 10 {
                 continue;
             }
 
-            if entry.nack_rounds >= 5 {
+            if entry.nack_rounds >= 7 {
                 let temp = entry.temp_path.clone();
                 let prefix = entry.topic_prefix.clone();
                 let name = entry.meta.file_name.clone();
@@ -1793,6 +1843,29 @@ mod tests {
 
         mgr.reset_topic_stats().await;
         assert!(mgr.get_topic_stats().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn topic_stats_cap_evicts_least_recent_when_full() {
+        let mgr = MqttManager::new();
+        mgr.set_topic_stats_cap(100); // clamped min
+        assert_eq!(mgr.get_topic_stats_cap(), 100);
+
+        // t_old is strictly older than the rest
+        mgr.record_topic("t_old", 1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        for i in 0..100 {
+            mgr.record_topic(&format!("t_{}", i), 1).await;
+        }
+        // Cap full: admitting a new topic batch-evicts the oldest 10%
+        mgr.record_topic("t_new", 1).await;
+        let rows = mgr.get_topic_stats().await;
+        assert!(rows.len() <= 100, "cap respected, got {}", rows.len());
+        assert!(
+            !rows.iter().any(|r| r.topic == "t_old"),
+            "least recently active topic evicted"
+        );
+        assert!(rows.iter().any(|r| r.topic == "t_new"), "new topic admitted");
     }
 
     #[tokio::test]

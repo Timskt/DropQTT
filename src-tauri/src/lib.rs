@@ -132,6 +132,18 @@ async fn reset_topic_stats(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Runtime-configurable topic tracking cap (platforms with 10k+ topics)
+#[tauri::command]
+async fn set_topic_stats_cap(state: State<'_, AppState>, cap: usize) -> Result<(), String> {
+    state.mqtt.set_topic_stats_cap(cap);
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_topic_stats_cap(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(state.mqtt.get_topic_stats_cap())
+}
+
 /// Built-in publish stress generator (loops back through our own subscription,
 /// exercising the batched feed + traffic stats under real load)
 #[tauri::command]
@@ -311,6 +323,8 @@ pub fn run() {
             reset_subscription_stats,
             get_topic_stats,
             reset_topic_stats,
+            set_topic_stats_cap,
+            get_topic_stats_cap,
             start_bench,
             publish_console,
             approve_transfer,

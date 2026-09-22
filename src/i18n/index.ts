@@ -162,6 +162,19 @@ export interface Translations {
   benchHint: string;
   benchSent: string;
   benchFailed: string;
+  capHint: string;
+  exportTraffic: string;
+  alertSummary: string;
+  alertThreshold: string;
+  sortBy: string;
+  sortRate: string;
+  sortPeak: string;
+  sortBytes: string;
+  sortCount: string;
+  snapshotDelta: string;
+  snapshotTake: string;
+  snapshotClear: string;
+  snapshotAge: string;
   deleteRule: string;
   noBridgeRules: string;
   ruleName: string;
@@ -431,6 +444,19 @@ export const translations: Record<Language, Translations> = {
     benchHint: '向本地 broker 发布高压流量，验证统计精度与界面流畅度',
     benchSent: '已发送',
     benchFailed: '启动失败：检查连接状态',
+    capHint: '主题跟踪上限（满时自动驱逐最久不活跃主题）',
+    exportTraffic: '导出流量表 CSV',
+    alertSummary: '发现 {n} 个异常快 topic（≥{x}/s）：',
+    alertThreshold: '告警阈值',
+    sortBy: '排序维度',
+    sortRate: '速率',
+    sortPeak: '峰值',
+    sortBytes: '数据量',
+    sortCount: '消息数',
+    snapshotDelta: 'Δ 快照以来',
+    snapshotTake: '打快照（对比谁在猛发）',
+    snapshotClear: '清除快照',
+    snapshotAge: '快照已 {s}s',
     deleteRule: '删除规则',
     noBridgeRules: '暂无规则 — 点击"添加规则"开始配置转发链路',
     ruleName: '规则名称 (例如: 传感器上云)',
@@ -698,6 +724,19 @@ export const translations: Record<Language, Translations> = {
     benchHint: 'Publishes high-rate load to the broker to verify stat accuracy & UI smoothness',
     benchSent: 'sent',
     benchFailed: 'Start failed: check connection',
+    capHint: 'Topic tracking cap (LRU-evicts least active when full)',
+    exportTraffic: 'Export traffic CSV',
+    alertSummary: '{n} anomalously fast topics (≥{x}/s):',
+    alertThreshold: 'Alert threshold',
+    sortBy: 'Sort by',
+    sortRate: 'Rate',
+    sortPeak: 'Peak',
+    sortBytes: 'Volume',
+    sortCount: 'Msgs',
+    snapshotDelta: 'Δ since snapshot',
+    snapshotTake: 'Take snapshot (find ramp-ups)',
+    snapshotClear: 'Clear snapshot',
+    snapshotAge: 'snapshot {s}s old',
     deleteRule: 'Delete rule',
     noBridgeRules: 'No rules yet — click "Add Rule" to wire up a bridge',
     ruleName: 'Rule name (e.g. Sensors to cloud)',
@@ -965,6 +1004,19 @@ export const translations: Record<Language, Translations> = {
     benchHint: '向本地 broker 發布高壓流量，驗證統計精度與介面流暢度',
     benchSent: '已發送',
     benchFailed: '啟動失敗：檢查連線狀態',
+    capHint: '主題追蹤上限（滿時自動驅逐最久不活躍主題）',
+    exportTraffic: '匯出流量表 CSV',
+    alertSummary: '發現 {n} 個異常快 topic（≥{x}/s）：',
+    alertThreshold: '告警閾值',
+    sortBy: '排序維度',
+    sortRate: '速率',
+    sortPeak: '峰值',
+    sortBytes: '資料量',
+    sortCount: '訊息數',
+    snapshotDelta: 'Δ 快照以來',
+    snapshotTake: '打快照（對比誰在猛發）',
+    snapshotClear: '清除快照',
+    snapshotAge: '快照已 {s}s',
     deleteRule: '刪除規則',
     noBridgeRules: '尚無規則 — 點擊「新增規則」開始配置轉發鏈路',
     ruleName: '規則名稱 (例如: 感測器上雲)',
@@ -1232,6 +1284,19 @@ export const translations: Record<Language, Translations> = {
     benchHint: 'ブローカーへ高負荷送信し統計精度と UI 応答性を検証',
     benchSent: '送信済',
     benchFailed: '開始失敗：接続を確認してください',
+    capHint: 'トピック追跡上限（満杯時は最不活性を自動退避）',
+    exportTraffic: 'トラフィック CSV エクスポート',
+    alertSummary: '異常に速いトピック {n} 件（≥{x}/s）：',
+    alertThreshold: '警告しきい値',
+    sortBy: 'ソート基準',
+    sortRate: '速度',
+    sortPeak: 'ピーク',
+    sortBytes: 'データ量',
+    sortCount: '件数',
+    snapshotDelta: 'Δ スナップショット以降',
+    snapshotTake: 'スナップショット（急増を発見）',
+    snapshotClear: 'スナップショット解除',
+    snapshotAge: 'スナップショット {s}s 前',
     deleteRule: 'ルール削除',
     noBridgeRules: 'ルールがありません —「ルール追加」から設定を始めましょう',
     ruleName: 'ルール名 (例: センサー上雲)',

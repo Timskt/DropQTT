@@ -59,7 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span className="font-mono font-bold tracking-wider text-sm text-white">DropQTT</span>
               <div className="flex items-center space-x-1">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
-                <span className="text-[10px] text-slate-400 font-mono">v0.6.0-core</span>
+                <span className="text-[10px] text-slate-400 font-mono">v0.7.0-core</span>
               </div>
             </div>
           </div>

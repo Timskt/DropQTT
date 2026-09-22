@@ -13,6 +13,7 @@ import {
 import { ExportFormat, exportMessages } from '../../utils/exportMessages';
 import { copyToClipboard } from '../../utils/clipboard';
 import { HtmlPreview, MarkdownView } from './RichText';
+import { JsonTree } from './JsonTree';
 
 interface MessageStreamProps {
   messages: MqttGenericMessage[];
@@ -214,6 +215,10 @@ const MessageRow = React.memo(function MessageRow({
       {rich ? (
         <div className="rounded-md border p-3 max-h-[24rem] overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)' }}>
           {effective === 'md' ? <MarkdownView text={display} /> : <HtmlPreview source={display} />}
+        </div>
+      ) : effective === 'json' ? (
+        <div className="rounded-md border p-2.5 max-h-[24rem] overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)' }}>
+          <JsonTree text={display} />
         </div>
       ) : (
         <pre
