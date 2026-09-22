@@ -31,3 +31,6 @@ Thumbs.db
 # updater signing key backups & local password
 *.old.bak
 src-tauri/.updater-key-password
+
+# stray UI-diagnostic captures
+win-cap*.png
