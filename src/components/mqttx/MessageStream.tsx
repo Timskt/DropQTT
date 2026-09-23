@@ -134,13 +134,7 @@ const MessageRow = React.memo(function MessageRow({
     <div className="pt-2.5 text-xs group">
       <div className="flex items-center justify-between mb-1.5 gap-2">
         <div className="flex items-center gap-2 truncate min-w-0">
-          <span
-            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex items-center gap-0.5 shrink-0 ${
-              isOut
-                ? 'bg-cyan-950/60 text-cyan-300 border-cyan-800'
-                : 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
-            }`}
-          >
+          <span className={`chip ${isOut ? 'chip-info' : 'chip-ok'} !font-bold`}>
             {isOut ? <ArrowUpRight className="w-2.5 h-2.5" /> : <ArrowDownRight className="w-2.5 h-2.5" />}
             <span>{isOut ? 'OUT' : 'IN'}</span>
           </span>
@@ -156,16 +150,8 @@ const MessageRow = React.memo(function MessageRow({
           </button>
 
           <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>QoS {msg.qos}</span>
-          {msg.retain && (
-            <span className="text-[10px] px-1 py-0.5 bg-amber-950/60 border border-amber-800 text-amber-300 rounded shrink-0">
-              RETAIN
-            </span>
-          )}
-          {msg.contentType && (
-            <span className="text-[10px] px-1 py-0.5 bg-violet-950/60 border border-violet-800 text-violet-300 rounded shrink-0 hidden lg:inline">
-              {msg.contentType}
-            </span>
-          )}
+          {msg.retain && <span className="chip chip-warn shrink-0">RETAIN</span>}
+          {msg.contentType && <span className="chip chip-violet shrink-0 hidden lg:inline">{msg.contentType}</span>}
           {viewMode === 'auto' && (
             <span className="text-[10px] shrink-0 hidden md:inline" style={{ color: 'var(--text-muted)' }}>{effective}</span>
           )}
@@ -390,13 +376,9 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
             onClick={onTogglePaused}
             title={paused ? t.resumeFeed : t.pauseFeed}
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded text-[11px] border transition ${
-              paused ? 'bg-amber-950/60 border-amber-800 text-amber-300 font-semibold' : ''
+              paused ? 'chip-warn !py-1.5 font-semibold' : ''
             }`}
-            style={
-              paused
-                ? undefined
-                : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-secondary)' }
-            }
+            style={paused ? undefined : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-secondary)' }}
           >
             {paused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
             {paused ? (
@@ -460,19 +442,20 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
               disabled={retainedTopics.length === 0}
               title={t.clearRetainedTitle}
               className={`relative p-1.5 rounded border transition ${
-                retainedTopics.length > 0
-                  ? 'bg-amber-950/50 border-amber-800 text-amber-300 hover:border-amber-600'
-                  : 'cursor-not-allowed opacity-40'
+                retainedTopics.length > 0 ? 'chip-warn !p-1.5' : 'cursor-not-allowed opacity-40'
               }`}
               style={
                 retainedTopics.length > 0
-                  ? undefined
+                  ? { background: 'transparent' }
                   : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }
               }
             >
               <Pin className="w-3.5 h-3.5" />
               {retainedTopics.length > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-slate-950 text-[9px] font-bold flex items-center justify-center">
+                <span
+                  className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center"
+                  style={{ background: 'var(--warn)', color: 'var(--bg-code)' }}
+                >
                   {retainedTopics.length}
                 </span>
               )}
@@ -482,7 +465,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
                 <div className="text-[11px] mb-1.5 px-1" style={{ color: 'var(--text-secondary)' }}>{t.retainedOnTopics}</div>
                 <div className="max-h-40 overflow-y-auto space-y-0.5 mb-2">
                   {retainedTopics.map((tp) => (
-                    <div key={tp} className="text-[11px] font-mono text-amber-200/90 bg-amber-950/30 border border-amber-900/40 rounded px-1.5 py-0.5 truncate">
+                    <div key={tp} className="text-[11px] font-mono rounded px-1.5 py-0.5 truncate" style={{ color: 'var(--warn)', background: 'var(--warn-soft)', border: '1px solid var(--warn-border)' }}>
                       {tp}
                     </div>
                   ))}
@@ -490,7 +473,8 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
                 <button
                   onClick={handleClearRetained}
                   disabled={clearingRetain}
-                  className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded bg-amber-600/90 hover:bg-amber-500 text-slate-950 text-[11px] font-bold disabled:opacity-50 transition"
+                  className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-[11px] font-bold disabled:opacity-50 transition border"
+                  style={{ background: 'var(--warn-soft)', borderColor: 'var(--warn-border)', color: 'var(--warn)' }}
                 >
                   <Eraser className="w-3 h-3" />
                   <span>{clearingRetain ? t.clearingRetained : t.clearAllRetained.replace('{count}', String(retainedTopics.length))}</span>
@@ -513,17 +497,17 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
 
       {/* Export feedback note */}
       {exportNote && (
-        <div className="px-3 py-1 bg-cyan-950/40 border-b border-cyan-900/50 text-[10px] text-cyan-300 animate-fade-in">
+        <div className="px-3 py-1 text-[10px] animate-fade-in" style={{ background: 'var(--info-soft)', borderBottom: '1px solid var(--info-border)', color: 'var(--info)' }}>
           {exportNote}
         </div>
       )}
 
       {/* Frozen-feed hint bar */}
       {paused && (
-        <div className="px-3 py-1 bg-amber-950/40 border-b border-amber-900/50 text-[10px] text-amber-300 flex items-center justify-between">
+        <div className="px-3 py-1 text-[10px] flex items-center justify-between" style={{ background: 'var(--warn-soft)', borderBottom: '1px solid var(--warn-border)', color: 'var(--warn)' }}>
           <span>{t.feedPaused}</span>
           {pendingCount > 0 && (
-            <button onClick={onTogglePaused} className="font-semibold hover:text-amber-100 underline">
+            <button onClick={onTogglePaused} className="font-semibold underline">
               {t.flushPending.replace('{count}', String(pendingCount))}
             </button>
           )}

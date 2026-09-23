@@ -133,6 +133,7 @@ export const HtmlPreview: React.FC<{ source: string; className?: string }> = ({ 
     title="HTML Preview"
     sandbox=""
     srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;font-size:13px;margin:10px;word-break:break-word;line-height:1.6}</style></head><body>${source}</body></html>`}
-    className={`w-full min-h-[10rem] bg-white rounded-md border border-slate-700/60 ${className ?? ''}`}
+    className={`w-full min-h-[10rem] bg-white rounded-md border ${className ?? ''}`}
+    style={{ borderColor: 'var(--border-inset)' }}
   />
 );

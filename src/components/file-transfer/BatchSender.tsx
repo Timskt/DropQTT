@@ -27,6 +27,14 @@ const CHUNK_OPTIONS = [
   { label: '2 MB (Maximum)', value: 2 * 1024 * 1024 },
 ];
 
+const OPT_STYLE = { background: 'var(--bg-panel-solid)', color: 'var(--text-primary)' };
+
+const statusChip = (status: string) =>
+  status === 'completed' ? 'chip-ok' : status === 'sending' ? 'chip-info animate-pulse' : status === 'failed' ? 'chip-bad' : 'chip-neutral';
+
+const statusLabel = (status: string, t: Translations) =>
+  status === 'completed' ? t.completed : status === 'sending' ? t.sending : t.pending;
+
 export const BatchSender: React.FC<BatchSenderProps> = ({
   publishTopic,
   setPublishTopic,
@@ -54,21 +62,10 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
 
   const handleSelectFiles = async () => {
     try {
-      const selected = await open({
-        multiple: true,
-        directory: false,
-      });
-
+      const selected = await open({ multiple: true, directory: false });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
-        const newItems = paths.map((p) => {
-          const name = p.split(/[\\/]/).pop() || 'file';
-          return {
-            path: p,
-            name,
-            size: 0, // In desktop app, rust gets exact size when hashing
-          };
-        });
+        const newItems = paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || 'file', size: 0 }));
         onAddFiles(newItems);
       }
     } catch (e) {
@@ -77,60 +74,54 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
   };
 
   const totalSize = files.reduce((acc, curr) => acc + (curr.size || 0), 0);
-
-  // Clean topic for preview
   const cleanPrefix = publishTopic.trim().replace(/\/\+$/, '').replace(/\/meta$/, '');
 
   return (
-    <div className="panel p-4 font-mono space-y-4">
-      {/* 1. Explicit Publish Topic Configuration */}
+    <div className="panel p-4 space-y-4">
+      {/* 1. Publish Topic Configuration */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between text-xs">
-          <label className="text-slate-300 font-semibold flex items-center space-x-1.5">
-            <Send className="w-3.5 h-3.5 text-cyan-400" />
+          <label className="font-semibold flex items-center space-x-1.5" style={{ color: 'var(--text-primary)' }}>
+            <Send className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} />
             <span>{t.publishTopic}</span>
           </label>
-          <span className="text-[10px] text-slate-500">{t.publishTopicHint}</span>
+          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{t.publishTopicHint}</span>
         </div>
-        <div className="flex items-center space-x-2">
-          <input
-            type="text"
-            value={publishTopic}
-            onChange={(e) => setPublishTopic(e.target.value)}
-            placeholder="dropqtt/public-lobby"
-            className="field-input flex-1 text-cyan-300 focus:border-cyan-500"
-          />
-        </div>
+        <input
+          type="text"
+          value={publishTopic}
+          onChange={(e) => setPublishTopic(e.target.value)}
+          placeholder="dropqtt/public-lobby"
+          className="field-input w-full font-mono"
+          style={{ color: 'var(--info)' }}
+        />
 
         {/* Sub-topic Protocol Topology Preview */}
         <div className="inset-box p-2 text-[11px] space-y-1">
-          <div className="text-[10px] uppercase text-slate-500 font-semibold">{t.topicPreview}:</div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px] text-slate-400">
-            <div className="bg-slate-900/80 px-2 py-1 rounded border border-slate-800 truncate">
-              <span className="text-cyan-400 font-semibold">{t.metaTopicPreview}:</span> {cleanPrefix}/meta
-            </div>
-            <div className="bg-slate-900/80 px-2 py-1 rounded border border-slate-800 truncate">
-              <span className="text-cyan-400 font-semibold">{t.chunkTopicPreview}:</span> {cleanPrefix}/chunk/{'{id}'}/{'{idx}'}
-            </div>
-            <div className="bg-slate-900/80 px-2 py-1 rounded border border-slate-800 truncate">
-              <span className="text-cyan-400 font-semibold">{t.ctrlTopicPreview}:</span> {cleanPrefix}/ctrl/{'{id}'}
-            </div>
+          <div className="ui-label font-semibold">{t.topicPreview}:</div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+            {[
+              { label: t.metaTopicPreview, value: `${cleanPrefix}/meta` },
+              { label: t.chunkTopicPreview, value: `${cleanPrefix}/chunk/{id}/{idx}` },
+              { label: t.ctrlTopicPreview, value: `${cleanPrefix}/ctrl/{id}` },
+            ].map((row) => (
+              <div key={row.label} className="inset-box px-2 py-1 truncate" style={{ background: 'var(--bg-panel)' }}>
+                <span className="font-semibold" style={{ color: 'var(--info)' }}>{row.label}:</span> {row.value}
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* 2. Multi-File Selection & Drag/Drop */}
+      {/* 2. Multi-File Selection */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-slate-300 font-semibold flex items-center space-x-1.5">
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="font-semibold flex items-center space-x-1.5" style={{ color: 'var(--text-primary)' }}>
+            <Layers className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} />
             <span>{t.batchQueue} ({files.length})</span>
           </span>
           {files.length > 0 && !isSending && (
-            <button
-              onClick={onClearFiles}
-              className="text-[10px] text-rose-400 hover:text-rose-300 flex items-center space-x-1 transition"
-            >
+            <button onClick={onClearFiles} className="text-[10px] flex items-center space-x-1 transition" style={{ color: 'var(--bad)' }}>
               <Trash2 className="w-3 h-3" />
               <span>{t.clearBatch}</span>
             </button>
@@ -140,59 +131,47 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
         {/* Dropzone / Select button */}
         <div
           onClick={handleSelectFiles}
-          className="border-2 border-dashed rounded p-4 text-center cursor-pointer transition border-slate-700/80 hover:border-slate-600 bg-slate-950/40 hover:bg-slate-950/70"
+          className="rounded-md border-2 border-dashed p-4 text-center cursor-pointer transition"
+          style={{ borderColor: 'var(--border-inset)', background: 'var(--bg-inset)' }}
         >
           <div className="flex flex-col items-center justify-center space-y-1.5 py-1">
-            <Plus className="w-6 h-6 text-cyan-400" />
-            <div className="text-xs text-slate-200 font-medium">
-              {t.multiFileSelect}
-            </div>
-            <div className="text-[11px] text-slate-500">
-              {t.dropHint}
-            </div>
+            <Plus className="w-6 h-6" style={{ color: 'var(--info)' }} />
+            <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{t.multiFileSelect}</div>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{t.dropHint}</div>
           </div>
         </div>
 
-        {/* File Batch List Table */}
+        {/* File Batch List */}
         {files.length > 0 && (
-          <div className="bg-slate-950/70 border border-slate-800 rounded divide-y divide-slate-800/80 max-h-48 overflow-y-auto">
+          <div className="inset-box divide-y max-h-48 overflow-y-auto" style={{ borderColor: 'var(--border-inset)' }}>
             {files.map((file, idx) => {
               const isCurrent = isSending && idx === sendingIndex;
               return (
                 <div
                   key={file.id}
-                  className={`flex items-center justify-between px-3 py-2 text-xs transition ${
-                    isCurrent ? 'bg-cyan-950/30' : 'hover:bg-slate-900/40'
-                  }`}
+                  className="flex items-center justify-between px-3 py-2 text-xs transition"
+                  style={isCurrent ? { background: 'var(--info-soft)' } : undefined}
                 >
                   <div className="flex items-center space-x-2.5 truncate max-w-[75%]">
-                    <FileText className={`w-3.5 h-3.5 flex-shrink-0 ${isCurrent ? 'text-cyan-400 animate-pulse' : 'text-slate-400'}`} />
+                    <FileText
+                      className={`w-3.5 h-3.5 flex-shrink-0 ${isCurrent ? 'animate-pulse' : ''}`}
+                      style={{ color: isCurrent ? 'var(--info)' : 'var(--text-muted)' }}
+                    />
                     <div className="truncate">
-                      <div className="text-slate-200 truncate font-medium">{file.name}</div>
-                      <div className="text-[10px] text-slate-500 truncate">{file.path}</div>
+                      <div className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</div>
+                      <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{file.path}</div>
                     </div>
                   </div>
 
                   <div className="flex items-center space-x-3">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                      file.status === 'completed'
-                        ? 'text-emerald-400 bg-emerald-950/40 border-emerald-800'
-                        : file.status === 'sending'
-                        ? 'text-cyan-400 bg-cyan-950/40 border-cyan-800 animate-pulse'
-                        : file.status === 'failed'
-                        ? 'text-rose-400 bg-rose-950/40 border-rose-800'
-                        : 'text-slate-400 bg-slate-900 border-slate-800'
-                    }`}>
-                      {file.status === 'completed' ? t.completed : file.status === 'sending' ? t.sending : t.pending}
-                    </span>
-
+                    <span className={`chip ${statusChip(file.status)}`}>{statusLabel(file.status, t)}</span>
                     {!isSending && (
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRemoveFile(file.id);
-                        }}
-                        className="text-slate-500 hover:text-rose-400 transition"
+                        onClick={(e) => { e.stopPropagation(); onRemoveFile(file.id); }}
+                        className="transition"
+                        style={{ color: 'var(--text-muted)' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--bad)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -205,42 +184,29 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
         )}
       </div>
 
-      {/* 3. Transfer Configuration (Chunk Size & QoS) */}
+      {/* 3. Transfer Configuration */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
         <div className="space-y-1">
-          <label className="text-[11px] text-slate-400 font-semibold">{t.packetChunkSize}</label>
-          <select
-            value={chunkSize}
-            disabled={isSending}
-            onChange={(e) => setChunkSize(Number(e.target.value))}
-            className="field-input w-full text-slate-200 focus:border-cyan-500"
-          >
+          <label className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{t.packetChunkSize}</label>
+          <select value={chunkSize} disabled={isSending} onChange={(e) => setChunkSize(Number(e.target.value))} className="field-input w-full">
             {CHUNK_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value} className="bg-slate-900 text-slate-200">
-                {opt.label}
-              </option>
+              <option key={opt.value} value={opt.value} style={OPT_STYLE}>{opt.label}</option>
             ))}
           </select>
         </div>
-
         <div className="space-y-1">
-          <label className="text-[11px] text-slate-400 font-semibold">{t.qosLevel}</label>
-          <select
-            value={qos}
-            disabled={isSending}
-            onChange={(e) => setQos(Number(e.target.value))}
-            className="field-input w-full text-slate-200 focus:border-cyan-500"
-          >
-            <option value={0} className="bg-slate-900 text-slate-200">{t.qos0Desc}</option>
-            <option value={1} className="bg-slate-900 text-slate-200">{t.qos1Desc}</option>
-            <option value={2} className="bg-slate-900 text-slate-200">{t.qos2Desc}</option>
+          <label className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{t.qosLevel}</label>
+          <select value={qos} disabled={isSending} onChange={(e) => setQos(Number(e.target.value))} className="field-input w-full">
+            {[0, 1, 2].map((q) => (
+              <option key={q} value={q} style={OPT_STYLE}>{q === 0 ? t.qos0Desc : q === 1 ? t.qos1Desc : t.qos2Desc}</option>
+            ))}
           </select>
         </div>
       </div>
 
       {/* 4. Action Bar */}
-      <div className="pt-2 flex items-center justify-between border-t border-slate-800/80">
-        <div className="text-[11px] text-slate-500">
+      <div className="pt-2 flex items-center justify-between" style={{ borderTop: '1px solid var(--border-inset)' }}>
+        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
           {files.length > 0 && (
             <span>
               {t.totalFiles.replace('{count}', String(files.length))} • {t.totalSize.replace('{size}', formatBytes(totalSize))}
@@ -252,7 +218,8 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
           {isSending && (
             <button
               onClick={onCancelBatch}
-              className="flex items-center space-x-1.5 px-3 py-2 rounded text-xs font-semibold bg-rose-800/70 hover:bg-rose-700 text-rose-100 border border-rose-700 transition"
+              className="flex items-center space-x-1.5 px-3 py-2 rounded text-xs font-semibold border transition"
+              style={{ background: 'var(--bad-soft)', borderColor: 'var(--bad-border)', color: 'var(--bad)' }}
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>{t.cancelBatch}</span>
@@ -261,18 +228,12 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
           <button
             onClick={() => onStartSendBatch(chunkSize, qos)}
             disabled={!connected || files.length === 0 || isSending}
-            className={`flex items-center space-x-2 px-5 py-2 rounded text-xs font-semibold tracking-wide transition border shadow-sm ${
-              !connected || files.length === 0 || isSending
-                ? 'bg-slate-800/60 text-slate-500 border-slate-700/50 cursor-not-allowed'
-                : 'bg-cyan-600 hover:bg-cyan-500 text-white border-cyan-400 hover:shadow-[0_0_12px_rgba(6,182,212,0.4)]'
-            }`}
+            className="btn-accent flex items-center space-x-2 !px-5"
           >
             <Send className={`w-3.5 h-3.5 ${isSending ? 'animate-bounce' : ''}`} />
             <span>
               {isSending
-                ? t.sendingBatch
-                    .replace('{current}', String(sendingIndex + 1))
-                    .replace('{total}', String(files.length))
+                ? t.sendingBatch.replace('{current}', String(sendingIndex + 1)).replace('{total}', String(files.length))
                 : t.sendBatch}
             </span>
           </button>

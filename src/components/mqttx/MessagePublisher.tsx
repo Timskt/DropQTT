@@ -276,7 +276,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               type="checkbox"
               checked={retain}
               onChange={(e) => setRetain(e.target.checked)}
-              className="rounded bg-slate-900 border-slate-700 focus:ring-0"
+              className="rounded focus:ring-0"
               style={{ accentColor: 'var(--accent)' }}
             />
             <span>{t.retain}</span>

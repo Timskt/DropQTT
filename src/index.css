@@ -21,6 +21,33 @@
     --success: #34d399;
     --danger: #fb7185;
     --warning: #fbbf24;
+    --info: #22d3ee;
+    --info-soft: rgba(34, 211, 238, 0.13);
+    --info-border: rgba(34, 211, 238, 0.34);
+    --ok: #34d399;
+    --ok-soft: rgba(52, 211, 153, 0.13);
+    --ok-border: rgba(52, 211, 153, 0.34);
+    --warn: #fbbf24;
+    --warn-soft: rgba(251, 191, 36, 0.13);
+    --warn-border: rgba(251, 191, 36, 0.34);
+    --bad: #fb7185;
+    --bad-soft: rgba(251, 113, 133, 0.13);
+    --bad-border: rgba(251, 113, 133, 0.38);
+    --violet: #c4b5fd;
+    --violet-soft: rgba(167, 139, 250, 0.15);
+    --violet-border: rgba(167, 139, 250, 0.38);
+    --sky: #7dd3fc;
+    --sky-soft: rgba(56, 189, 248, 0.13);
+    --sky-border: rgba(56, 189, 248, 0.34);
+    --indigo: #a5b4fc;
+    --indigo-soft: rgba(129, 140, 248, 0.15);
+    --indigo-border: rgba(129, 140, 248, 0.38);
+    --fuchsia: #e879f9;
+    --fuchsia-soft: rgba(232, 121, 249, 0.14);
+    --fuchsia-border: rgba(217, 70, 239, 0.4);
+    --hover: rgba(148, 163, 184, 0.1);
+    --overlay: rgba(2, 6, 23, 0.55);
+    --panel-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
   }
 
   body {
@@ -54,9 +81,10 @@
 @layer components {
   /* Themed surfaces built on design tokens */
   .panel {
-    @apply rounded-md border font-mono;
+    @apply rounded-md border;
     background: var(--bg-panel);
     border-color: var(--border-panel);
+    box-shadow: var(--panel-shadow);
   }
 
   .panel-header {
@@ -138,6 +166,35 @@
     box-shadow: 0 0 15px color-mix(in srgb, var(--accent) 20%, transparent);
     outline: none;
   }
+
+  /* ---- Theme-aware semantic status chips (replace the old !important map) ---- */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono whitespace-nowrap;
+  }
+  .chip-info    { color: var(--info);    background: var(--info-soft);    border-color: var(--info-border); }
+  .chip-ok      { color: var(--ok);      background: var(--ok-soft);      border-color: var(--ok-border); }
+  .chip-warn    { color: var(--warn);    background: var(--warn-soft);    border-color: var(--warn-border); }
+  .chip-bad     { color: var(--bad);     background: var(--bad-soft);     border-color: var(--bad-border); }
+  .chip-violet  { color: var(--violet);  background: var(--violet-soft);  border-color: var(--violet-border); }
+  .chip-sky     { color: var(--sky);     background: var(--sky-soft);     border-color: var(--sky-border); }
+  .chip-indigo  { color: var(--indigo);  background: var(--indigo-soft);  border-color: var(--indigo-border); }
+  .chip-fuchsia { color: var(--fuchsia); background: var(--fuchsia-soft); border-color: var(--fuchsia-border); }
+  .chip-neutral { color: var(--text-secondary); background: var(--bg-inset); border-color: var(--border-inset); }
+
+  /* Muted structural label (sans, inherits root font) */
+  .ui-label {
+    @apply text-[10px] uppercase tracking-wider;
+    color: var(--text-muted);
+  }
+
+  /* Solid accent button that stays legible on light + dark */
+  .btn-solid {
+    @apply px-3 py-1 rounded text-xs font-semibold transition border;
+    background: var(--accent-strong);
+    border-color: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .btn-solid:hover:not(:disabled) { filter: brightness(1.12); }
 }
 
 /* ---- Rich-text (sanitized MQTT payload) rendering ---- */
@@ -292,52 +349,5 @@
 .rich-md img { max-width: 100%; border-radius: 6px; }
 .rich-md hr { border: none; border-top: 1px solid var(--border-inset); margin: 1.2em 0; }
 
-/* ---- Light-theme (data-theme) overrides for hardcoded Tailwind status chips ----
-   Semantic badges keep their hue but flip from dark-tint to light-tint surfaces. */
-[data-theme='solaris'] .bg-cyan-950\/60,
-[data-theme='solaris'] .bg-cyan-950,
-[data-theme='solaris'] .bg-emerald-950\/60,
-[data-theme='solaris'] .bg-slate-950,
-[data-theme='solaris'] .bg-slate-900,
-[data-theme='solaris'] .bg-slate-900\/80,
-[data-theme='solaris'] .bg-slate-950\/80,
-[data-theme='solaris'] .bg-slate-950\/90,
-[data-theme='solaris'] .bg-violet-950\/60,
-[data-theme='solaris'] .bg-amber-950\/60,
-[data-theme='solaris'] .bg-amber-950\/40,
-[data-theme='solaris'] .bg-amber-950\/30,
-[data-theme='solaris'] .bg-rose-950\/60,
-[data-theme='solaris'] .bg-fuchsia-950\/60,
-[data-theme='solaris'] .bg-sky-950\/60,
-[data-theme='solaris'] .bg-indigo-950\/60 {
-  background-color: rgba(120, 113, 108, 0.1) !important;
-}
-[data-theme='solaris'] .text-cyan-300,
-[data-theme='solaris'] .text-cyan-400 { color: #0e7490 !important; }
-[data-theme='solaris'] .text-emerald-300,
-[data-theme='solaris'] .text-emerald-400 { color: #15803d !important; }
-[data-theme='solaris'] .text-amber-300,
-[data-theme='solaris'] .text-amber-200\/90,
-[data-theme='solaris'] .text-amber-400 { color: #b45309 !important; }
-[data-theme='solaris'] .text-rose-400,
-[data-theme='solaris'] .text-rose-300 { color: #b91c1c !important; }
-[data-theme='solaris'] .text-violet-300 { color: #6d28d9 !important; }
-[data-theme='solaris'] .text-fuchsia-300,
-[data-theme='solaris'] .text-fuchsia-400 { color: #a21caf !important; }
-[data-theme='solaris'] .text-sky-300 { color: #0369a1 !important; }
-[data-theme='solaris'] .text-indigo-300 { color: #4338ca !important; }
-[data-theme='solaris'] .text-slate-200,
-[data-theme='solaris'] .text-slate-300 { color: #44403c !important; }
-[data-theme='solaris'] .text-slate-400 { color: #57534e !important; }
-[data-theme='solaris'] .text-slate-500 { color: #78716c !important; }
-[data-theme='solaris'] .text-slate-600 { color: #a8a29e !important; }
-[data-theme='solaris'] .border-cyan-800,
-[data-theme='solaris'] .border-emerald-800,
-[data-theme='solaris'] .border-slate-700,
-[data-theme='solaris'] .border-slate-800,
-[data-theme='solaris'] .border-slate-800\/80,
-[data-theme='solaris'] .border-violet-800,
-[data-theme='solaris'] .border-amber-800,
-[data-theme='solaris'] .border-amber-900\/40,
-[data-theme='solaris'] .border-rose-900\/60,
-[data-theme='solaris'] .border-fuchsia-800 { border-color: rgba(120, 113, 108, 0.24) !important; }
+/* Light-theme correctness now comes from semantic tokens (see themes/index.ts)
+   consumed via .chip-* utility classes — no per-class !important overrides. */

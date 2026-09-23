@@ -198,12 +198,16 @@ export function App() {
 
         {/* Connection error banner (backend events) */}
         {broker.connectionError && !broker.isConnecting && (
-          <div className="px-4 py-1.5 bg-rose-950/60 border-b border-rose-900/60 flex items-center gap-2 text-[11px] text-rose-300 font-mono">
+          <div
+            className="px-4 py-1.5 flex items-center gap-2 text-[11px] font-mono"
+            style={{ background: 'var(--bad-soft)', borderBottom: '1px solid var(--bad-border)', color: 'var(--bad)' }}
+          >
             <WifiOff className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate flex-1">{broker.connectionError}</span>
             <button
               onClick={() => broker.toggleConnect()}
-              className="px-2 py-0.5 rounded border border-rose-700 hover:bg-rose-900/50 font-semibold shrink-0"
+              className="px-2 py-0.5 rounded border font-semibold shrink-0"
+              style={{ borderColor: 'var(--bad-border)' }}
             >
               {t.connect}
             </button>
@@ -216,7 +220,7 @@ export function App() {
             <BridgePanel options={bridgeOptions} bridge={bridge} onOpenSettings={() => setIsSettingsOpen(true)} t={t} />
           ) : activeMode === 'transfer' ? (
             /* Mode 1: File Transfer Hub */
-            <div className="space-y-4 max-w-5xl mx-auto">
+            <div className="space-y-4 max-w-6xl mx-auto">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <BatchSender
                   publishTopic={publishTopic}
@@ -316,7 +320,7 @@ export function App() {
 
               {/* Console-side error surface for failed publishes */}
               {broker.connectionError && (
-                <div className="flex items-center gap-2 text-[11px] text-rose-400 font-mono px-1">
+                <div className="flex items-center gap-2 text-[11px] font-mono px-1" style={{ color: 'var(--bad)' }}>
                   <AlertCircle className="w-3.5 h-3.5" />
                   <span>{broker.connectionError}</span>
                 </div>

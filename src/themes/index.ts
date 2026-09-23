@@ -18,6 +18,37 @@ export interface ThemeTokens {
   '--success': string;
   '--danger': string;
   '--warning': string;
+  /** Theme-aware semantic status palette (text / soft-fill / border) so status
+   *  chips render correctly on BOTH dark and light themes without !important
+   *  overrides. Each hue keeps its meaning; only the tint flips per theme. */
+  '--info': string;
+  '--info-soft': string;
+  '--info-border': string;
+  '--ok': string;
+  '--ok-soft': string;
+  '--ok-border': string;
+  '--warn': string;
+  '--warn-soft': string;
+  '--warn-border': string;
+  '--bad': string;
+  '--bad-soft': string;
+  '--bad-border': string;
+  '--violet': string;
+  '--violet-soft': string;
+  '--violet-border': string;
+  '--sky': string;
+  '--sky-soft': string;
+  '--sky-border': string;
+  '--indigo': string;
+  '--indigo-soft': string;
+  '--indigo-border': string;
+  '--fuchsia': string;
+  '--fuchsia-soft': string;
+  '--fuchsia-border': string;
+  /** Hover fill + generic overlay + panel elevation */
+  '--hover': string;
+  '--overlay': string;
+  '--panel-shadow': string;
 }
 
 export interface ThemeDefinition {
@@ -43,6 +74,34 @@ const darkBase: ThemeTokens = {
   '--success': '#34d399',
   '--danger': '#fb7185',
   '--warning': '#fbbf24',
+  // Semantic status palette (dark: luminous text on translucent fills)
+  '--info': '#22d3ee',
+  '--info-soft': 'rgba(34, 211, 238, 0.13)',
+  '--info-border': 'rgba(34, 211, 238, 0.34)',
+  '--ok': '#34d399',
+  '--ok-soft': 'rgba(52, 211, 153, 0.13)',
+  '--ok-border': 'rgba(52, 211, 153, 0.34)',
+  '--warn': '#fbbf24',
+  '--warn-soft': 'rgba(251, 191, 36, 0.13)',
+  '--warn-border': 'rgba(251, 191, 36, 0.34)',
+  '--bad': '#fb7185',
+  '--bad-soft': 'rgba(251, 113, 133, 0.13)',
+  '--bad-border': 'rgba(251, 113, 133, 0.38)',
+  '--violet': '#c4b5fd',
+  '--violet-soft': 'rgba(167, 139, 250, 0.15)',
+  '--violet-border': 'rgba(167, 139, 250, 0.38)',
+  '--sky': '#7dd3fc',
+  '--sky-soft': 'rgba(56, 189, 248, 0.13)',
+  '--sky-border': 'rgba(56, 189, 248, 0.34)',
+  '--indigo': '#a5b4fc',
+  '--indigo-soft': 'rgba(129, 140, 248, 0.15)',
+  '--indigo-border': 'rgba(129, 140, 248, 0.38)',
+  '--fuchsia': '#e879f9',
+  '--fuchsia-soft': 'rgba(232, 121, 249, 0.14)',
+  '--fuchsia-border': 'rgba(217, 70, 239, 0.4)',
+  '--hover': 'rgba(148, 163, 184, 0.1)',
+  '--overlay': 'rgba(2, 6, 23, 0.55)',
+  '--panel-shadow': '0 1px 0 rgba(255, 255, 255, 0.03) inset',
 };
 
 export const themes: Record<Theme, ThemeDefinition> = {
@@ -113,6 +172,35 @@ export const themes: Record<Theme, ThemeDefinition> = {
       '--success': '#15803d',
       '--danger': '#b91c1c',
       '--warning': '#b45309',
+      // Semantic status palette (light: deep saturated text on faint tints, so
+      // every chip/active-state stays legible on the ivory canvas)
+      '--info': '#0e7490',
+      '--info-soft': 'rgba(8, 145, 178, 0.1)',
+      '--info-border': 'rgba(8, 145, 178, 0.28)',
+      '--ok': '#15803d',
+      '--ok-soft': 'rgba(21, 128, 61, 0.1)',
+      '--ok-border': 'rgba(21, 128, 61, 0.28)',
+      '--warn': '#b45309',
+      '--warn-soft': 'rgba(180, 83, 9, 0.1)',
+      '--warn-border': 'rgba(180, 83, 9, 0.28)',
+      '--bad': '#b91c1c',
+      '--bad-soft': 'rgba(185, 28, 28, 0.09)',
+      '--bad-border': 'rgba(185, 28, 28, 0.26)',
+      '--violet': '#6d28d9',
+      '--violet-soft': 'rgba(109, 40, 217, 0.09)',
+      '--violet-border': 'rgba(109, 40, 217, 0.26)',
+      '--sky': '#0369a1',
+      '--sky-soft': 'rgba(3, 105, 161, 0.1)',
+      '--sky-border': 'rgba(3, 105, 161, 0.28)',
+      '--indigo': '#4338ca',
+      '--indigo-soft': 'rgba(67, 56, 202, 0.09)',
+      '--indigo-border': 'rgba(67, 56, 202, 0.26)',
+      '--fuchsia': '#a21caf',
+      '--fuchsia-soft': 'rgba(162, 28, 175, 0.09)',
+      '--fuchsia-border': 'rgba(162, 28, 175, 0.26)',
+      '--hover': 'rgba(120, 113, 108, 0.09)',
+      '--overlay': 'rgba(120, 113, 108, 0.06)',
+      '--panel-shadow': '0 1px 2px rgba(41, 37, 36, 0.05), 0 10px 30px rgba(120, 113, 108, 0.12)',
     },
   },
 };

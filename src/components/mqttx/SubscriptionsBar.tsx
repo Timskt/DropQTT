@@ -139,16 +139,9 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
                 QoS {sub.qos}
               </span>
               <span
-                className={`text-[11px] px-1.5 py-0.5 rounded font-mono border ${
-                  (hitStats[sub.topic] ?? 0) > 0
-                    ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
-                    : ''
+                className={`chip ${
+                  (hitStats[sub.topic] ?? 0) > 0 ? 'chip-ok' : 'chip-neutral'
                 }`}
-                style={
-                  (hitStats[sub.topic] ?? 0) > 0
-                    ? undefined
-                    : { borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }
-                }
                 title={t.hitCount}
               >
                 {(hitStats[sub.topic] ?? 0).toLocaleString()} ↓

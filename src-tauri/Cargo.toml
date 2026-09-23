@@ -1,6 +1,6 @@
 [package]
 name = "dropqtt"
-version = "0.7.0"
+version = "0.7.1"
 description = "High-speed resilient cross-platform file transfer over MQTT"
 authors = ["Timskt"]
 edition = "2021"

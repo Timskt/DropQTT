@@ -31,37 +31,67 @@ const formatSpeed = (bps: number) => {
   return `${formatBytes(bps)}/s`;
 };
 
-const statusBadge = (status: TransferStatus): string => {
+const statusChip = (status: TransferStatus): string => {
   switch (status) {
     case 'completed':
     case 'delivered':
-      return 'text-emerald-400 bg-emerald-950/30 border-emerald-800';
+      return 'chip-ok';
     case 'verifying':
-      return 'text-amber-400 bg-amber-950/30 border-amber-800 animate-pulse';
-    case 'awaiting_approval':
-      return 'text-fuchsia-400 bg-fuchsia-950/30 border-fuchsia-800 animate-pulse';
     case 'paused':
-      return 'text-amber-400 bg-amber-950/30 border-amber-800';
+      return 'chip-warn';
+    case 'awaiting_approval':
+      return 'chip-fuchsia animate-pulse';
     case 'sent':
-      return 'text-sky-400 bg-sky-950/30 border-sky-800';
+      return 'chip-sky';
     case 'failed':
-      return 'text-rose-400 bg-rose-950/30 border-rose-800';
+      return 'chip-bad';
     case 'cancelled':
-      return 'text-slate-400 bg-slate-800/50 border-slate-700';
+      return 'chip-neutral';
     default:
-      return 'text-cyan-400 bg-cyan-950/30 border-cyan-800';
+      return 'chip-info';
   }
 };
 
+/** Progress-fill + direction-accent CSS var per status */
+const statusVar = (status: TransferStatus, isSend: boolean): string => {
+  switch (status) {
+    case 'completed':
+    case 'delivered':
+      return 'var(--ok)';
+    case 'verifying':
+    case 'paused':
+      return 'var(--warn)';
+    case 'awaiting_approval':
+      return 'var(--fuchsia)';
+    case 'sent':
+      return 'var(--sky)';
+    case 'failed':
+      return 'var(--bad)';
+    case 'cancelled':
+      return 'var(--text-muted)';
+    default:
+      return isSend ? 'var(--info)' : 'var(--ok)';
+  }
+};
+
+/** Small icon action button with a hover tint driven by a token */
+const IconAction: React.FC<{ title: string; hoverVar: string; onClick: () => void; children: React.ReactNode }> = ({
+  title, hoverVar, onClick, children,
+}) => (
+  <button
+    onClick={onClick}
+    title={title}
+    className="p-1 rounded transition"
+    style={{ color: 'var(--text-muted)' }}
+    onMouseEnter={(e) => (e.currentTarget.style.color = hoverVar)}
+    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+  >
+    {children}
+  </button>
+);
+
 const TransferRow = React.memo(function TransferRow({
-  item,
-  t,
-  onPause,
-  onResume,
-  onCancel,
-  onReveal,
-  onApprove,
-  onReject,
+  item, t, onPause, onResume, onCancel, onReveal, onApprove, onReject,
 }: {
   item: TransferProgress;
   t: Translations;
@@ -80,6 +110,7 @@ const TransferRow = React.memo(function TransferRow({
         : 0;
   const isSend = item.direction === 'send';
   const active = item.status === 'transferring' || item.status === 'paused';
+  const fill = statusVar(item.status, isSend);
 
   const statusLabel = (() => {
     switch (item.status) {
@@ -104,41 +135,31 @@ const TransferRow = React.memo(function TransferRow({
   })();
 
   return (
-    <div className={`p-3 space-y-2 transition ${item.status === 'awaiting_approval' ? 'bg-fuchsia-950/20' : 'hover:bg-slate-950/40'}`}>
+    <div className="p-3 space-y-2 transition" style={item.status === 'awaiting_approval' ? { background: 'var(--fuchsia-soft)' } : undefined}>
       {/* Header row */}
       <div className="flex items-center justify-between text-xs gap-2">
         <div className="flex items-center space-x-2 truncate min-w-0">
-          <span
-            className={`inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold border shrink-0 ${
-              isSend
-                ? 'bg-cyan-950/60 text-cyan-300 border-cyan-800/80'
-                : 'bg-emerald-950/60 text-emerald-300 border-emerald-800/80'
-            }`}
-          >
+          <span className={`chip ${isSend ? 'chip-info' : 'chip-ok'}`}>
             {isSend ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
             <span>{isSend ? 'SEND' : 'RECV'}</span>
           </span>
-
-          <span className="font-semibold text-slate-200 truncate" title={item.fileName}>
+          <span className="font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={item.fileName}>
             {item.fileName}
           </span>
-
-          <span className="text-[10px] text-slate-500 truncate max-w-[160px]">[{item.channel}]</span>
+          <span className="text-[10px] truncate max-w-[160px]" style={{ color: 'var(--text-muted)' }}>[{item.channel}]</span>
         </div>
 
         {/* Actions & Status */}
         <div className="flex items-center space-x-2 shrink-0">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${statusBadge(item.status)}`}>
-            {statusLabel}
-          </span>
+          <span className={`chip ${statusChip(item.status)}`}>{statusLabel}</span>
 
-          {/* Receive approval */}
           {item.status === 'awaiting_approval' && (
             <>
               <button
                 onClick={() => onApprove(item.transferId)}
                 title={t.approve}
-                className="px-2 py-1 rounded text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center space-x-1 transition"
+                className="px-2 py-1 rounded text-[10px] font-semibold flex items-center space-x-1 transition"
+                style={{ background: 'var(--ok)', color: '#fff' }}
               >
                 <Check className="w-3 h-3" />
                 <span>{t.approve}</span>
@@ -146,7 +167,8 @@ const TransferRow = React.memo(function TransferRow({
               <button
                 onClick={() => onReject(item.transferId)}
                 title={t.reject}
-                className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-700/80 hover:bg-rose-600 text-white flex items-center space-x-1 transition"
+                className="px-2 py-1 rounded text-[10px] font-semibold flex items-center space-x-1 transition"
+                style={{ background: 'var(--bad)', color: '#fff' }}
               >
                 <X className="w-3 h-3" />
                 <span>{t.reject}</span>
@@ -154,97 +176,58 @@ const TransferRow = React.memo(function TransferRow({
             </>
           )}
 
-          {/* Controls */}
           {isSend && item.status === 'transferring' && (
-            <button
-              onClick={() => onPause(item.transferId)}
-              title={t.pause}
-              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-amber-400 transition"
-            >
+            <IconAction title={t.pause} hoverVar="var(--warn)" onClick={() => onPause(item.transferId)}>
               <Pause className="w-3 h-3" />
-            </button>
+            </IconAction>
           )}
           {isSend && item.status === 'paused' && (
-            <button
-              onClick={() => onResume(item.transferId)}
-              title={t.resume}
-              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400 transition"
-            >
+            <IconAction title={t.resume} hoverVar="var(--info)" onClick={() => onResume(item.transferId)}>
               <Play className="w-3 h-3" />
-            </button>
+            </IconAction>
           )}
           {active && (
-            <button
-              onClick={() => onCancel(item.transferId)}
-              title={t.cancel}
-              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-rose-400 transition"
-            >
+            <IconAction title={t.cancel} hoverVar="var(--bad)" onClick={() => onCancel(item.transferId)}>
               <X className="w-3 h-3" />
-            </button>
+            </IconAction>
           )}
           {item.savePath && (item.status === 'completed' || item.status === 'awaiting_approval') && (
-            <button
-              onClick={() => onReveal(item.savePath!)}
-              title={t.showInFolder}
-              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-emerald-400 transition"
-            >
+            <IconAction title={t.showInFolder} hoverVar="var(--ok)" onClick={() => onReveal(item.savePath!)}>
               <FolderOpen className="w-3 h-3" />
-            </button>
+            </IconAction>
           )}
         </div>
       </div>
 
       {item.status === 'failed' && item.errorMessage && (
-        <div className="flex items-start space-x-1.5 text-[10px] text-rose-400/90 bg-rose-950/20 border border-rose-900/50 rounded px-2 py-1">
+        <div className="flex items-start space-x-1.5 text-[10px] rounded px-2 py-1" style={{ color: 'var(--bad)', background: 'var(--bad-soft)', border: '1px solid var(--bad-border)' }}>
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
           <span className="break-all">{item.errorMessage}</span>
         </div>
       )}
 
       {/* Progress bar */}
-      <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
-        <div
-          className={`h-full transition-all duration-200 ${
-            item.status === 'completed' || item.status === 'delivered'
-              ? 'bg-emerald-400'
-              : item.status === 'failed'
-                ? 'bg-rose-500'
-                : item.status === 'awaiting_approval'
-                  ? 'bg-fuchsia-400'
-                  : item.status === 'sent'
-                    ? 'bg-sky-400'
-                    : isSend
-                      ? 'bg-cyan-400'
-                      : 'bg-emerald-400'
-          }`}
-          style={{ width: `${percent}%` }}
-        />
+      <div className="w-full rounded-full h-1.5 overflow-hidden" style={{ background: 'var(--bg-inset)', border: '1px solid var(--border-inset)' }}>
+        <div className="h-full transition-all duration-200" style={{ width: `${percent}%`, background: fill }} />
       </div>
 
       {/* Metrics row */}
-      <div className="flex items-center justify-between text-[11px] text-slate-400 gap-2">
+      <div className="flex items-center justify-between text-[11px] gap-2" style={{ color: 'var(--text-secondary)' }}>
         <div className="flex items-center space-x-3 min-w-0">
-          <span className="shrink-0">
-            {formatBytes(item.bytesTransferred)} / {formatBytes(item.totalBytes)}
-          </span>
+          <span className="shrink-0">{formatBytes(item.bytesTransferred)} / {formatBytes(item.totalBytes)}</span>
           <span>•</span>
-          <span className="shrink-0">
-            {t.chunks}: {item.chunksTransferred}/{item.totalChunks}
-          </span>
+          <span className="shrink-0">{t.chunks}: {item.chunksTransferred}/{item.totalChunks}</span>
           {item.status === 'transferring' && (
             <>
               <span>•</span>
-              <span className="text-cyan-300 font-semibold shrink-0">{formatSpeed(item.speedBps)}</span>
+              <span className="font-semibold shrink-0" style={{ color: 'var(--info)' }}>{formatSpeed(item.speedBps)}</span>
             </>
           )}
         </div>
 
         {item.sha256 && (
-          <div
-            className="flex items-center space-x-1 text-[10px] text-slate-500 truncate max-w-[200px]"
-            title={item.sha256}
-          >
-            <ShieldCheck className="w-3 h-3 text-slate-400 flex-shrink-0" />
+          <div className="flex items-center space-x-1 text-[10px] truncate max-w-[200px]" style={{ color: 'var(--text-muted)' }} title={item.sha256}>
+            <ShieldCheck className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
             <span className="truncate">SHA: {item.sha256.substring(0, 16)}...</span>
           </div>
         )}
@@ -254,15 +237,7 @@ const TransferRow = React.memo(function TransferRow({
 });
 
 export const TransferQueue: React.FC<TransferQueueProps> = ({
-  transfers,
-  onPause,
-  onResume,
-  onCancel,
-  onReveal,
-  onApprove,
-  onReject,
-  onClearFinished,
-  t,
+  transfers, onPause, onResume, onCancel, onReveal, onApprove, onReject, onClearFinished, t,
 }) => {
   const items = useMemo(() => Object.values(transfers).reverse(), [transfers]);
   const finishedCount = items.filter(
@@ -270,20 +245,14 @@ export const TransferQueue: React.FC<TransferQueueProps> = ({
   ).length;
 
   return (
-    <div className="panel overflow-hidden font-mono">
-      <div className="panel-header px-4 py-2.5 flex items-center justify-between">
-        <div className="flex items-center space-x-2 text-xs font-semibold text-slate-300">
-          <Layers className="w-3.5 h-3.5 text-cyan-400" />
-          <span>
-            {t.transfersQueue} ({items.length})
-          </span>
+    <div className="panel overflow-hidden">
+      <div className="panel-header flex items-center justify-between">
+        <div className="flex items-center space-x-2 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <Layers className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} />
+          <span>{t.transfersQueue} ({items.length})</span>
         </div>
         {finishedCount > 0 && (
-          <button
-            onClick={onClearFinished}
-            title={t.clearFinished}
-            className="btn-ghost px-2 py-1 text-[10px] flex items-center space-x-1"
-          >
+          <button onClick={onClearFinished} title={t.clearFinished} className="btn-ghost px-2 py-1 text-[10px] flex items-center space-x-1">
             <Trash2 className="w-3 h-3" />
             <span>{t.clearFinished}</span>
           </button>
@@ -291,24 +260,25 @@ export const TransferQueue: React.FC<TransferQueueProps> = ({
       </div>
 
       {items.length === 0 ? (
-        <div className="p-8 text-center text-slate-500 text-xs">
-          <div className="text-slate-400 font-medium mb-1">{t.noTransfers}</div>
-          <div className="text-[11px] text-slate-600">{t.noTransfersDesc}</div>
+        <div className="p-8 text-center text-xs">
+          <div className="font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>{t.noTransfers}</div>
+          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{t.noTransfersDesc}</div>
         </div>
       ) : (
-        <div className="divide-y divide-slate-800/80 max-h-[380px] overflow-y-auto">
-          {items.map((item) => (
-            <TransferRow
-              key={item.transferId}
-              item={item}
-              t={t}
-              onPause={onPause}
-              onResume={onResume}
-              onCancel={onCancel}
-              onReveal={onReveal}
-              onApprove={onApprove}
-              onReject={onReject}
-            />
+        <div className="max-h-[380px] overflow-y-auto">
+          {items.map((item, idx) => (
+            <div key={item.transferId} style={idx > 0 ? { borderTop: '1px solid var(--border-inset)' } : undefined}>
+              <TransferRow
+                item={item}
+                t={t}
+                onPause={onPause}
+                onResume={onResume}
+                onCancel={onCancel}
+                onReveal={onReveal}
+                onApprove={onApprove}
+                onReject={onReject}
+              />
+            </div>
           ))}
         </div>
       )}
