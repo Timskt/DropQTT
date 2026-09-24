@@ -81,6 +81,8 @@ pub struct NormalizedPublish {
     pub retain: bool,
     pub content_type: Option<String>,
     pub user_properties: Vec<(String, String)>,
+    pub response_topic: Option<String>,
+    pub correlation_data: Option<String>,
 }
 
 /// Normalized eventloop notifications.
@@ -223,6 +225,17 @@ impl MqttClient {
                     content_type: p.content_type.clone(),
                     user_properties: p.user_properties.clone(),
                     message_expiry_interval: p.message_expiry,
+                    response_topic: p
+                        .response_topic
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string),
+                    correlation_data: p
+                        .correlation_data
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| Bytes::copy_from_slice(s.as_bytes())),
                     ..Default::default()
                 });
                 match v5_props {
@@ -297,6 +310,8 @@ impl MqttEventLoop {
                         retain: p.retain,
                         content_type: None,
                         user_properties: Vec::new(),
+                        response_topic: None,
+                        correlation_data: None,
                     })
                 }
                 Ok(_) => NetEvent::Other,
@@ -307,10 +322,18 @@ impl MqttEventLoop {
                     NetEvent::Connected
                 }
                 Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(p))) => {
-                    let (content_type, user_properties) = match p.properties {
-                        Some(vp) => (vp.content_type, vp.user_properties),
-                        None => (None, Vec::new()),
-                    };
+                    let (content_type, user_properties, response_topic, correlation_data) =
+                        match p.properties {
+                            Some(vp) => (
+                                vp.content_type,
+                                vp.user_properties,
+                                vp.response_topic,
+                                vp.correlation_data
+                                    .as_deref()
+                                    .map(|b| String::from_utf8_lossy(b).to_string()),
+                            ),
+                            None => (None, Vec::new(), None, None),
+                        };
                     NetEvent::Publish(NormalizedPublish {
                         topic: String::from_utf8_lossy(&p.topic).to_string(),
                         payload: p.payload,
@@ -318,6 +341,8 @@ impl MqttEventLoop {
                         retain: p.retain,
                         content_type,
                         user_properties,
+                        response_topic,
+                        correlation_data,
                     })
                 }
                 Ok(_) => NetEvent::Other,

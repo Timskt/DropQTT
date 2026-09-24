@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Plus, Radio, X, RotateCcw } from 'lucide-react';
 import { TopicSubscription } from '../../types';
 import { Translations } from '../../i18n';
+import { useObservedTopics } from '../../utils/topicStore';
 
 interface SubscriptionsBarProps {
   subscriptions: TopicSubscription[];
@@ -28,6 +29,15 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   const [topicInput, setTopicInput] = useState('');
   const [qos, setQos] = useState<number>(0);
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
+  const observedTopics = useObservedTopics();
+  // Suggest live topics not already subscribed (drop trailing segment into a filter later)
+  const topicSuggestions = useMemo(
+    () =>
+      observedTopics
+        .filter((tp) => !subscriptions.some((s) => s.topic === tp))
+        .slice(0, 40),
+    [observedTopics, subscriptions],
+  );
 
   const totalHits = Object.values(hitStats).reduce((a, b) => a + b, 0);
 
@@ -74,9 +84,15 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
             value={topicInput}
             onChange={(e) => setTopicInput(e.target.value)}
             placeholder={t.topicPattern}
+            list="dropqtt-observed-topics"
             className="field-input w-full"
             style={{ color: 'var(--success)' }}
           />
+          <datalist id="dropqtt-observed-topics">
+            {topicSuggestions.map((tp) => (
+              <option key={tp} value={tp} />
+            ))}
+          </datalist>
         </div>
 
         <select

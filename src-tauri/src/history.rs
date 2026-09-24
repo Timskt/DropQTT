@@ -46,6 +46,8 @@ pub struct HistorySeriesPoint {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryStats {
     pub rows: i64,
+    pub inbound: i64,
+    pub outbound: i64,
     pub oldest_ts: Option<i64>,
     pub newest_ts: Option<i64>,
 }
@@ -212,11 +214,16 @@ impl HistoryStore {
     }
 
     pub fn stats(&self) -> HistoryStats {
-        let Ok(conn) = self.conn.lock() else {
-            return HistoryStats { rows: 0, oldest_ts: None, newest_ts: None };
-        };
+        let empty = || HistoryStats { rows: 0, inbound: 0, outbound: 0, oldest_ts: None, newest_ts: None };
+        let Ok(conn) = self.conn.lock() else { return empty() };
         let rows: i64 = conn
             .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+            .unwrap_or(0);
+        let inbound: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages WHERE direction = 'in'", [], |r| r.get(0))
+            .unwrap_or(0);
+        let outbound: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages WHERE direction = 'out'", [], |r| r.get(0))
             .unwrap_or(0);
         let oldest: Option<i64> = conn
             .query_row("SELECT MIN(ts) FROM messages", [], |r| r.get(0))
@@ -224,7 +231,7 @@ impl HistoryStore {
         let newest: Option<i64> = conn
             .query_row("SELECT MAX(ts) FROM messages", [], |r| r.get(0))
             .unwrap_or(None);
-        HistoryStats { rows, oldest_ts: oldest, newest_ts: newest }
+        HistoryStats { rows, inbound, outbound, oldest_ts: oldest, newest_ts: newest }
     }
 
     pub fn clear(&self) {
@@ -249,6 +256,8 @@ mod tests {
             truncated: false,
             content_type: None,
             user_properties: Vec::new(),
+            response_topic: None,
+            correlation_data: None,
             qos: 1,
             retain: false,
             timestamp: String::new(),
@@ -286,6 +295,8 @@ mod tests {
 
         let stats = store.stats();
         assert_eq!(stats.rows, 3);
+        assert_eq!(stats.inbound, 2);
+        assert_eq!(stats.outbound, 1);
         assert!(stats.newest_ts.is_some());
 
         // Series over a wide window returns at least one bucket totaling 3

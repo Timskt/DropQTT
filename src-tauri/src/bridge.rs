@@ -610,12 +610,17 @@ impl BridgeManager {
             let qos = resolve_qos(rule, publish.qos);
             let retain = resolve_retain(rule, publish.retain);
             let props = if rule.forward_props
-                && (publish.content_type.is_some() || !publish.user_properties.is_empty())
+                && (publish.content_type.is_some()
+                    || !publish.user_properties.is_empty()
+                    || publish.response_topic.is_some()
+                    || publish.correlation_data.is_some())
             {
                 Some(PubProperties {
                     content_type: publish.content_type.clone(),
                     user_properties: publish.user_properties.clone(),
                     message_expiry: None,
+                    response_topic: publish.response_topic.clone(),
+                    correlation_data: publish.correlation_data.clone(),
                 })
             } else {
                 None

@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { ConsolePublishParams, FeedBatch, MqttGenericMessage, TopicSubscription } from '../types';
 import { usePersistentState } from './usePersistentState';
 import { toast } from '../utils/toast';
+import { observeTopic } from '../utils/topicStore';
 
 const MAX_MESSAGES = 500;
 
@@ -44,6 +45,10 @@ export function useMqttMessages(isConnected: boolean) {
         setFeedDropped(event.payload.dropped);
         // Backend sends oldest-first; the feed renders newest on top
         const incoming = event.payload.messages.slice().reverse();
+        // Feed the autocomplete registry with this batch's distinct topics
+        for (const topic of new Set(event.payload.messages.map((m) => m.topic))) {
+          observeTopic(topic);
+        }
         if (pausedRef.current) {
           // Buffer while the feed is frozen; flush on resume (capped)
           pendingRef.current = [...incoming, ...pendingRef.current].slice(0, MAX_MESSAGES);

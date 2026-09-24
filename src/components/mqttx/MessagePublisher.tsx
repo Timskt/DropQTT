@@ -6,6 +6,7 @@ import { PAYLOAD_FORMATS, PayloadError, PayloadFormat, payloadToBytes } from '..
 import { renderTemplate, TEMPLATE_TOKENS } from '../../utils/template';
 import { uint8ToBase64 } from '../../utils/cbor';
 import { usePersistentState } from '../../hooks/usePersistentState';
+import { useObservedTopics } from '../../utils/topicStore';
 import { HtmlPreview, MarkdownView } from './RichText';
 
 interface MessagePublisherProps {
@@ -80,6 +81,12 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
     retain: false,
   });
   const [recentTopics, setRecentTopics] = usePersistentState<string[]>('dropqtt_recent_topics', []);
+  const observedTopics = useObservedTopics();
+  // Autocomplete = manually-published (recent) ∪ live broker traffic (observed)
+  const topicSuggestions = useMemo(
+    () => Array.from(new Set([...recentTopics, ...observedTopics])).slice(0, 60),
+    [recentTopics, observedTopics],
+  );
 
   const [format, setFormat] = useState<string>(draft.format);
   const [payloadByFormat, setPayloadByFormat] = useState<Record<string, string>>({
@@ -100,6 +107,8 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   const [contentType, setContentType] = useState('');
   const [messageExpiry, setMessageExpiry] = useState<string>('');
   const [userProps, setUserProps] = useState<[string, string][]>([]);
+  const [responseTopic, setResponseTopic] = useState('');
+  const [correlationData, setCorrelationData] = useState('');
 
   // Auto-publish (scheduled / loop) + template counter
   const [showLoop, setShowLoop] = useState(false);
@@ -154,6 +163,8 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
         contentType: contentType.trim() || PAYLOAD_FORMATS.find((f) => f.id === format)?.contentType,
         userProperties: userProps.filter(([k]) => k.trim().length > 0),
         messageExpiry: messageExpiry.trim() ? Number(messageExpiry) : undefined,
+        responseTopic: responseTopic.trim() || undefined,
+        correlationData: correlationData.trim() || undefined,
       };
       await onPublishMessage({
         topic: topic.trim(),
@@ -170,7 +181,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
       return false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic, connected, payload, format, contentType, userProps, messageExpiry, qos, retain]);
+  }, [topic, connected, payload, format, contentType, userProps, messageExpiry, responseTopic, correlationData, qos, retain]);
 
   const doPublish = async () => {
     if (!topic.trim() || !connected || isPublishing) return;
@@ -314,7 +325,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
             className="field-input flex-1 min-w-[180px]"
           />
           <datalist id="dropqtt-recent-topics">
-            {recentTopics.map((tp) => (
+            {topicSuggestions.map((tp) => (
               <option key={tp} value={tp} />
             ))}
           </datalist>
@@ -430,6 +441,25 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 placeholder={`${t.messageExpiryLabel} (default: broker)`}
                 className="field-input text-[11px]"
                 min={0}
+              />
+            </div>
+            {/* Request/Response (RPC) properties */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={responseTopic}
+                onChange={(e) => setResponseTopic(e.target.value)}
+                placeholder={t.responseTopicLabel}
+                className="field-input text-[11px]"
+                title={t.responseTopicHint}
+              />
+              <input
+                type="text"
+                value={correlationData}
+                onChange={(e) => setCorrelationData(e.target.value)}
+                placeholder={t.correlationDataLabel}
+                className="field-input text-[11px]"
+                title={t.correlationDataHint}
               />
             </div>
             {userProps.map(([k, v], idx) => (

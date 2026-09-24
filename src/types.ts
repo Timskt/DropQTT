@@ -75,6 +75,8 @@ export interface MqttGenericMessage {
   truncated: boolean;
   contentType?: string;
   userProperties?: [string, string][];
+  responseTopic?: string;
+  correlationData?: string;
   qos: number;
   retain: boolean;
   timestamp: string;
@@ -86,6 +88,8 @@ export interface PubProperties {
   contentType?: string;
   userProperties: [string, string][];
   messageExpiry?: number;
+  responseTopic?: string;
+  correlationData?: string;
 }
 
 export interface ConsolePublishParams {
@@ -133,6 +137,8 @@ export interface HistorySeriesPoint {
 
 export interface HistoryStats {
   rows: number;
+  inbound: number;
+  outbound: number;
   oldestTs?: number | null;
   newestTs?: number | null;
 }

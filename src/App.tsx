@@ -29,6 +29,7 @@ import { useMqttMessages } from './hooks/useMqttMessages';
 import { useSubscriptionStats } from './hooks/useSubscriptionStats';
 import { useTopicStats } from './hooks/useTopicStats';
 import { useBrokerSys } from './hooks/useBrokerSys';
+import { useHistoryCount } from './hooks/useHistoryCount';
 import { useTransfers } from './hooks/useTransfers';
 import { useBatchSender } from './hooks/useBatchSender';
 
@@ -70,6 +71,9 @@ export function App() {
 
   const mqtt = useMqttMessages(broker.isConnected);
   getConsoleTopicsRef.current = mqtt.getTopicsToRegister;
+
+  // Persisted-history row count → drives the sidebar "报文历史" badge
+  const historyCount = useHistoryCount(broker.isConnected);
 
   // Bridge (broker-to-broker forwarding) — events keep accumulating across tabs
   const bridge = useBridge(activeMode === 'bridge');
@@ -174,6 +178,7 @@ export function App() {
         awaitingApprovalCount={transferState.awaitingApproval.length}
         activeSubsCount={mqtt.subscriptions.length}
         activeBridgeRulesCount={bridge.rules.filter((r) => r.enabled).length}
+        historyCount={historyCount}
         connected={broker.isConnected}
         brokerHost={broker.status.brokerHost}
         brokerPort={broker.status.brokerPort}
@@ -224,7 +229,15 @@ export function App() {
         <main className="flex-1 overflow-y-auto p-4 space-y-4">
           {activeMode === 'history' ? (
             /* Mode 4: Persistent message history */
-            <HistoryPanel t={t} />
+            <HistoryPanel
+              t={t}
+              connected={broker.isConnected}
+              isV5={isV5}
+              onPublish={(params) => mqtt.publish(params)}
+              onSubscribe={(topic) => {
+                mqtt.addSubscription(topic, 1).catch((e) => console.error('subscribe:', e));
+              }}
+            />
           ) : activeMode === 'bridge' ? (
             /* Mode 3: Broker-to-Broker Data Bridge */
             <BridgePanel options={bridgeOptions} bridge={bridge} onOpenSettings={() => setIsSettingsOpen(true)} t={t} />

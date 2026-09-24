@@ -13,6 +13,7 @@ interface SidebarProps {
   awaitingApprovalCount: number;
   activeSubsCount: number;
   activeBridgeRulesCount: number;
+  historyCount: number;
   connected: boolean;
   brokerHost: string;
   brokerPort: number;
@@ -36,8 +37,9 @@ const NavItem: React.FC<{
   accentVar: string;
   chipClass: string;
   count?: number;
+  countLabel?: string;
   pulse?: boolean;
-}> = ({ active, onClick, icon, title, subtitle, accentVar, chipClass, count, pulse }) => (
+}> = ({ active, onClick, icon, title, subtitle, accentVar, chipClass, count, countLabel, pulse }) => (
   <button
     onClick={onClick}
     className="w-full flex items-center justify-between px-3 py-2.5 rounded-md text-xs transition border"
@@ -57,7 +59,7 @@ const NavItem: React.FC<{
       </div>
     </div>
     {count ? (
-      <span className={`chip ${chipClass} ${pulse ? 'animate-pulse' : ''}`}>{count}</span>
+      <span className={`chip ${chipClass} ${pulse ? 'animate-pulse' : ''}`}>{countLabel ?? count}</span>
     ) : null}
   </button>
 );
@@ -69,6 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   awaitingApprovalCount,
   activeSubsCount,
   activeBridgeRulesCount,
+  historyCount,
   connected,
   brokerHost,
   brokerPort,
@@ -169,6 +172,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             subtitle={t.modeHistoryDesc}
             accentVar="var(--sky)"
             chipClass="chip-sky"
+            count={historyCount}
+            countLabel={historyCount >= 1000 ? `${(historyCount / 1000).toFixed(1)}k` : undefined}
           />
         </div>
 

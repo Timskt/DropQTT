@@ -440,7 +440,7 @@ impl MqttManager {
             .await
             .as_ref()
             .map(|h| h.stats())
-            .unwrap_or(crate::history::HistoryStats { rows: 0, oldest_ts: None, newest_ts: None })
+            .unwrap_or(crate::history::HistoryStats { rows: 0, inbound: 0, outbound: 0, oldest_ts: None, newest_ts: None })
     }
 
     pub async fn clear_history(&self) {
@@ -690,6 +690,8 @@ impl MqttManager {
         let props = if params.properties.content_type.is_some()
             || !params.properties.user_properties.is_empty()
             || params.properties.message_expiry.is_some()
+            || params.properties.response_topic.is_some()
+            || params.properties.correlation_data.is_some()
         {
             Some(params.properties.clone())
         } else {
@@ -717,6 +719,8 @@ impl MqttManager {
             truncated: false,
             content_type: params.properties.content_type.clone(),
             user_properties: params.properties.user_properties.clone(),
+            response_topic: params.properties.response_topic.clone(),
+            correlation_data: params.properties.correlation_data.clone(),
             qos: params.qos,
             retain: params.retain,
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
@@ -777,6 +781,8 @@ impl MqttManager {
                 truncated,
                 content_type: publish.content_type.clone(),
                 user_properties: publish.user_properties.clone(),
+                response_topic: publish.response_topic.clone(),
+                correlation_data: publish.correlation_data.clone(),
                 qos: publish.qos,
                 retain: publish.retain,
                 timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
@@ -949,12 +955,38 @@ impl MqttManager {
             let offset = (chunk_idx * entry.meta.chunk_size) as u64;
             {
                 let mut f = entry.file.lock().await;
-                if let Err(e) = f.seek(SeekFrom::Start(offset)).await {
-                    eprintln!("Seek failed for {}: {:?}", transfer_id, e);
-                    return;
-                }
-                if let Err(e) = f.write_all(&payload).await {
-                    eprintln!("Failed to write chunk {}: {:?}", chunk_idx, e);
+                let io_res = match f.seek(SeekFrom::Start(offset)).await {
+                    Ok(_) => f.write_all(&payload).await.map_err(|e| format!("write: {e}")),
+                    Err(e) => Err(format!("seek: {e}")),
+                };
+                drop(f);
+                if let Err(detail) = io_res {
+                    // Real failure (disk full / permission): report it now instead
+                    // of letting the watchdog misattribute it to a timeout.
+                    eprintln!(
+                        "Disk I/O failed for {} chunk {}: {}",
+                        transfer_id, chunk_idx, detail
+                    );
+                    let temp_path = entry.temp_path.clone();
+                    let save_path = entry.final_path.to_string_lossy().to_string();
+                    emit_progress(
+                        app,
+                        &transfer_id,
+                        &topic_prefix,
+                        &entry.meta.file_name,
+                        "receive",
+                        entry.bytes_received,
+                        entry.meta.file_size,
+                        entry.received_chunks.len(),
+                        entry.meta.total_chunks,
+                        0.0,
+                        "failed",
+                        Some(format!("写入失败 (chunk {chunk_idx}): {detail}")),
+                        &entry.meta.sha256,
+                        Some(save_path),
+                    );
+                    incoming.remove(&transfer_id);
+                    let _ = std::fs::remove_file(&temp_path);
                     return;
                 }
             }

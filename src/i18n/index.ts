@@ -65,6 +65,20 @@ export interface Translations {
   historyNoTrend: string;
   historyWindowTotal: string;
   historyEmpty: string;
+  historyAutoRefresh: string;
+  historyStatTotal: string;
+  historyStatIn: string;
+  historyStatOut: string;
+  historyStatSpan: string;
+  historyPeak: string;
+  historyResend: string;
+  historySubscribeTopic: string;
+  historyFilterByTopic: string;
+  historyEmptyTitle: string;
+  historyEmptyHint: string;
+  historyShowing: string;
+  historyBinary: string;
+  historyEmptyPayload: string;
   clientId: string;
   username: string;
   password: string;
@@ -77,6 +91,7 @@ export interface Translations {
   allTransfers: string;
   clickOrDrop: string;
   dropHint: string;
+  dropRelease: string;
   changeFile: string;
   packetChunkSize: string;
   qosLevel: string;
@@ -302,6 +317,10 @@ export interface Translations {
   v5Properties: string;
   contentTypeLabel: string;
   messageExpiryLabel: string;
+  responseTopicLabel: string;
+  responseTopicHint: string;
+  correlationDataLabel: string;
+  correlationDataHint: string;
   addProperty: string;
   propertyKey: string;
   propertyValue: string;
@@ -383,7 +402,7 @@ export const translations: Record<Language, Translations> = {
     expandAll: '展开全部',
     refresh: '刷新',
     modeHistory: '报文历史',
-    modeHistoryDesc: 'SQLite 持久化检索',
+    modeHistoryDesc: '全流量留存 · 可检索重发',
     historyTitle: '报文历史检索',
     historyRowsUnit: '条记录',
     historyClear: '清空历史',
@@ -395,6 +414,20 @@ export const translations: Record<Language, Translations> = {
     historyNoTrend: '所选时间范围内无数据',
     historyWindowTotal: '区间总数',
     historyEmpty: '没有匹配的历史记录',
+    historyAutoRefresh: '自动刷新',
+    historyStatTotal: '总记录',
+    historyStatIn: '入站',
+    historyStatOut: '出站',
+    historyStatSpan: '覆盖时长',
+    historyPeak: '峰值',
+    historyResend: '重发',
+    historySubscribeTopic: '订阅此主题',
+    historyFilterByTopic: '按此主题过滤',
+    historyEmptyTitle: '暂无历史报文',
+    historyEmptyHint: '所有收发的报文都会自动持久化到本地 SQLite（不含分块数据），可跨重启检索、统计与重发。连接并收发消息后即可看到记录。',
+    historyShowing: '显示 {count} 条',
+    historyBinary: '二进制',
+    historyEmptyPayload: '空',
     clientId: '客户端标识 (Client ID)',
     username: '用户名 (可选)',
     password: '密码 (可选)',
@@ -407,6 +440,7 @@ export const translations: Record<Language, Translations> = {
     allTransfers: '全部传输',
     clickOrDrop: '点击选择或将文件拖拽至此处',
     dropHint: '支持多选与任意大小文件，自动切片流式传送并计算 SHA-256 校验',
+    dropRelease: '松手即可加入发送队列',
     changeFile: '点击更换已选文件',
     packetChunkSize: '数据包分片大小 (Chunk Size)',
     qosLevel: 'MQTT 服务质量 (QoS)',
@@ -632,6 +666,10 @@ export const translations: Record<Language, Translations> = {
     v5Properties: 'MQTT v5 报文属性',
     contentTypeLabel: 'Content-Type',
     messageExpiryLabel: '过期时间 (秒)',
+    responseTopicLabel: '响应主题 (Response Topic)',
+    responseTopicHint: 'RPC 请求：应答发到此主题',
+    correlationDataLabel: '关联数据 (Correlation Data)',
+    correlationDataHint: 'RPC 请求：应答会原样带回此值以匹配请求',
     addProperty: '添加属性',
     propertyKey: '键',
     propertyValue: '值',
@@ -711,7 +749,7 @@ export const translations: Record<Language, Translations> = {
     expandAll: 'Expand all',
     refresh: 'Refresh',
     modeHistory: 'Message History',
-    modeHistoryDesc: 'SQLite search',
+    modeHistoryDesc: 'All traffic, searchable',
     historyTitle: 'Message History Search',
     historyRowsUnit: 'rows',
     historyClear: 'Clear history',
@@ -723,6 +761,20 @@ export const translations: Record<Language, Translations> = {
     historyNoTrend: 'No data in the selected window',
     historyWindowTotal: 'Window total',
     historyEmpty: 'No matching history records',
+    historyAutoRefresh: 'Auto',
+    historyStatTotal: 'Total',
+    historyStatIn: 'Inbound',
+    historyStatOut: 'Outbound',
+    historyStatSpan: 'Span',
+    historyPeak: 'Peak',
+    historyResend: 'Resend',
+    historySubscribeTopic: 'Subscribe',
+    historyFilterByTopic: 'Filter',
+    historyEmptyTitle: 'No history yet',
+    historyEmptyHint: 'Every message you send or receive is persisted to a local SQLite store (chunk data excluded) for search, stats and resend across restarts. Connect and exchange messages to populate it.',
+    historyShowing: 'Showing {count}',
+    historyBinary: 'binary',
+    historyEmptyPayload: 'empty',
     clientId: 'Client Identifier (Client ID)',
     username: 'Username (Optional)',
     password: 'Password (Optional)',
@@ -735,6 +787,7 @@ export const translations: Record<Language, Translations> = {
     allTransfers: 'All Transfers',
     clickOrDrop: 'Click to select or drag files here',
     dropHint: 'Supports multi-file batch & any file size with SHA-256 integrity verification',
+    dropRelease: 'Release to add to the send queue',
     changeFile: 'Change selected file',
     packetChunkSize: 'Packet Chunk Size',
     qosLevel: 'MQTT Quality of Service (QoS)',
@@ -960,6 +1013,10 @@ export const translations: Record<Language, Translations> = {
     v5Properties: 'MQTT v5 Properties',
     contentTypeLabel: 'Content-Type',
     messageExpiryLabel: 'Expiry (seconds)',
+    responseTopicLabel: 'Response Topic',
+    responseTopicHint: 'RPC request: the reply is published to this topic',
+    correlationDataLabel: 'Correlation Data',
+    correlationDataHint: 'RPC request: echoed back verbatim in the reply to match it',
     addProperty: 'Add Property',
     propertyKey: 'Key',
     propertyValue: 'Value',
@@ -1039,7 +1096,7 @@ export const translations: Record<Language, Translations> = {
     expandAll: '展開全部',
     refresh: '重新整理',
     modeHistory: '報文歷史',
-    modeHistoryDesc: 'SQLite 持久化檢索',
+    modeHistoryDesc: '全流量留存 · 可檢索重送',
     historyTitle: '報文歷史檢索',
     historyRowsUnit: '條記錄',
     historyClear: '清空歷史',
@@ -1051,6 +1108,20 @@ export const translations: Record<Language, Translations> = {
     historyNoTrend: '所選時間範圍內無資料',
     historyWindowTotal: '區間總數',
     historyEmpty: '沒有相符的歷史記錄',
+    historyAutoRefresh: '自動更新',
+    historyStatTotal: '總記錄',
+    historyStatIn: '入站',
+    historyStatOut: '出站',
+    historyStatSpan: '涵蓋時間',
+    historyPeak: '峰值',
+    historyResend: '重送',
+    historySubscribeTopic: '訂閱此主題',
+    historyFilterByTopic: '依此主題過濾',
+    historyEmptyTitle: '尚無歷史報文',
+    historyEmptyHint: '所有收發的報文都會自動持久化到本機 SQLite（不含分塊資料），可跨重啟檢索、統計與重送。連線並收發訊息後即可看到記錄。',
+    historyShowing: '顯示 {count} 條',
+    historyBinary: '二進位',
+    historyEmptyPayload: '空',
     clientId: '用戶端標識 (Client ID)',
     username: '使用者名稱 (選填)',
     password: '密碼 (選填)',
@@ -1063,6 +1134,7 @@ export const translations: Record<Language, Translations> = {
     allTransfers: '全部傳輸',
     clickOrDrop: '點擊選擇或將檔案拖曳至此處',
     dropHint: '支援多選與任意大小檔案，自動切片串流傳送並計算 SHA-256 校驗',
+    dropRelease: '放開即可加入傳送佇列',
     changeFile: '點擊更換已選檔案',
     packetChunkSize: '資料包分片大小 (Chunk Size)',
     qosLevel: 'MQTT 服務品質 (QoS)',
@@ -1288,6 +1360,10 @@ export const translations: Record<Language, Translations> = {
     v5Properties: 'MQTT v5 報文屬性',
     contentTypeLabel: 'Content-Type',
     messageExpiryLabel: '過期時間 (秒)',
+    responseTopicLabel: '回應主題 (Response Topic)',
+    responseTopicHint: 'RPC 請求：應答發布到此主題',
+    correlationDataLabel: '關聯資料 (Correlation Data)',
+    correlationDataHint: 'RPC 請求：應答會原樣帶回此值以對應請求',
     addProperty: '新增屬性',
     propertyKey: '鍵',
     propertyValue: '值',
@@ -1367,7 +1443,7 @@ export const translations: Record<Language, Translations> = {
     expandAll: '全て展開',
     refresh: '更新',
     modeHistory: 'メッセージ履歴',
-    modeHistoryDesc: 'SQLite 検索',
+    modeHistoryDesc: '全トラフィック保存 · 検索・再送可',
     historyTitle: 'メッセージ履歴検索',
     historyRowsUnit: '件',
     historyClear: '履歴を消去',
@@ -1379,6 +1455,20 @@ export const translations: Record<Language, Translations> = {
     historyNoTrend: '選択範囲にデータがありません',
     historyWindowTotal: '期間合計',
     historyEmpty: '一致する履歴がありません',
+    historyAutoRefresh: '自動更新',
+    historyStatTotal: '総件数',
+    historyStatIn: '受信',
+    historyStatOut: '送信',
+    historyStatSpan: '期間',
+    historyPeak: 'ピーク',
+    historyResend: '再送',
+    historySubscribeTopic: '購読',
+    historyFilterByTopic: '絞り込み',
+    historyEmptyTitle: '履歴はまだありません',
+    historyEmptyHint: '送受信したメッセージはすべてローカルの SQLite に自動永続化（チャンクデータ除く）され、再起動後も検索・統計・再送が可能です。接続してメッセージをやり取りすると記録が表示されます。',
+    historyShowing: '{count} 件を表示',
+    historyBinary: 'バイナリ',
+    historyEmptyPayload: '空',
     clientId: 'クライアント ID',
     username: 'ユーザー名 (任意)',
     password: 'パスワード (任意)',
@@ -1391,6 +1481,7 @@ export const translations: Record<Language, Translations> = {
     allTransfers: 'すべての転送',
     clickOrDrop: 'クリックしてファイルを選択またはドロップ',
     dropHint: '複数ファイルのバッチ選択と SHA-256 チェックサム整合性検証をサポート',
+    dropRelease: '離すと送信キューに追加されます',
     changeFile: 'ファイル変更',
     packetChunkSize: 'チャンクサイズ',
     qosLevel: 'MQTT QoS レベル',
@@ -1616,6 +1707,10 @@ export const translations: Record<Language, Translations> = {
     v5Properties: 'MQTT v5 プロパティ',
     contentTypeLabel: 'Content-Type',
     messageExpiryLabel: '有効期限 (秒)',
+    responseTopicLabel: 'レスポンストピック (Response Topic)',
+    responseTopicHint: 'RPC リクエスト：応答はこのトピックに公開されます',
+    correlationDataLabel: '相関データ (Correlation Data)',
+    correlationDataHint: 'RPC リクエスト：応答にこの値がそのまま返され対応付けます',
     addProperty: 'プロパティ追加',
     propertyKey: 'キー',
     propertyValue: '値',

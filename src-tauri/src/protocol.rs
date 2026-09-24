@@ -146,6 +146,12 @@ pub struct PubProperties {
     pub user_properties: Vec<(String, String)>,
     #[serde(default)]
     pub message_expiry: Option<u32>,
+    /// MQTT5 Response Topic — for Request/Response (RPC) request messages
+    #[serde(default)]
+    pub response_topic: Option<String>,
+    /// MQTT5 Correlation Data (UTF-8 string on the UI, bytes on the wire)
+    #[serde(default)]
+    pub correlation_data: Option<String>,
 }
 
 /// Console publish request with raw binary payload (base64 on the wire)
@@ -175,6 +181,10 @@ pub struct MqttGenericMessage {
     pub content_type: Option<String>,
     #[serde(default)]
     pub user_properties: Vec<(String, String)>,
+    #[serde(default)]
+    pub response_topic: Option<String>,
+    #[serde(default)]
+    pub correlation_data: Option<String>,
     pub qos: u8,
     pub retain: bool,
     pub timestamp: String,

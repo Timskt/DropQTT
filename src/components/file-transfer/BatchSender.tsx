@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { Send, Plus, Trash2, FileText, Layers } from 'lucide-react';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { Send, Plus, Trash2, FileText, Layers, DownloadCloud } from 'lucide-react';
 import { BatchFileItem } from '../../types';
 import { Translations } from '../../i18n';
 
@@ -52,6 +53,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
 }) => {
   const [chunkSize, setChunkSize] = useState<number>(256 * 1024);
   const [qos, setQos] = useState<number>(1);
+  const [dragging, setDragging] = useState(false);
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -61,24 +63,56 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // Resolve real file sizes and push into the queue (shared by picker + drop).
+  const addPaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      const newItems = await Promise.all(
+        paths.map(async (p) => {
+          let size = 0;
+          try {
+            size = await invoke<number>('file_size', { path: p });
+          } catch {
+            /* stat failed (e.g. browser dev) — leave 0 */
+          }
+          return { path: p, name: p.split(/[\\/]/).pop() || 'file', size };
+        }),
+      );
+      onAddFiles(newItems);
+    },
+    [onAddFiles],
+  );
+
+  // Native drag-and-drop (Tauri hands us real file paths for the whole window).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (disposed) return;
+        const p = event.payload;
+        if (p.type === 'enter' || p.type === 'over') setDragging(true);
+        else if (p.type === 'leave') setDragging(false);
+        else if (p.type === 'drop') {
+          setDragging(false);
+          void addPaths(p.paths ?? []);
+        }
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [addPaths]);
+
   const handleSelectFiles = async () => {
     try {
       const selected = await open({ multiple: true, directory: false });
       if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        // Resolve real file sizes so the batch total is accurate (was always 0).
-        const newItems = await Promise.all(
-          paths.map(async (p) => {
-            let size = 0;
-            try {
-              size = await invoke<number>('file_size', { path: p });
-            } catch {
-              /* stat failed (e.g. browser dev) — leave 0 */
-            }
-            return { path: p, name: p.split(/[\\/]/).pop() || 'file', size };
-          }),
-        );
-        onAddFiles(newItems);
+        await addPaths(Array.isArray(selected) ? selected : [selected]);
       }
     } catch (e) {
       console.error('File dialog error:', e);
@@ -144,11 +178,20 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
         <div
           onClick={handleSelectFiles}
           className="rounded-md border-2 border-dashed p-4 text-center cursor-pointer transition"
-          style={{ borderColor: 'var(--border-inset)', background: 'var(--bg-inset)' }}
+          style={{
+            borderColor: dragging ? 'var(--info)' : 'var(--border-inset)',
+            background: dragging ? 'var(--info-soft)' : 'var(--bg-inset)',
+          }}
         >
           <div className="flex flex-col items-center justify-center space-y-1.5 py-1">
-            <Plus className="w-6 h-6" style={{ color: 'var(--info)' }} />
-            <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{t.multiFileSelect}</div>
+            {dragging ? (
+              <DownloadCloud className="w-6 h-6 animate-bounce" style={{ color: 'var(--info)' }} />
+            ) : (
+              <Plus className="w-6 h-6" style={{ color: 'var(--info)' }} />
+            )}
+            <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+              {dragging ? t.dropRelease : t.multiFileSelect}
+            </div>
             <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{t.dropHint}</div>
           </div>
         </div>
