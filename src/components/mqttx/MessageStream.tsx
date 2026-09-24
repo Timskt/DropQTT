@@ -203,11 +203,11 @@ const MessageRow = React.memo(function MessageRow({
       )}
 
       {rich ? (
-        <div className="rounded-md border p-3 max-h-[24rem] overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)' }}>
+        <div className="rounded-md border p-3 max-h-[24rem] overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'var(--code-border)' }}>
           {effective === 'md' ? <MarkdownView text={display} /> : <HtmlPreview source={display} />}
         </div>
       ) : effective === 'json' ? (
-        <div className="rounded-md border p-2.5 max-h-[24rem] overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)' }}>
+        <div className="rounded-md border p-2.5 max-h-[24rem] overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'var(--code-border)' }}>
           <JsonTree text={display} />
         </div>
       ) : (
@@ -220,7 +220,15 @@ const MessageRow = React.memo(function MessageRow({
           className={`select-text w-full text-left rounded-md border p-2.5 overflow-x-auto text-[12px] font-mono whitespace-pre leading-relaxed ${
             overflow ? 'cursor-pointer' : 'cursor-default'
           } ${expanded || !overflow ? '' : 'max-h-[12rem] overflow-hidden'}`}
-          style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)', color: '#d3dae6' }}
+          role={overflow ? 'button' : undefined}
+          tabIndex={overflow ? 0 : undefined}
+          aria-expanded={overflow ? expanded : undefined}
+          onKeyDown={(e) => {
+            if (!overflow || (e.key !== 'Enter' && e.key !== ' ')) return;
+            e.preventDefault();
+            setExpanded((x) => !x);
+          }}
+          style={{ background: 'var(--bg-code)', borderColor: 'var(--code-border)', color: 'var(--code-text)' }}
         >
           {display}
           {overflow && !expanded && (

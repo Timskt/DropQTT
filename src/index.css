@@ -10,6 +10,13 @@
     --bg-panel-solid: #0f172a;
     --bg-inset: rgba(2, 6, 23, 0.8);
     --bg-code: rgba(2, 6, 23, 0.92);
+    --code-text: #d3dae6;
+    --code-border: rgba(148, 163, 184, 0.2);
+    --code-key: #e5c07b;
+    --code-string: #98c379;
+    --code-number: #d19a66;
+    --code-boolean: #c678dd;
+    --code-punct: #8b94a3;
     --border-panel: rgba(71, 85, 105, 0.55);
     --border-inset: rgba(51, 65, 85, 0.5);
     --text-primary: #f1f5f9;
@@ -54,8 +61,6 @@
     background: var(--bg-app);
     background-attachment: fixed;
     color: var(--text-primary);
-    user-select: none;
-    -webkit-user-select: none;
   }
 }
 
@@ -203,6 +208,58 @@
     color: var(--accent-contrast);
   }
   .btn-solid:hover:not(:disabled) { filter: brightness(1.12); }
+
+  .workspace-two-col {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+    gap: 1rem;
+  }
+
+  .workspace-split {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+    gap: 0.5rem;
+  }
+
+  .ops-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .ops-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    gap: 0.5rem;
+  }
+
+  .ops-metric {
+    min-width: 0;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--border-inset);
+    border-radius: 0.375rem;
+    background: var(--bg-inset);
+  }
+
+  .skip-link {
+    position: fixed;
+    top: 0.5rem;
+    left: 50%;
+    z-index: 200;
+    transform: translate(-50%, -180%);
+    padding: 0.5rem 0.875rem;
+    border: 1px solid var(--accent);
+    border-radius: 0.375rem;
+    background: var(--bg-panel-solid);
+    color: var(--text-primary);
+    font-size: 12px;
+    transition: transform 0.15s ease;
+  }
+
+  .skip-link:focus {
+    transform: translate(-50%, 0);
+  }
 }
 
 /* ---- Rich-text (sanitized MQTT payload) rendering ---- */
@@ -356,6 +413,15 @@
 }
 .rich-md img { max-width: 100%; border-radius: 6px; }
 .rich-md hr { border: none; border-top: 1px solid var(--border-inset); margin: 1.2em 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
 
 /* Light-theme correctness now comes from semantic tokens (see themes/index.ts)
    consumed via .chip-* utility classes — no per-class !important overrides. */

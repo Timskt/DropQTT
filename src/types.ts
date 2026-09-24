@@ -80,6 +80,8 @@ export interface MqttGenericMessage {
   qos: number;
   retain: boolean;
   timestamp: string;
+  /** Epoch milliseconds captured by the Rust event path. */
+  timestampMs?: number;
   direction: 'in' | 'out';
 }
 
@@ -141,6 +143,63 @@ export interface HistoryStats {
   outbound: number;
   oldestTs?: number | null;
   newestTs?: number | null;
+}
+
+// ---- Operations diagnostics ----
+
+export interface RuntimeInfo {
+  appVersion: string;
+  os: string;
+  arch: string;
+  generatedAt: number;
+}
+
+export interface MqttDiagnostics {
+  configured: boolean;
+  connected: boolean;
+  host: string;
+  port: number;
+  clientId: string;
+  useTls: boolean;
+  useWebsocket: boolean;
+  protocolVersion: number;
+  subscriptions: number;
+  incomingActive: number;
+  outgoingActive: number;
+  feedBuffered: number;
+  feedBufferCapacity: number;
+  feedDropped: number;
+  topicStatsCount: number;
+  historyAvailable: boolean;
+  history: HistoryStats;
+  downloadDir: string;
+  downloadDirWritable: boolean;
+  downloadDirError?: string | null;
+}
+
+export interface BridgeDiagnostics {
+  totalConnections: number;
+  connectedConnections: number;
+  configuredRules: number;
+  enabledRules: number;
+  forwarded: number;
+  errors: number;
+  dropped: number;
+}
+
+export type DiagnosticLevel = 'ok' | 'warn' | 'error';
+
+export interface DiagnosticCheck {
+  id: string;
+  level: DiagnosticLevel;
+  detail: string;
+}
+
+export interface DiagnosticsSnapshot {
+  runtime: RuntimeInfo;
+  mqtt: MqttDiagnostics;
+  bridge: BridgeDiagnostics;
+  checks: DiagnosticCheck[];
 }
 
 /** Batched console-feed emission from the backend (100 ms cadence) */

@@ -308,7 +308,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
               const expanded = expandedId === r.id;
               return (
                 <div key={r.id} style={idx > 0 ? { borderTop: '1px solid var(--border-inset)' } : undefined}>
-                  <div
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
                     className="px-3 py-2 text-[11px] flex items-center gap-2 cursor-pointer transition hover:brightness-110"
                     style={expanded ? { background: 'var(--hover)' } : undefined}
                     onClick={() => setExpandedId(expanded ? null : r.id)}
@@ -322,7 +324,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
                     <span className="chip chip-neutral shrink-0">Q{r.qos}</span>
                     <span className="font-mono shrink-0 hidden md:inline" style={{ color: 'var(--text-muted)' }}>{fmtBytes(r.payloadLen)}</span>
                     <span className="font-mono shrink-0" style={{ color: 'var(--text-secondary)' }}>{fmtTime(r.ts)}</span>
-                  </div>
+                  </button>
                   {expanded && (
                     <div className="px-3 pb-3 animate-fade-in">
                       <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
@@ -344,7 +346,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
                           </button>
                         </div>
                       </div>
-                      <pre className="select-text w-full text-[11px] font-mono whitespace-pre-wrap break-all rounded-md border p-2.5 max-h-56 overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'rgba(148,163,184,0.2)', color: '#d3dae6' }}>
+                      <pre className="select-text w-full text-[11px] font-mono whitespace-pre-wrap break-all rounded-md border p-2.5 max-h-56 overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'var(--code-border)', color: 'var(--code-text)' }}>
                         {r.payload || `(base64 ${r.payloadLen}B)`}
                       </pre>
                       {isV5 && <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>MQTT 5</div>}

@@ -1,10 +1,10 @@
 import React from 'react';
-import { Layers, Terminal, Settings, Globe, Palette, Server, GitBranch, Archive } from 'lucide-react';
+import { Activity, Layers, Terminal, Settings, Globe, Palette, Server, GitBranch, Archive } from 'lucide-react';
 import { Language, Translations } from '../i18n';
 import { Theme } from '../themes';
 import { DropQTTLogo } from './DropQTTLogo';
 
-export type WorkspaceMode = 'transfer' | 'mqttx' | 'bridge' | 'history';
+export type WorkspaceMode = 'transfer' | 'mqttx' | 'bridge' | 'history' | 'ops';
 
 interface SidebarProps {
   activeMode: WorkspaceMode;
@@ -41,7 +41,9 @@ const NavItem: React.FC<{
   pulse?: boolean;
 }> = ({ active, onClick, icon, title, subtitle, accentVar, chipClass, count, countLabel, pulse }) => (
   <button
+    type="button"
     onClick={onClick}
+    aria-current={active ? 'page' : undefined}
     className="w-full flex items-center justify-between px-3 py-2.5 rounded-md text-xs transition border"
     style={
       active
@@ -118,7 +120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Navigation Modes */}
-        <div className="p-3 space-y-1">
+        <nav className="p-3 space-y-1" aria-label="Workspace modes">
           <div className="px-2 py-1 ui-label font-mono">Workspace Mode</div>
 
           <NavItem
@@ -175,7 +177,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             count={historyCount}
             countLabel={historyCount >= 1000 ? `${(historyCount / 1000).toFixed(1)}k` : undefined}
           />
-        </div>
+
+          <NavItem
+            active={activeMode === 'ops'}
+            onClick={() => setActiveMode('ops')}
+            icon={<Activity className="w-4 h-4" />}
+            title={t.modeOps}
+            subtitle={t.modeOpsDesc}
+            accentVar="var(--violet)"
+            chipClass="chip-violet"
+          />
+        </nav>
 
         {/* Broker & Protocol Info */}
         <div className="px-3 py-2">

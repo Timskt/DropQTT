@@ -434,7 +434,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       </div>
 
       {/* ---- Connections ---- */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="workspace-two-col">
         <BridgeConnCard
           connId="src"
           title={t.bridgeSource}
@@ -799,11 +799,11 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded select-text" style={{ background: 'var(--bg-code)', color: '#9cdcfe' }}>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded select-text" style={{ background: 'var(--bg-code)', color: 'var(--code-string)' }}>
                       {r.sourceConn}:{r.sourceFilter.split('\n').map((s) => s.trim()).filter(Boolean).join(' · ')}
                     </span>
                     <ArrowRight className="w-3 h-3 shrink-0" style={{ color: 'var(--text-muted)' }} />
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded select-text" style={{ background: 'var(--bg-code)', color: '#ce9177' }}>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded select-text" style={{ background: 'var(--bg-code)', color: 'var(--code-number)' }}>
                       {r.targetConn}
                       {r.topicMode === 'prefix' && r.prefixFrom ? ` → ${r.prefixTo}` : ''}
                     </span>

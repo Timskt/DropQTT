@@ -177,6 +177,15 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
         {/* Dropzone / Select button */}
         <div
           onClick={handleSelectFiles}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              void handleSelectFiles();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label={t.multiFileSelect}
           className="rounded-md border-2 border-dashed p-4 text-center cursor-pointer transition"
           style={{
             borderColor: dragging ? 'var(--info)' : 'var(--border-inset)',

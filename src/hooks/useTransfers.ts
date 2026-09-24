@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import confetti from 'canvas-confetti';
 import { TransferProgress } from '../types';
 import { runWithToast } from '../utils/toast';
+import { prefersReducedMotion } from '../utils/motion';
 
 /**
  * Transfer queue state: progress events from the backend, send/receive
@@ -35,7 +36,7 @@ export function useTransfers() {
           const item = event.payload;
           setTransfers((prev) => ({ ...prev, [item.transferId]: item }));
 
-          if (item.status === 'completed' && item.direction === 'receive') {
+          if (item.status === 'completed' && item.direction === 'receive' && !prefersReducedMotion()) {
             confetti({ particleCount: 50, spread: 60, origin: { y: 0.8 } });
           }
         }),

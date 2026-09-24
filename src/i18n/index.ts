@@ -11,6 +11,7 @@ export interface Translations {
   saveAndConnect: string;
   cancel: string;
   settings: string;
+  skipToContent: string;
   brokerConfig: string;
   brokerPresets: string;
   brokerHost: string;
@@ -159,6 +160,63 @@ export interface Translations {
   modeMqttClientDesc: string;
   modeBridge: string;
   modeBridgeDesc: string;
+  modeOps: string;
+  modeOpsDesc: string;
+  opsTitle: string;
+  opsSubtitle: string;
+  opsRefresh: string;
+  opsCopyReport: string;
+  opsCopyFailed: string;
+  opsExportReport: string;
+  opsCopied: string;
+  opsExported: string;
+  opsRuntime: string;
+  opsBroker: string;
+  opsTransferFeed: string;
+  opsStorageHistory: string;
+  opsBridge: string;
+  opsHealthChecks: string;
+  opsHealthy: string;
+  opsAttention: string;
+  opsIssues: string;
+  opsHealthScore: string;
+  opsErrorsWarnings: string;
+  opsLastUpdated: string;
+  opsNever: string;
+  opsSubscriptions: string;
+  opsTrackedTopics: string;
+  opsBridgeConnections: string;
+  opsEnabledRules: string;
+  opsVersion: string;
+  opsPlatform: string;
+  opsProtocol: string;
+  opsTransport: string;
+  opsOpenSettings: string;
+  opsOpenConsole: string;
+  opsOpenHistory: string;
+  opsIncoming: string;
+  opsOutgoing: string;
+  opsBuffered: string;
+  opsDropped: string;
+  opsHistoryRows: string;
+  opsHistoryStore: string;
+  opsAvailable: string;
+  opsUnavailable: string;
+  opsDownloadDir: string;
+  opsWritable: string;
+  opsReadOnly: string;
+  opsBridgeRules: string;
+  opsNoSnapshot: string;
+  opsTroubleshootingHint: string;
+  opsReportHint: string;
+  opsCheckDownloadDir: string;
+  opsCheckHistory: string;
+  opsCheckBroker: string;
+  opsCheckTransport: string;
+  opsCheckSubscriptions: string;
+  opsCheckFeed: string;
+  opsCheckTransfers: string;
+  opsCheckBridge: string;
   bridgeSource: string;
   bridgeTarget: string;
   currentConfig: string;
@@ -360,6 +418,7 @@ export const translations: Record<Language, Translations> = {
     saveAndConnect: '保存并连接',
     cancel: '取消',
     settings: 'MQTT Broker 设置',
+    skipToContent: '跳到主要内容',
     brokerConfig: 'MQTT Broker 服务器配置',
     brokerPresets: '常用公共 Broker 预设',
     brokerHost: '服务器地址 / IP',
@@ -508,6 +567,63 @@ export const translations: Record<Language, Translations> = {
     modeMqttClientDesc: '通用 MQTT 消息订阅、发布与实时数据流检测',
     modeBridge: '数据桥接转发',
     modeBridgeDesc: '两个 Broker 之间按主题规则原样转发消息',
+    modeOps: '运维与诊断',
+    modeOpsDesc: '健康检查、资源状态与可导出诊断报告',
+    opsTitle: '运维诊断中心',
+    opsSubtitle: '本地运行快照与主动健康检查；报告不包含密码或证书路径',
+    opsRefresh: '刷新',
+    opsCopyReport: '复制报告',
+    opsCopyFailed: '复制诊断报告失败',
+    opsExportReport: '导出报告',
+    opsCopied: '诊断报告已复制',
+    opsExported: '诊断报告已导出',
+    opsRuntime: '运行环境',
+    opsBroker: 'Broker 连接',
+    opsTransferFeed: '传输与消息压力',
+    opsStorageHistory: '存储与历史',
+    opsBridge: '桥接运行状态',
+    opsHealthChecks: '健康检查',
+    opsHealthy: '正常',
+    opsAttention: '注意',
+    opsIssues: '异常',
+    opsHealthScore: '错误 / 警告',
+    opsErrorsWarnings: '健康检查结果',
+    opsLastUpdated: '更新时间',
+    opsNever: '尚未采样',
+    opsSubscriptions: '订阅数',
+    opsTrackedTopics: '跟踪主题',
+    opsBridgeConnections: '桥接连接',
+    opsEnabledRules: '启用规则',
+    opsVersion: '版本',
+    opsPlatform: '平台',
+    opsProtocol: '协议',
+    opsTransport: '传输',
+    opsOpenSettings: '设置',
+    opsOpenConsole: '控制台',
+    opsOpenHistory: '历史',
+    opsIncoming: '接收活动',
+    opsOutgoing: '发送活动',
+    opsBuffered: 'Feed 缓冲',
+    opsDropped: 'Feed 丢弃',
+    opsHistoryRows: '历史记录',
+    opsHistoryStore: '历史数据库',
+    opsAvailable: '可用',
+    opsUnavailable: '不可用',
+    opsDownloadDir: '下载目录',
+    opsWritable: '可写',
+    opsReadOnly: '不可写',
+    opsBridgeRules: '桥接规则',
+    opsNoSnapshot: '正在采集运行状态…',
+    opsTroubleshootingHint: '故障排查建议',
+    opsReportHint: '先查看异常检查项，再复制或导出报告。报告已脱敏，可安全附到 Issue 或发给维护者。',
+    opsCheckDownloadDir: '下载目录可写',
+    opsCheckHistory: '历史数据库',
+    opsCheckBroker: 'Broker 连通性',
+    opsCheckTransport: '传输加密',
+    opsCheckSubscriptions: '订阅注册',
+    opsCheckFeed: 'Feed 背压',
+    opsCheckTransfers: '传输活动',
+    opsCheckBridge: '桥接健康度',
     bridgeSource: '转发源',
     bridgeTarget: '转发目标',
     currentConfig: '当前会话配置',
@@ -707,6 +823,7 @@ export const translations: Record<Language, Translations> = {
     saveAndConnect: 'Save & Connect',
     cancel: 'Cancel',
     settings: 'MQTT Broker Settings',
+    skipToContent: 'Skip to main content',
     brokerConfig: 'MQTT Broker Configuration',
     brokerPresets: 'Public Broker Presets',
     brokerHost: 'Broker Host / IP',
@@ -855,6 +972,63 @@ export const translations: Record<Language, Translations> = {
     modeMqttClientDesc: 'Full MQTT topic subscriptions, live stream & message publishing',
     modeBridge: 'Data Bridge',
     modeBridgeDesc: 'Forward messages verbatim between two brokers by topic rules',
+    modeOps: 'Ops & Diagnostics',
+    modeOpsDesc: 'Health checks, resource status and exportable diagnostics',
+    opsTitle: 'Operations Diagnostics',
+    opsSubtitle: 'Local runtime snapshot and active checks; reports exclude passwords and certificate paths',
+    opsRefresh: 'Refresh',
+    opsCopyReport: 'Copy report',
+    opsCopyFailed: 'Failed to copy diagnostics report',
+    opsExportReport: 'Export report',
+    opsCopied: 'Diagnostics report copied',
+    opsExported: 'Diagnostics report exported',
+    opsRuntime: 'Runtime',
+    opsBroker: 'Broker Connection',
+    opsTransferFeed: 'Transfer & Feed Pressure',
+    opsStorageHistory: 'Storage & History',
+    opsBridge: 'Bridge Health',
+    opsHealthChecks: 'Health Checks',
+    opsHealthy: 'Healthy',
+    opsAttention: 'Attention',
+    opsIssues: 'Issues',
+    opsHealthScore: 'Errors / Warnings',
+    opsErrorsWarnings: 'check results',
+    opsLastUpdated: 'Updated',
+    opsNever: 'Not sampled',
+    opsSubscriptions: 'Subscriptions',
+    opsTrackedTopics: 'tracked topics',
+    opsBridgeConnections: 'Bridge connections',
+    opsEnabledRules: 'enabled rules',
+    opsVersion: 'Version',
+    opsPlatform: 'Platform',
+    opsProtocol: 'Protocol',
+    opsTransport: 'Transport',
+    opsOpenSettings: 'Settings',
+    opsOpenConsole: 'Console',
+    opsOpenHistory: 'History',
+    opsIncoming: 'Inbound active',
+    opsOutgoing: 'Outbound active',
+    opsBuffered: 'Feed buffered',
+    opsDropped: 'Feed dropped',
+    opsHistoryRows: 'History rows',
+    opsHistoryStore: 'History store',
+    opsAvailable: 'Available',
+    opsUnavailable: 'Unavailable',
+    opsDownloadDir: 'Download directory',
+    opsWritable: 'Writable',
+    opsReadOnly: 'Not writable',
+    opsBridgeRules: 'Bridge rules',
+    opsNoSnapshot: 'Collecting runtime state…',
+    opsTroubleshootingHint: 'Troubleshooting guidance',
+    opsReportHint: 'Inspect failing checks first, then copy or export the report. The report is sanitized for Issues and support handoff.',
+    opsCheckDownloadDir: 'Download directory writable',
+    opsCheckHistory: 'History database',
+    opsCheckBroker: 'Broker connectivity',
+    opsCheckTransport: 'Transport encryption',
+    opsCheckSubscriptions: 'Subscription registry',
+    opsCheckFeed: 'Feed backpressure',
+    opsCheckTransfers: 'Transfer activity',
+    opsCheckBridge: 'Bridge health',
     bridgeSource: 'Source',
     bridgeTarget: 'Target',
     currentConfig: 'Current session',
@@ -1054,6 +1228,7 @@ export const translations: Record<Language, Translations> = {
     saveAndConnect: '儲存並連線',
     cancel: '取消',
     settings: 'MQTT Broker 設定',
+    skipToContent: '跳至主要內容',
     brokerConfig: 'MQTT Broker 伺服器配置',
     brokerPresets: '常用公共 Broker 預設',
     brokerHost: '伺服器位址 / IP',
@@ -1202,6 +1377,63 @@ export const translations: Record<Language, Translations> = {
     modeMqttClientDesc: '通用 MQTT 訊息訂閱、發布與即時資料流檢測',
     modeBridge: '資料橋接轉發',
     modeBridgeDesc: '兩個 Broker 之間依主題規則原樣轉發訊息',
+    modeOps: '維運與診斷',
+    modeOpsDesc: '健康檢查、資源狀態與可匯出診斷報告',
+    opsTitle: '維運診斷中心',
+    opsSubtitle: '本機執行快照與主動健康檢查；報告不含密碼或憑證路徑',
+    opsRefresh: '重新整理',
+    opsCopyReport: '複製報告',
+    opsCopyFailed: '複製診斷報告失敗',
+    opsExportReport: '匯出報告',
+    opsCopied: '診斷報告已複製',
+    opsExported: '診斷報告已匯出',
+    opsRuntime: '執行環境',
+    opsBroker: 'Broker 連線',
+    opsTransferFeed: '傳輸與訊息壓力',
+    opsStorageHistory: '儲存與歷史',
+    opsBridge: '橋接執行狀態',
+    opsHealthChecks: '健康檢查',
+    opsHealthy: '正常',
+    opsAttention: '注意',
+    opsIssues: '異常',
+    opsHealthScore: '錯誤 / 警告',
+    opsErrorsWarnings: '健康檢查結果',
+    opsLastUpdated: '更新時間',
+    opsNever: '尚未取樣',
+    opsSubscriptions: '訂閱數',
+    opsTrackedTopics: '追蹤主題',
+    opsBridgeConnections: '橋接連線',
+    opsEnabledRules: '啟用規則',
+    opsVersion: '版本',
+    opsPlatform: '平台',
+    opsProtocol: '協定',
+    opsTransport: '傳輸',
+    opsOpenSettings: '設定',
+    opsOpenConsole: '控制台',
+    opsOpenHistory: '歷史',
+    opsIncoming: '接收活動',
+    opsOutgoing: '發送活動',
+    opsBuffered: 'Feed 緩衝',
+    opsDropped: 'Feed 丟棄',
+    opsHistoryRows: '歷史記錄',
+    opsHistoryStore: '歷史資料庫',
+    opsAvailable: '可用',
+    opsUnavailable: '不可用',
+    opsDownloadDir: '下載目錄',
+    opsWritable: '可寫',
+    opsReadOnly: '不可寫',
+    opsBridgeRules: '橋接規則',
+    opsNoSnapshot: '正在收集執行狀態…',
+    opsTroubleshootingHint: '故障排查建議',
+    opsReportHint: '先查看異常檢查項，再複製或匯出報告。報告已脫敏，可安全附到 Issue 或交給維護者。',
+    opsCheckDownloadDir: '下載目錄可寫',
+    opsCheckHistory: '歷史資料庫',
+    opsCheckBroker: 'Broker 連線',
+    opsCheckTransport: '傳輸加密',
+    opsCheckSubscriptions: '訂閱註冊',
+    opsCheckFeed: 'Feed 背壓',
+    opsCheckTransfers: '傳輸活動',
+    opsCheckBridge: '橋接健康度',
     bridgeSource: '轉發來源',
     bridgeTarget: '轉發目標',
     currentConfig: '目前工作階段設定',
@@ -1401,6 +1633,7 @@ export const translations: Record<Language, Translations> = {
     saveAndConnect: '保存して接続',
     cancel: 'キャンセル',
     settings: 'MQTT ブローカー設定',
+    skipToContent: 'メインコンテンツへ移動',
     brokerConfig: 'MQTT ブローカー構成',
     brokerPresets: 'パブリック ブローカー プリセット',
     brokerHost: 'ホスト / IP',
@@ -1549,6 +1782,63 @@ export const translations: Record<Language, Translations> = {
     modeMqttClientDesc: '汎用 MQTT トピック購読・パブリッシュおよびライブス トリーム検査',
     modeBridge: 'データブリッジ転送',
     modeBridgeDesc: '2つのBroker間をトピックルールでそのまま転送',
+    modeOps: '運用・診断',
+    modeOpsDesc: 'ヘルスチェック、リソース状態、診断レポート',
+    opsTitle: '運用診断センター',
+    opsSubtitle: 'ローカル実行スナップショットと能動チェック。パスワードや証明書パスは含みません',
+    opsRefresh: '更新',
+    opsCopyReport: 'レポートをコピー',
+    opsCopyFailed: '診断レポートのコピーに失敗しました',
+    opsExportReport: 'レポートを書き出す',
+    opsCopied: '診断レポートをコピーしました',
+    opsExported: '診断レポートを書き出しました',
+    opsRuntime: '実行環境',
+    opsBroker: 'Broker 接続',
+    opsTransferFeed: '転送とメッセージ負荷',
+    opsStorageHistory: 'ストレージと履歴',
+    opsBridge: 'ブリッジ状態',
+    opsHealthChecks: 'ヘルスチェック',
+    opsHealthy: '正常',
+    opsAttention: '注意',
+    opsIssues: '異常',
+    opsHealthScore: 'エラー / 警告',
+    opsErrorsWarnings: 'チェック結果',
+    opsLastUpdated: '更新時刻',
+    opsNever: '未取得',
+    opsSubscriptions: '購読数',
+    opsTrackedTopics: '追跡トピック',
+    opsBridgeConnections: 'ブリッジ接続',
+    opsEnabledRules: '有効ルール',
+    opsVersion: 'バージョン',
+    opsPlatform: 'プラットフォーム',
+    opsProtocol: 'プロトコル',
+    opsTransport: 'トランスポート',
+    opsOpenSettings: '設定',
+    opsOpenConsole: 'コンソール',
+    opsOpenHistory: '履歴',
+    opsIncoming: '受信アクティブ',
+    opsOutgoing: '送信アクティブ',
+    opsBuffered: 'Feed バッファ',
+    opsDropped: 'Feed 破棄',
+    opsHistoryRows: '履歴件数',
+    opsHistoryStore: '履歴 DB',
+    opsAvailable: '利用可能',
+    opsUnavailable: '利用不可',
+    opsDownloadDir: 'ダウンロード先',
+    opsWritable: '書込可能',
+    opsReadOnly: '書込不可',
+    opsBridgeRules: 'ブリッジルール',
+    opsNoSnapshot: '実行状態を収集中…',
+    opsTroubleshootingHint: 'トラブルシューティング',
+    opsReportHint: '異常項目を確認してからレポートをコピーまたは書き出してください。機密情報は除去済みです。',
+    opsCheckDownloadDir: 'ダウンロード先の書込権限',
+    opsCheckHistory: '履歴データベース',
+    opsCheckBroker: 'Broker 接続性',
+    opsCheckTransport: '通信暗号化',
+    opsCheckSubscriptions: '購読登録',
+    opsCheckFeed: 'Feed バックプレッシャー',
+    opsCheckTransfers: '転送アクティビティ',
+    opsCheckBridge: 'ブリッジ健全性',
     bridgeSource: '転送ソース',
     bridgeTarget: '転送先',
     currentConfig: '現在のセッション設定',

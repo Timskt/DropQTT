@@ -101,7 +101,7 @@ pub struct TransferMeta {
 #[serde(rename_all = "camelCase")]
 pub struct ControlMessage {
     #[serde(rename = "type")]
-    pub msg_type: String, // "NACK", "COMPLETED", "ERROR"
+    pub msg_type: String, // "NACK", "COMPLETED", "ERROR", "PAUSE", "RESUME", "CANCEL"
     pub transfer_id: String,
     pub chunk_index: Option<usize>,
     pub missing: Option<Vec<usize>>,
@@ -188,6 +188,9 @@ pub struct MqttGenericMessage {
     pub qos: u8,
     pub retain: bool,
     pub timestamp: String,
+    /// Epoch milliseconds captured when the app observed/published the message.
+    #[serde(default)]
+    pub timestamp_ms: i64,
     pub direction: String, // "in" | "out"
 }
 
@@ -278,5 +281,22 @@ mod tests {
         let back: ControlMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(back.msg_type, "NACK");
         assert_eq!(back.missing, Some(vec![3, 7, 11]));
+    }
+
+    #[test]
+    fn test_transfer_control_lifecycle_messages_roundtrip() {
+        for msg_type in ["PAUSE", "RESUME", "CANCEL"] {
+            let ctrl = ControlMessage {
+                msg_type: msg_type.to_string(),
+                transfer_id: "t1".to_string(),
+                chunk_index: None,
+                missing: None,
+                message: None,
+            };
+            let json = serde_json::to_string(&ctrl).expect("serialize control");
+            let back: ControlMessage = serde_json::from_str(&json).expect("deserialize control");
+            assert_eq!(back.msg_type, msg_type);
+            assert_eq!(back.transfer_id, "t1");
+        }
     }
 }

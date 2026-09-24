@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import confetti from 'canvas-confetti';
 import { BatchFileItem, TransferProgress } from '../types';
+import { prefersReducedMotion } from '../utils/motion';
 
 interface UseBatchSenderOptions {
   publishTopic: string;
@@ -99,7 +100,7 @@ export function useBatchSender({ publishTopic, waitForSendComplete }: UseBatchSe
       }
 
       setIsSendingBatch(false);
-      if (!cancelRef.current) {
+      if (!cancelRef.current && !prefersReducedMotion()) {
         confetti({ particleCount: 80, spread: 80, origin: { y: 0.7 } });
       }
     },

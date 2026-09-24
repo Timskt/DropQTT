@@ -8,12 +8,12 @@ import React, { useMemo, useState } from 'react';
  */
 
 const COLORS = {
-  key: '#e5c07b',
-  string: '#98c379',
-  number: '#d19a66',
-  boolean: '#c678dd',
-  null: '#7f848e',
-  punct: '#8b94a3',
+  key: 'var(--code-key)',
+  string: 'var(--code-string)',
+  number: 'var(--code-number)',
+  boolean: 'var(--code-boolean)',
+  null: 'var(--code-punct)',
+  punct: 'var(--code-punct)',
 };
 
 const MAX_PREVIEW = 120;
@@ -100,7 +100,7 @@ const JsonNode: React.FC<{ name: string | null; value: unknown; depth: number }>
         </span>
       </button>
       {open && (
-        <div className="pl-4 ml-1.5 border-l" style={{ borderColor: 'rgba(148,163,184,0.15)' }}>
+        <div className="pl-4 ml-1.5 border-l" style={{ borderColor: 'var(--code-border)' }}>
           {entries.map(([k, v]) => (
             <JsonNode key={k} name={k} value={v} depth={depth + 1} />
           ))}
@@ -121,7 +121,7 @@ export const JsonTree: React.FC<{ text: string }> = ({ text }) => {
 
   if (!data.ok) {
     return (
-      <pre className="text-[12px] whitespace-pre-wrap" style={{ color: '#d3dae6' }}>
+      <pre className="text-[12px] whitespace-pre-wrap" style={{ color: 'var(--code-text)' }}>
         {text}
       </pre>
     );

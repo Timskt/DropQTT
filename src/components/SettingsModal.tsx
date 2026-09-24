@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { BrokerConfig, BROKER_PRESETS, BrokerProfile } from '../types';
@@ -84,6 +84,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [newProfileName, setNewProfileName] = useState<string>('');
   const [testing, setTesting] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (isOpen) {
@@ -93,15 +97,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, config]);
 
-  // Escape closes the dialog (a11y).
+  // Escape closes the dialog, Tab stays inside it, and focus returns on close.
   useEffect(() => {
     if (!isOpen) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    const focusTimer = window.setTimeout(() => {
+      const first = dialogRef.current?.querySelector<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      first?.focus();
+    }, 0);
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => el.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, onClose]);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', onKey);
+      previousFocusRef.current?.focus();
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -151,14 +187,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="panel w-full max-w-xl rounded-2xl overflow-hidden max-h-[90vh] flex flex-col" role="dialog" aria-modal="true" aria-label={t.brokerConfig} style={{ background: 'var(--bg-panel-solid)', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
+      <div ref={dialogRef} className="panel w-full max-w-xl rounded-2xl overflow-hidden max-h-[90vh] flex flex-col" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title" style={{ background: 'var(--bg-panel-solid)', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border-panel)', background: 'var(--bg-inset)' }}>
           <div className="flex items-center gap-2 font-semibold" style={{ color: 'var(--text-primary)' }}>
             <Server className="w-5 h-5" style={{ color: 'var(--accent)' }} />
-            <span>{t.brokerConfig}</span>
+            <span id="settings-dialog-title">{t.brokerConfig}</span>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg transition" style={{ color: 'var(--text-muted)' }}
+          <button type="button" onClick={onClose} aria-label={t.cancel} className="p-1 rounded-lg transition" style={{ color: 'var(--text-muted)' }}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--hover)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
             <X className="w-5 h-5" />

@@ -19,6 +19,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
+use crate::diagnostics::BridgeDiagnostics;
 use crate::mqtt_manager::wildcard_match;
 use crate::protocol::{BrokerConfig, PubProperties};
 use crate::transform::{apply_transform, TransformOutcome, SCRIPT_SIZE_LIMIT};
@@ -316,12 +317,24 @@ impl BridgeManager {
             .collect()
     }
 
-    fn desired_filters(rules: &HashMap<String, BridgeRule>, conn_id: &str) -> HashSet<String> {
-        rules
+    fn desired_filters(
+        rules: &HashMap<String, BridgeRule>,
+        conn_id: &str,
+    ) -> HashMap<String, u8> {
+        let mut desired = HashMap::new();
+        for rule in rules
             .values()
             .filter(|r| r.enabled && r.source_conn == conn_id)
-            .flat_map(Self::rule_filters)
-            .collect()
+        {
+            let qos = rule.source_qos.min(2);
+            for filter in Self::rule_filters(rule) {
+                desired
+                    .entry(filter)
+                    .and_modify(|current: &mut u8| *current = (*current).max(qos))
+                    .or_insert(qos);
+            }
+        }
+        desired
     }
 
     /// Bring every connection's live subscriptions in line with the rules
@@ -333,22 +346,26 @@ impl BridgeManager {
                 continue;
             }
             let desired = Self::desired_filters(&rules, &id);
+            let desired_keys: HashSet<String> = desired.keys().cloned().collect();
             let current = {
                 let mut subs = self.subs.lock().await;
                 subs.entry(id.clone()).or_default().clone()
             };
-            for filter in desired.difference(&current) {
+            for (filter, qos) in &desired {
+                if current.contains(filter) {
+                    continue;
+                }
                 // Re-subscription is cheap and idempotent on reconnect too.
-                let _ = conn.client.subscribe(filter, 1).await;
+                let _ = conn.client.subscribe(filter, *qos).await;
             }
-            for filter in current.difference(&desired) {
+            for filter in current.difference(&desired_keys) {
                 conn.client.unsubscribe(filter).await;
             }
             let mut subs = self.subs.lock().await;
             if let Some(entry) = subs.get_mut(&id) {
-                *entry = desired;
+                *entry = desired_keys;
             } else {
-                subs.insert(id, desired);
+                subs.insert(id, desired_keys);
             }
         }
         Ok(())
@@ -365,6 +382,24 @@ impl BridgeManager {
             .collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
         out
+    }
+
+    pub async fn diagnostics_snapshot(&self) -> BridgeDiagnostics {
+        let conns = self.conns.lock().await;
+        let rules = self.rules.lock().await;
+        let stats = self.stats.lock().await;
+        BridgeDiagnostics {
+            total_connections: conns.len(),
+            connected_connections: conns
+                .values()
+                .filter(|c| c.connected.load(Ordering::SeqCst))
+                .count(),
+            configured_rules: rules.len(),
+            enabled_rules: rules.values().filter(|r| r.enabled).count(),
+            forwarded: stats.values().map(|s| s.forwarded).sum(),
+            errors: stats.values().map(|s| s.errors).sum(),
+            dropped: stats.values().map(|s| s.dropped).sum(),
+        }
     }
 
     async fn set_conn_error(&self, id: &str, error: Option<String>) {
@@ -463,13 +498,20 @@ impl BridgeManager {
     }
 
     pub async fn disconnect(&self, id: &str) {
-        if let Some((handle, flag)) = self.tasks.lock().await.remove(id) {
+        let control = self.tasks.lock().await.remove(id);
+        let conn = self.conns.lock().await.remove(id);
+        let handle = if let Some((handle, flag)) = control {
             flag.store(true, Ordering::SeqCst);
-            handle.abort();
-        }
-        if let Some(conn) = self.conns.lock().await.remove(id) {
+            Some(handle)
+        } else {
+            None
+        };
+        if let Some(conn) = conn {
             conn.connected.store(false, Ordering::SeqCst);
-            conn.client.disconnect().await;
+            let _ = conn.client.disconnect().await;
+        }
+        if let Some(handle) = handle {
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(500), handle).await;
         }
         self.subs.lock().await.remove(id);
     }
@@ -817,7 +859,31 @@ mod tests {
         let mut rules = HashMap::new();
         rules.insert("r1".into(), r);
         let desired = BridgeManager::desired_filters(&rules, "src");
-        assert_eq!(desired, HashSet::from(["/device/2".to_string(), "/device/4".to_string()]));
+        assert_eq!(
+            desired,
+            HashMap::from([
+                ("/device/2".to_string(), 1),
+                ("/device/4".to_string(), 1),
+            ])
+        );
+    }
+
+    #[test]
+    fn source_qos_is_applied_and_duplicate_filters_keep_highest_qos() {
+        let mut rules = HashMap::new();
+        let mut low = rule("same", "", "");
+        low.id = "low".into();
+        low.source_filter = "sensor/#".into();
+        low.source_qos = 0;
+        let mut high = rule("same", "", "");
+        high.id = "high".into();
+        high.source_filter = "sensor/#".into();
+        high.source_qos = 2;
+        rules.insert(low.id.clone(), low);
+        rules.insert(high.id.clone(), high);
+
+        let desired = BridgeManager::desired_filters(&rules, "src");
+        assert_eq!(desired.get("sensor/#"), Some(&2));
     }
 
     #[test]
@@ -898,7 +964,7 @@ mod tests {
         rules.insert("r3".into(), r3);
 
         let desired = BridgeManager::desired_filters(&rules, "src");
-        assert_eq!(desired, HashSet::from(["s/+/temp".to_string()]));
+        assert_eq!(desired, HashMap::from([("s/+/temp".to_string(), 1)]));
     }
 
     #[test]

@@ -40,7 +40,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 11.1.2
           run_install: false
 
       - name: Setup Rust stable
@@ -70,7 +70,19 @@ jobs:
             librsvg2-dev
 
       - name: Install frontend dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag matches application versions
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAURI_VERSION=$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json','utf8')).version")
+          CARGO_VERSION=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "tag=${GITHUB_REF_NAME} package=${PKG_VERSION} tauri=${TAURI_VERSION} cargo=${CARGO_VERSION}"
+          test "${GITHUB_REF_NAME}" = "v${PKG_VERSION}"
+          test "${PKG_VERSION}" = "${TAURI_VERSION}"
+          test "${PKG_VERSION}" = "${CARGO_VERSION}"
 
       - name: Frontend typecheck & build gate
         run: |

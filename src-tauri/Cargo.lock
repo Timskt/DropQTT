@@ -951,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "dropqtt"
-version = "0.7.1"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",

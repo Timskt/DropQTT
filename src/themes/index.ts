@@ -7,6 +7,13 @@ export interface ThemeTokens {
   '--bg-inset': string;
   /** Code / payload display surface (kept dark in light themes, editor-style) */
   '--bg-code': string;
+  '--code-text': string;
+  '--code-border': string;
+  '--code-key': string;
+  '--code-string': string;
+  '--code-number': string;
+  '--code-boolean': string;
+  '--code-punct': string;
   '--border-panel': string;
   '--border-inset': string;
   '--text-primary': string;
@@ -63,6 +70,13 @@ const darkBase: ThemeTokens = {
   '--bg-panel-solid': '#0f172a',
   '--bg-inset': 'rgba(2, 6, 23, 0.8)',
   '--bg-code': 'rgba(2, 6, 23, 0.92)',
+  '--code-text': '#d3dae6',
+  '--code-border': 'rgba(148, 163, 184, 0.2)',
+  '--code-key': '#e5c07b',
+  '--code-string': '#98c379',
+  '--code-number': '#d19a66',
+  '--code-boolean': '#c678dd',
+  '--code-punct': '#8b94a3',
   '--border-panel': 'rgba(71, 85, 105, 0.55)',
   '--border-inset': 'rgba(51, 65, 85, 0.5)',
   '--text-primary': '#f1f5f9',
@@ -161,6 +175,13 @@ export const themes: Record<Theme, ThemeDefinition> = {
       '--bg-panel-solid': '#ffffff',
       '--bg-inset': 'rgba(120, 113, 108, 0.07)',
       '--bg-code': '#292e36',
+      '--code-text': '#d3dae6',
+      '--code-border': 'rgba(148, 163, 184, 0.28)',
+      '--code-key': '#e5c07b',
+      '--code-string': '#98c379',
+      '--code-number': '#d19a66',
+      '--code-boolean': '#c678dd',
+      '--code-punct': '#8b94a3',
       '--border-panel': 'rgba(120, 113, 108, 0.26)',
       '--border-inset': 'rgba(120, 113, 108, 0.17)',
       '--text-primary': '#292524',

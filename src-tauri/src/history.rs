@@ -96,11 +96,12 @@ impl HistoryStore {
         if batch.is_empty() {
             return;
         }
-        let ts = now_ms();
+        let fallback_ts = now_ms();
         let Ok(conn) = self.conn.lock() else { return };
         // Best-effort: a failed history write must never break the live feed.
         let _ = conn.execute("BEGIN IMMEDIATE", []);
         for m in batch {
+            let ts = if m.timestamp_ms > 0 { m.timestamp_ms } else { fallback_ts };
             let _ = conn.execute(
                 "INSERT OR REPLACE INTO messages \
                  (id, topic, payload, payload_b64, payload_len, qos, retain, content_type, direction, ts) \
@@ -261,6 +262,7 @@ mod tests {
             qos: 1,
             retain: false,
             timestamp: String::new(),
+            timestamp_ms: 0,
             direction: dir.to_string(),
         }
     }
@@ -307,6 +309,24 @@ mod tests {
         store.clear();
         assert_eq!(store.stats().rows, 0);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn append_preserves_message_timestamp_ms() {
+        let dir = std::env::temp_dir().join(format!("dropqtt_hist_ts_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = HistoryStore::open(&dir.join("h.db")).expect("open");
+        let mut first = msg("ts-1", "sensor/a", "one", "in");
+        first.timestamp_ms = 1_700_000_000_123;
+        let mut second = msg("ts-2", "sensor/a", "two", "in");
+        second.timestamp_ms = 1_700_000_000_456;
+        store.append(&[first, second]);
+
+        let rows = store.query("sensor/a", "all", 10);
+        assert_eq!(rows[0].ts, 1_700_000_000_456);
+        assert_eq!(rows[1].ts, 1_700_000_000_123);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -50,6 +50,8 @@ pub struct IncomingTransfer {
     pub last_emit: Instant,
     pub last_bytes: u64,
     pub nack_rounds: usize,
+    /// Sender requested a temporary pause; watchdog timeouts are suspended.
+    pub paused: bool,
     pub verified: bool,
     pub finalize_state: FinalizeState,
 }
@@ -222,6 +224,58 @@ impl MqttManager {
         }
     }
 
+    /// Sanitized aggregate state for the diagnostics workspace. Secrets,
+    /// payloads and certificate paths are deliberately excluded.
+    pub async fn diagnostics_snapshot(&self) -> crate::diagnostics::MqttDiagnostics {
+        let config = self.current_config.read().await.clone();
+        let history_available = self.history.read().await.is_some();
+        let history = self.history_stats().await;
+        let download_dir = self.download_dir.read().await.clone();
+        let subscriptions = self.subscriptions.lock().await.len();
+        let incoming_active = self.incoming_transfers.lock().await.len();
+        let outgoing_active = self.outgoing_transfers.lock().await.len();
+        let feed_buffered = self.feed_buffer.lock().await.len();
+        let topic_stats_count = self.topic_stats.lock().await.len();
+        let connected = self.is_connected.load(Ordering::SeqCst);
+
+        let (configured, host, port, client_id, use_tls, use_websocket, protocol_version) =
+            match config {
+                Some(cfg) => (
+                    true,
+                    cfg.host,
+                    cfg.port,
+                    cfg.client_id,
+                    cfg.use_tls,
+                    cfg.use_websocket,
+                    cfg.protocol_version,
+                ),
+                None => (false, String::new(), 1883, String::new(), false, false, 3),
+            };
+
+        crate::diagnostics::MqttDiagnostics {
+            configured,
+            connected,
+            host,
+            port,
+            client_id,
+            use_tls,
+            use_websocket,
+            protocol_version,
+            subscriptions,
+            incoming_active,
+            outgoing_active,
+            feed_buffered,
+            feed_buffer_capacity: FEED_BUFFER_MAX,
+            feed_dropped: self.feed_dropped.load(Ordering::SeqCst),
+            topic_stats_count,
+            history_available,
+            history,
+            download_dir: download_dir.to_string_lossy().to_string(),
+            download_dir_writable: false,
+            download_dir_error: None,
+        }
+    }
+
     pub async fn test_connection(config: BrokerConfig) -> Result<u64, String> {
         let rand_suffix: String = uuid::Uuid::new_v4().simple().to_string()[..6].to_string();
         let mut test_cfg = config.clone();
@@ -336,14 +390,22 @@ impl MqttManager {
     pub async fn disconnect(&self) {
         self.is_connected.store(false, Ordering::SeqCst);
 
-        if let Some((handle, flag)) = self.loop_control.lock().await.take() {
-            flag.store(true, Ordering::SeqCst);
-            handle.abort();
-        }
-
+        let control = self.loop_control.lock().await.take();
         let client = self.client.write().await.take();
+        let handle = if let Some((handle, flag)) = control {
+            flag.store(true, Ordering::SeqCst);
+            Some(handle)
+        } else {
+            None
+        };
+
         if let Some(client) = client {
-            client.disconnect().await;
+            let _ = client.disconnect().await;
+        }
+        if let Some(handle) = handle {
+            // Give the event loop a chance to put DISCONNECT on the wire before
+            // cancelling its poll; dropping the timeout future is the fallback abort.
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(500), handle).await;
         }
 
         // Abandon partial incoming transfers (temp files removed, UI notified)
@@ -364,9 +426,12 @@ impl MqttManager {
         self.subscriptions.lock().await.insert(topic.clone(), qos_val);
         self.subscription_hits.lock().await.entry(topic.clone()).or_insert(0);
         if let Some(client) = self.client.read().await.clone() {
-            // Failure here is non-fatal: registration above guarantees the
-            // subscription is (re)applied on the next CONNACK.
-            let _ = client.subscribe(&topic, qos_val).await;
+            // Registration above still guarantees a retry on the next CONNACK,
+            // but surface this attempt's failure so troubleshooters can react.
+            client
+                .subscribe(&topic, qos_val)
+                .await
+                .map_err(|e| format!("Subscribe failed for {topic}: {e}"))?;
         }
         Ok(())
     }
@@ -724,6 +789,7 @@ impl MqttManager {
             qos: params.qos,
             retain: params.retain,
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+            timestamp_ms: chrono::Utc::now().timestamp_millis(),
             direction: "out".to_string(),
         };
         self.push_feed(msg).await;
@@ -786,6 +852,7 @@ impl MqttManager {
                 qos: publish.qos,
                 retain: publish.retain,
                 timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                timestamp_ms: chrono::Utc::now().timestamp_millis(),
                 direction: "in".to_string(),
             };
             self.push_feed(msg).await;
@@ -868,6 +935,7 @@ impl MqttManager {
                 last_emit: Instant::now(),
                 last_bytes: 0,
                 nack_rounds: 0,
+                paused: false,
                 verified: false,
                 finalize_state: FinalizeState::Streaming,
             },
@@ -1201,6 +1269,18 @@ impl MqttManager {
             }
             Err(e) => {
                 let _ = tokio::fs::remove_file(temp_path).await;
+                self.publish_ctrl(
+                    topic_prefix,
+                    transfer_id,
+                    ControlMessage {
+                        msg_type: "ERROR".to_string(),
+                        transfer_id: transfer_id.to_string(),
+                        chunk_index: None,
+                        missing: None,
+                        message: Some(format!("Failed to save file: {e}")),
+                    },
+                )
+                .await;
                 emit_progress(
                     app,
                     transfer_id,
@@ -1314,6 +1394,76 @@ impl MqttManager {
             Err(_) => return,
         };
         if ctrl.transfer_id != transfer_id || transfer_id.is_empty() {
+            return;
+        }
+
+        enum IncomingAction {
+            StateChanged,
+            Cancelled {
+                temp_path: PathBuf,
+                topic_prefix: String,
+                file_name: String,
+                sha: String,
+            },
+        }
+
+        // Sender-originated lifecycle controls target an incoming transfer.
+        let incoming_action = {
+            let mut incoming = self.incoming_transfers.lock().await;
+            match incoming.get_mut(&ctrl.transfer_id) {
+                Some(entry) => match ctrl.msg_type.as_str() {
+                    "PAUSE" => {
+                        entry.paused = true;
+                        entry.last_update = Instant::now();
+                        Some(IncomingAction::StateChanged)
+                    }
+                    "RESUME" => {
+                        entry.paused = false;
+                        entry.last_update = Instant::now();
+                        Some(IncomingAction::StateChanged)
+                    }
+                    "CANCEL" => {
+                        let action = IncomingAction::Cancelled {
+                            temp_path: entry.temp_path.clone(),
+                            topic_prefix: entry.topic_prefix.clone(),
+                            file_name: entry.meta.file_name.clone(),
+                            sha: entry.meta.sha256.clone(),
+                        };
+                        incoming.remove(&ctrl.transfer_id);
+                        Some(action)
+                    }
+                    _ => None,
+                },
+                None => None,
+            }
+        };
+
+        if let Some(action) = incoming_action {
+            if let IncomingAction::Cancelled {
+                temp_path,
+                topic_prefix,
+                file_name,
+                sha,
+            } = action
+            {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                emit_progress(
+                    app,
+                    transfer_id,
+                    &topic_prefix,
+                    &file_name,
+                    "receive",
+                    0,
+                    0,
+                    0,
+                    0,
+                    0.0,
+                    "cancelled",
+                    Some("Cancelled by sender".to_string()),
+                    &sha,
+                    None,
+                );
+            }
             return;
         }
 
@@ -1576,6 +1726,12 @@ impl MqttManager {
                 let mut paused_now = false;
                 while paused.load(Ordering::SeqCst) {
                     if cancelled.load(Ordering::SeqCst) {
+                        emit_progress(
+                            &app_handle, &tid, &prefix_for_chunks, &file_name, "send",
+                            bytes_sent, file_size, chunk_idx, total_chunks, 0.0, "cancelled",
+                            Some("Transfer cancelled by sender".to_string()), &sha256_hash,
+                            Some(file_path_str.clone()),
+                        );
                         return;
                     }
                     if !paused_now {
@@ -1654,25 +1810,78 @@ impl MqttManager {
         Ok(transfer_id)
     }
 
+    /// Lifecycle controls use the same per-transfer ctrl topic as
+    /// NACK/COMPLETED/ERROR, so both peers can react without a second channel.
     pub async fn pause_transfer(&self, transfer_id: &str) {
-        let outgoing = self.outgoing_transfers.lock().await;
-        if let Some(trans) = outgoing.get(transfer_id) {
-            trans.paused.store(true, Ordering::SeqCst);
+        let prefix = {
+            let outgoing = self.outgoing_transfers.lock().await;
+            outgoing.get(transfer_id).map(|trans| {
+                trans.paused.store(true, Ordering::SeqCst);
+                trans.ctx.topic_prefix.clone()
+            })
+        };
+        if let Some(prefix) = prefix {
+            self.publish_ctrl(
+                &prefix,
+                transfer_id,
+                ControlMessage {
+                    msg_type: "PAUSE".to_string(),
+                    transfer_id: transfer_id.to_string(),
+                    chunk_index: None,
+                    missing: None,
+                    message: None,
+                },
+            )
+            .await;
         }
     }
 
     pub async fn resume_transfer(&self, transfer_id: &str) {
-        let outgoing = self.outgoing_transfers.lock().await;
-        if let Some(trans) = outgoing.get(transfer_id) {
-            trans.paused.store(false, Ordering::SeqCst);
+        let prefix = {
+            let outgoing = self.outgoing_transfers.lock().await;
+            outgoing.get(transfer_id).map(|trans| {
+                trans.paused.store(false, Ordering::SeqCst);
+                trans.ctx.topic_prefix.clone()
+            })
+        };
+        if let Some(prefix) = prefix {
+            self.publish_ctrl(
+                &prefix,
+                transfer_id,
+                ControlMessage {
+                    msg_type: "RESUME".to_string(),
+                    transfer_id: transfer_id.to_string(),
+                    chunk_index: None,
+                    missing: None,
+                    message: None,
+                },
+            )
+            .await;
         }
     }
 
     pub async fn cancel_transfer(&self, transfer_id: &str) {
-        let outgoing = self.outgoing_transfers.lock().await;
-        if let Some(trans) = outgoing.get(transfer_id) {
-            trans.cancelled.store(true, Ordering::SeqCst);
-            trans.paused.store(false, Ordering::SeqCst);
+        let prefix = {
+            let outgoing = self.outgoing_transfers.lock().await;
+            outgoing.get(transfer_id).map(|trans| {
+                trans.cancelled.store(true, Ordering::SeqCst);
+                trans.paused.store(false, Ordering::SeqCst);
+                trans.ctx.topic_prefix.clone()
+            })
+        };
+        if let Some(prefix) = prefix {
+            self.publish_ctrl(
+                &prefix,
+                transfer_id,
+                ControlMessage {
+                    msg_type: "CANCEL".to_string(),
+                    transfer_id: transfer_id.to_string(),
+                    chunk_index: None,
+                    missing: None,
+                    message: Some("Cancelled by sender".to_string()),
+                },
+            )
+            .await;
         }
     }
 
@@ -1873,6 +2082,11 @@ async fn run_watchdog(
             };
             if entry.finalize_state != FinalizeState::Streaming {
                 return;
+            }
+
+            if entry.paused {
+                entry.last_update = Instant::now();
+                continue;
             }
 
             let stale_secs = entry.last_update.elapsed().as_secs();

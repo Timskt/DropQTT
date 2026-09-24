@@ -18,6 +18,7 @@ import { BridgePanel } from './components/bridge/BridgePanel';
 import { HistoryPanel } from './components/history/HistoryPanel';
 import { SettingsModal } from './components/SettingsModal';
 import { ToastHost } from './components/ToastHost';
+import { OpsPanel } from './components/ops/OpsPanel';
 
 import { BrokerConfig } from './types';
 import { Language, translations } from './i18n';
@@ -37,7 +38,9 @@ export function App() {
   // ---- Workspace preferences (raw-string localStorage keys, back-compat) ----
   const [modeStr, setModeStr] = usePersistentString('dropqtt_workspace_mode', 'transfer');
   const activeMode: WorkspaceMode =
-    modeStr === 'mqttx' || modeStr === 'bridge' || modeStr === 'history' ? modeStr : 'transfer';
+    modeStr === 'mqttx' || modeStr === 'bridge' || modeStr === 'history' || modeStr === 'ops'
+      ? modeStr
+      : 'transfer';
 
   const [langStr, setLangStr] = usePersistentString('dropqtt_lang', 'zh-CN');
   const lang = langStr as Language;
@@ -50,6 +53,10 @@ export function App() {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   // ---- File-transfer topic configuration ----
   const [publishTopic, setPublishTopic] = usePersistentString('dropqtt_publish_topic', 'dropqtt/public-lobby');
@@ -169,7 +176,8 @@ export function App() {
   const isV5 = (broker.config.protocolVersion ?? 3) === 5;
 
   return (
-    <div className="min-h-screen flex overflow-hidden font-sans select-none">
+    <div className="min-h-screen flex overflow-hidden font-sans">
+      <a href="#main-content" className="skip-link select-none">{t.skipToContent}</a>
       {/* 1. Left Vertical Dock Navigation */}
       <Sidebar
         activeMode={activeMode}
@@ -226,8 +234,19 @@ export function App() {
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto p-4 space-y-4">
-          {activeMode === 'history' ? (
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto p-4 space-y-4 outline-none">
+          {activeMode === 'ops' ? (
+            <OpsPanel
+              t={t}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenConsole={() => setModeStr('mqttx')}
+              onOpenHistory={() => setModeStr('history')}
+              onToggleConnect={broker.toggleConnect}
+              isConnecting={broker.isConnecting}
+              onTestLatency={() => broker.testLatency(broker.config)}
+              isTestingLatency={broker.isTestingLatency}
+            />
+          ) : activeMode === 'history' ? (
             /* Mode 4: Persistent message history */
             <HistoryPanel
               t={t}
@@ -244,7 +263,7 @@ export function App() {
           ) : activeMode === 'transfer' ? (
             /* Mode 1: File Transfer Hub */
             <div className="space-y-4 max-w-6xl mx-auto">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="workspace-two-col">
                 <BatchSender
                   publishTopic={publishTopic}
                   setPublishTopic={setPublishTopic}

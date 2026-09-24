@@ -596,7 +596,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
         </div>
 
         {/* Editor + optional live preview */}
-        <div className={canPreview && layout === 'split' ? 'grid grid-cols-1 lg:grid-cols-2 gap-2' : 'space-y-2'}>
+        <div className={canPreview && layout === 'split' ? 'workspace-split' : 'space-y-2'}>
           {(layout === 'code' || layout === 'split') && (
             <textarea
               ref={textareaRef}
@@ -614,7 +614,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                   : '{"key": "value"}'
               }
               className="w-full field-input resize-y text-xs leading-relaxed"
-              style={{ background: 'var(--bg-code)', color: '#d3dae6', minHeight: '12rem' }}
+              style={{ background: 'var(--bg-code)', color: 'var(--code-text)', minHeight: '12rem' }}
             />
           )}
 

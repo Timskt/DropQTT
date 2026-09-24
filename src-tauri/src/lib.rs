@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod diagnostics;
 pub mod history;
 pub mod mqtt_manager;
 pub mod protocol;
@@ -69,6 +70,16 @@ async fn test_broker_connection(config: BrokerConfig) -> Result<u64, String> {
 #[tauri::command]
 async fn get_connection_status(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
     Ok(state.mqtt.get_connection_status().await)
+}
+
+/// Sanitized runtime snapshot for the operations workspace and support reports.
+#[tauri::command]
+async fn get_diagnostics_snapshot(
+    state: State<'_, AppState>,
+) -> Result<diagnostics::DiagnosticsSnapshot, String> {
+    let mqtt = state.mqtt.diagnostics_snapshot().await;
+    let bridge = state.bridge.diagnostics_snapshot().await;
+    Ok(diagnostics::build_snapshot(mqtt, bridge))
 }
 
 #[tauri::command]
@@ -388,6 +399,7 @@ pub fn run() {
             disconnect_broker,
             test_broker_connection,
             get_connection_status,
+            get_diagnostics_snapshot,
             start_send_file,
             pause_transfer,
             resume_transfer,
