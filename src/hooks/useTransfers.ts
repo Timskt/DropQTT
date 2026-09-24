@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import confetti from 'canvas-confetti';
 import { TransferProgress } from '../types';
+import { runWithToast } from '../utils/toast';
 
 /**
  * Transfer queue state: progress events from the backend, send/receive
@@ -54,27 +55,27 @@ export function useTransfers() {
   }, []);
 
   const approveTransfer = useCallback(async (transferId: string) => {
-    await invoke('approve_transfer', { transferId });
+    await runWithToast(() => invoke('approve_transfer', { transferId }), 'Approve failed');
   }, []);
 
   const rejectTransfer = useCallback(async (transferId: string) => {
-    await invoke('reject_transfer', { transferId });
+    await runWithToast(() => invoke('reject_transfer', { transferId }), 'Reject failed');
   }, []);
 
   const pauseTransfer = useCallback(async (transferId: string) => {
-    await invoke('pause_transfer', { transferId });
+    await runWithToast(() => invoke('pause_transfer', { transferId }), 'Pause failed');
   }, []);
 
   const resumeTransfer = useCallback(async (transferId: string) => {
-    await invoke('resume_transfer', { transferId });
+    await runWithToast(() => invoke('resume_transfer', { transferId }), 'Resume failed');
   }, []);
 
   const cancelTransfer = useCallback(async (transferId: string) => {
-    await invoke('cancel_transfer', { transferId });
+    await runWithToast(() => invoke('cancel_transfer', { transferId }), 'Cancel failed');
   }, []);
 
   const revealFile = useCallback(async (path: string) => {
-    await invoke('reveal_file', { filePath: path });
+    await runWithToast(() => invoke('reveal_file', { filePath: path }), 'Reveal failed');
   }, []);
 
   const clearFinished = useCallback(() => {

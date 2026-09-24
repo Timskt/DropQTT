@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod history;
 pub mod mqtt_manager;
 pub mod protocol;
 pub mod transport;
@@ -25,8 +26,23 @@ async fn get_default_download_dir(state: State<'_, AppState>) -> Result<String, 
 
 #[tauri::command]
 async fn set_download_dir(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    state.mqtt.set_download_dir(PathBuf::from(path)).await;
+    let p = PathBuf::from(&path);
+    // Only accept an existing directory — reject traversal to arbitrary targets.
+    if !p.is_dir() {
+        return Err("Download path must be an existing directory".to_string());
+    }
+    state.mqtt.set_download_dir(p).await;
     Ok(())
+}
+
+/// Stat a local file's size (used by the batch sender to show real totals).
+#[tauri::command]
+async fn file_size(path: String) -> Result<u64, String> {
+    let md = std::fs::metadata(&path).map_err(|e| format!("stat failed: {e}"))?;
+    if !md.is_file() {
+        return Err("path is not a regular file".to_string());
+    }
+    Ok(md.len())
 }
 
 #[tauri::command]
@@ -64,6 +80,11 @@ async fn start_send_file(
     qos: u8,
     custom_publish_topic: Option<String>,
 ) -> Result<String, String> {
+    let p = std::path::Path::new(&file_path);
+    // Reject non-existent / non-regular-file targets before touching the wire.
+    if !p.is_file() {
+        return Err("File to send does not exist".to_string());
+    }
     let manager = state.mqtt.clone();
     manager
         .send_file(app, file_path, chunk_size, qos, custom_publish_topic)
@@ -142,6 +163,51 @@ async fn set_topic_stats_cap(state: State<'_, AppState>, cap: usize) -> Result<(
 #[tauri::command]
 async fn get_topic_stats_cap(state: State<'_, AppState>) -> Result<usize, String> {
     Ok(state.mqtt.get_topic_stats_cap())
+}
+
+/// Broker `$SYS` health metrics (version / uptime / connections / msg rates)
+#[tauri::command]
+async fn get_broker_sys(state: State<'_, AppState>) -> Result<Vec<mqtt_manager::SysRow>, String> {
+    Ok(state.mqtt.get_broker_sys().await)
+}
+
+#[tauri::command]
+async fn clear_broker_sys(state: State<'_, AppState>) -> Result<(), String> {
+    state.mqtt.clear_broker_sys().await;
+    Ok(())
+}
+
+/// Search persisted message history (SQLite) by topic/payload text + direction
+#[tauri::command]
+async fn query_history(
+    state: State<'_, AppState>,
+    search: String,
+    direction: String,
+    limit: i64,
+) -> Result<Vec<history::HistoryRow>, String> {
+    Ok(state.mqtt.query_history(&search, &direction, limit).await)
+}
+
+/// Per-bucket message counts for the history trend chart
+#[tauri::command]
+async fn history_series(
+    state: State<'_, AppState>,
+    topic: String,
+    bucket_ms: i64,
+    since_ms: i64,
+) -> Result<Vec<history::HistorySeriesPoint>, String> {
+    Ok(state.mqtt.history_series(&topic, bucket_ms, since_ms).await)
+}
+
+#[tauri::command]
+async fn history_stats(state: State<'_, AppState>) -> Result<history::HistoryStats, String> {
+    Ok(state.mqtt.history_stats().await)
+}
+
+#[tauri::command]
+async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
+    state.mqtt.clear_history().await;
+    Ok(())
 }
 
 /// Built-in publish stress generator (loops back through our own subscription,
@@ -275,12 +341,13 @@ async fn bridge_test_transform(
 async fn reveal_file(app: AppHandle, file_path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let path = std::path::Path::new(&file_path);
-    if let Some(parent) = path.parent() {
-        let _ = app.opener().open_path(parent.to_string_lossy().as_ref(), None::<&str>);
-    } else {
-        let _ = app.opener().open_path(&file_path, None::<&str>);
+    if !path.exists() {
+        return Err("Path does not exist".to_string());
     }
-    Ok(())
+    let target = path.parent().unwrap_or(path).to_string_lossy().to_string();
+    app.opener()
+        .open_path(&target, None::<&str>)
+        .map_err(|e| format!("Failed to reveal: {}", e))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -298,17 +365,25 @@ pub fn run() {
             bridge: bridge_manager,
         })
         .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(debug_assertions)]
-                window.open_devtools();
-                #[cfg(not(debug_assertions))]
-                let _ = window;
+            // Open the persistent message-history DB under app data dir and
+            // attach it to the MQTT manager (best-effort; failure is non-fatal).
+            match app.path().app_data_dir() {
+                Ok(data_dir) => {
+                    let _ = std::fs::create_dir_all(&data_dir);
+                    let db_path = data_dir.join("dropqtt_history.db");
+                    match history::HistoryStore::open(&db_path) {
+                        Ok(store) => app.state::<AppState>().mqtt.attach_history(Arc::new(store)),
+                        Err(e) => eprintln!("[dropqtt] history store unavailable: {e}"),
+                    }
+                }
+                Err(e) => eprintln!("[dropqtt] app data dir unavailable: {e}"),
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_default_download_dir,
             set_download_dir,
+            file_size,
             connect_broker,
             disconnect_broker,
             test_broker_connection,
@@ -323,6 +398,12 @@ pub fn run() {
             reset_subscription_stats,
             get_topic_stats,
             reset_topic_stats,
+            get_broker_sys,
+            clear_broker_sys,
+            query_history,
+            history_series,
+            history_stats,
+            clear_history,
             set_topic_stats_cap,
             get_topic_stats_cap,
             start_bench,

@@ -10,6 +10,9 @@ pub struct BrokerConfig {
     pub host: String,
     pub port: u16,
     pub use_tls: bool,
+    /// Route the connection over WebSocket / WSS instead of raw TCP
+    #[serde(default)]
+    pub use_websocket: bool,
     pub client_id: String,
     pub username: Option<String>,
     pub password: Option<String>,
@@ -22,6 +25,26 @@ pub struct BrokerConfig {
     /// MQTT 3.1.1 clean_session / MQTT 5 clean_start
     #[serde(default = "default_clean_session")]
     pub clean_session: bool,
+    // ---- Last Will & Testament (LWT) ----
+    /// Will topic; when set with a non-empty value a WILL FLAG is sent on CONNECT
+    #[serde(default)]
+    pub will_topic: Option<String>,
+    #[serde(default)]
+    pub will_payload: Option<String>,
+    #[serde(default)]
+    pub will_qos: u8,
+    #[serde(default)]
+    pub will_retain: bool,
+    // ---- mTLS / custom trust ----
+    /// PEM CA bundle path for server verification (empty => system root store)
+    #[serde(default)]
+    pub tls_ca_path: Option<String>,
+    /// PEM client certificate path (mutual TLS)
+    #[serde(default)]
+    pub tls_client_cert_path: Option<String>,
+    /// PEM client private key path (mutual TLS)
+    #[serde(default)]
+    pub tls_client_key_path: Option<String>,
 }
 
 fn default_clean_session() -> bool {
@@ -35,6 +58,7 @@ impl Default for BrokerConfig {
             host: "broker.emqx.io".to_string(),
             port: 1883,
             use_tls: false,
+            use_websocket: false,
             client_id: format!("DropQTT_{}", rand_suffix),
             username: None,
             password: None,
@@ -43,6 +67,13 @@ impl Default for BrokerConfig {
             base_topic: Some("dropqtt".to_string()),
             protocol_version: 3,
             clean_session: true,
+            will_topic: None,
+            will_payload: None,
+            will_qos: 0,
+            will_retain: false,
+            tls_ca_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
         }
     }
 }

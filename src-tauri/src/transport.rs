@@ -10,6 +10,68 @@ use rumqttc::{MqttOptions, QoS, Transport as RumqttcTransport};
 
 use crate::protocol::{BrokerConfig, PubProperties};
 
+/// Resolve the transport for a config across the four combinations:
+/// plain TCP, TLS (mTLS-capable), WebSocket, and WSS (TLS over WebSocket).
+/// Returns `None` for a plain TCP connection.
+fn build_transport(config: &BrokerConfig) -> Option<RumqttcTransport> {
+    if !config.use_tls && !config.use_websocket {
+        return None;
+    }
+
+    // Optional custom CA + client cert/key (mutual TLS) material.
+    let ca_bytes = config
+        .tls_ca_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|p| match std::fs::read(p) {
+            Ok(ca) => Some(ca),
+            Err(e) => {
+                eprintln!("[dropqtt] CA file '{}' unreadable ({e}); using system roots", p);
+                None
+            }
+        });
+    let client_auth = match (
+        config.tls_client_cert_path.as_deref().map(str::trim),
+        config.tls_client_key_path.as_deref().map(str::trim),
+    ) {
+        (Some(cert), Some(key)) if !cert.is_empty() && !key.is_empty() => {
+            match (std::fs::read(cert), std::fs::read(key)) {
+                (Ok(c), Ok(k)) => Some((c, k)),
+                _ => {
+                    eprintln!("[dropqtt] mTLS client cert/key unreadable; connecting without client auth");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
+    if config.use_websocket {
+        // Plain WebSocket needs no TLS material.
+        if !config.use_tls {
+            return Some(RumqttcTransport::Ws);
+        }
+        let transport = match ca_bytes {
+            Some(ca) => RumqttcTransport::wss(ca, client_auth, None),
+            None => RumqttcTransport::wss_with_default_config(),
+        };
+        return Some(transport);
+    }
+
+    // TCP + TLS
+    let transport = match ca_bytes {
+        Some(ca) => RumqttcTransport::tls(ca, client_auth, None),
+        None => RumqttcTransport::tls_with_default_config(),
+    };
+    Some(transport)
+}
+
+/// Whether a non-empty will topic is configured (WILL FLAG should be set).
+fn will_active(topic: &Option<String>) -> bool {
+    topic.as_deref().map(str::trim).is_some_and(|t| !t.is_empty())
+}
+
 /// A normalized incoming publish, independent of protocol version.
 #[derive(Debug, Clone)]
 pub struct NormalizedPublish {
@@ -99,8 +161,17 @@ pub fn build_connection(config: &BrokerConfig) -> (MqttClient, MqttEventLoop) {
                 opts.set_credentials(u, p);
             }
         }
-        if config.use_tls {
-            opts.set_transport(RumqttcTransport::tls_with_default_config());
+        if will_active(&config.will_topic) {
+            opts.set_last_will(rumqttc::v5::mqttbytes::v5::LastWill::new(
+                config.will_topic.clone().unwrap_or_default(),
+                config.will_payload.clone().unwrap_or_default(),
+                qos_from_u8_v5(config.will_qos),
+                config.will_retain,
+                None,
+            ));
+        }
+        if let Some(transport) = build_transport(config) {
+            opts.set_transport(transport);
         }
 
         let (client, eventloop) = rumqttc::v5::AsyncClient::new(opts, 100);
@@ -116,8 +187,16 @@ pub fn build_connection(config: &BrokerConfig) -> (MqttClient, MqttEventLoop) {
                 opts.set_credentials(u, p);
             }
         }
-        if config.use_tls {
-            opts.set_transport(RumqttcTransport::tls_with_default_config());
+        if will_active(&config.will_topic) {
+            opts.set_last_will(rumqttc::LastWill::new(
+                config.will_topic.clone().unwrap_or_default(),
+                config.will_payload.clone().unwrap_or_default(),
+                qos_from_u8(config.will_qos),
+                config.will_retain,
+            ));
+        }
+        if let Some(transport) = build_transport(config) {
+            opts.set_transport(transport);
         }
 
         let (client, eventloop) = rumqttc::AsyncClient::new(opts, 100);

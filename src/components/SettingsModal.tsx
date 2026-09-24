@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { BrokerConfig, BROKER_PRESETS, BrokerProfile } from '../types';
 import { Language, Translations } from '../i18n';
 import { Theme } from '../themes';
@@ -31,6 +32,16 @@ const OPT_STYLE = { background: 'var(--bg-panel-solid)', color: 'var(--text-prim
 const LABEL = 'block text-xs font-semibold mb-1.5';
 const LABEL_COLOR = { color: 'var(--text-secondary)' };
 
+/** Pick a PEM file, storing its absolute path on the config */
+const pickFile = async (onPath: (p: string) => void) => {
+  try {
+    const sel = await open({ multiple: false, directory: false });
+    if (typeof sel === 'string' && sel) onPath(sel);
+  } catch {
+    /* dialog cancelled or unavailable in browser dev */
+  }
+};
+
 /** Token-driven peer toggle switch */
 const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; onVar?: string }> = ({
   checked, onChange, onVar = 'var(--accent)',
@@ -45,6 +56,22 @@ const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; onVar
       }}
     />
   </label>
+);
+
+/** Read-only PEM path row with Browse / Clear */
+const CertRow: React.FC<{
+  label: string; path?: string; onPick: () => void; onClear: () => void; browse: string; clear: string;
+}> = ({ label, path, onPick, onClear, browse, clear }) => (
+  <div className="flex items-center gap-2">
+    <span className="w-24 shrink-0 text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>{label}</span>
+    <span className="flex-1 inset-box px-2 py-1 text-[11px] font-mono truncate" style={{ color: path ? 'var(--text-primary)' : 'var(--text-muted)' }} title={path}>
+      {path || '—'}
+    </span>
+    <button type="button" onClick={onPick} className="btn-ghost !px-2 !py-1 text-[11px]">{browse}</button>
+    {path && (
+      <button type="button" onClick={onClear} className="btn-ghost !px-2 !py-1 text-[11px]" style={{ color: 'var(--bad)' }}>{clear}</button>
+    )}
+  </div>
 );
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -65,6 +92,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, config]);
+
+  // Escape closes the dialog (a11y).
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -107,8 +144,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}>
-      <div className="panel w-full max-w-xl rounded-2xl overflow-hidden max-h-[90vh] flex flex-col" style={{ background: 'var(--bg-panel-solid)', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="panel w-full max-w-xl rounded-2xl overflow-hidden max-h-[90vh] flex flex-col" role="dialog" aria-modal="true" aria-label={t.brokerConfig} style={{ background: 'var(--bg-panel-solid)', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border-panel)', background: 'var(--bg-inset)' }}>
           <div className="flex items-center gap-2 font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -212,6 +255,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Transport: TCP vs WebSocket */}
+          <div className="flex items-center justify-between inset-box px-3 py-2">
+            <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+              <Activity className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} /><span>{t.transport}</span>
+            </span>
+            <div className="seg-box">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, useWebsocket: false })}
+                className="px-2.5 py-1 rounded text-[11px] transition"
+                style={!form.useWebsocket ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)', color: 'var(--accent)', fontWeight: 600 } : { color: 'var(--text-secondary)' }}
+              >
+                {t.transportTcp}
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, useWebsocket: true })}
+                className="px-2.5 py-1 rounded text-[11px] transition"
+                style={form.useWebsocket ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)', color: 'var(--accent)', fontWeight: 600 } : { color: 'var(--text-secondary)' }}
+              >
+                {t.transportWs}
+              </button>
+            </div>
+          </div>
+
           {/* Protocol Version & Clean Session */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -242,6 +310,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
             <Toggle checked={form.useTls} onChange={(v) => { setForm({ ...form, useTls: v }); setTestResult(null); }} />
+          </div>
+
+          {/* Advanced: Last Will & mTLS trust */}
+          <div className="inset-box p-3.5 space-y-3">
+            <div className="ui-label font-semibold">{t.advancedConn}</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className={LABEL} style={LABEL_COLOR}>{t.willTopic}</label>
+                <input type="text" value={form.willTopic || ''} onChange={(e) => setForm({ ...form, willTopic: e.target.value || undefined })} className="field-input w-full font-mono" placeholder="device/{id}/status" />
+              </div>
+              <div>
+                <label className={LABEL} style={LABEL_COLOR}>{t.willPayload}</label>
+                <input type="text" value={form.willPayload || ''} onChange={(e) => setForm({ ...form, willPayload: e.target.value || undefined })} className="field-input w-full font-mono" placeholder="offline" />
+              </div>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <label className={LABEL} style={LABEL_COLOR}>{t.willQos}</label>
+                  <select value={form.willQos ?? 0} onChange={(e) => setForm({ ...form, willQos: Number(e.target.value) })} className="field-input w-full">
+                    {[0, 1, 2].map((q) => (<option key={q} value={q} style={OPT_STYLE}>QoS {q}</option>))}
+                  </select>
+                </div>
+                <label className="flex items-center gap-1.5 text-[11px] pb-2 cursor-pointer shrink-0" style={{ color: 'var(--text-secondary)' }}>
+                  <input type="checkbox" checked={form.willRetain ?? false} onChange={(e) => setForm({ ...form, willRetain: e.target.checked })} className="rounded" style={{ accentColor: 'var(--accent)' }} />
+                  {t.willRetain}
+                </label>
+              </div>
+            </div>
+            {form.useTls && (
+              <div className="grid grid-cols-1 gap-2 pt-2" style={{ borderTop: '1px solid var(--border-inset)' }}>
+                <CertRow label={t.tlsCaCert} path={form.tlsCaPath} onPick={() => pickFile((p) => setForm({ ...form, tlsCaPath: p }))} onClear={() => setForm({ ...form, tlsCaPath: undefined })} browse={t.browse} clear={t.clear} />
+                <CertRow label={t.clientCert} path={form.tlsClientCertPath} onPick={() => pickFile((p) => setForm({ ...form, tlsClientCertPath: p }))} onClear={() => setForm({ ...form, tlsClientCertPath: undefined })} browse={t.browse} clear={t.clear} />
+                <CertRow label={t.clientKey} path={form.tlsClientKeyPath} onPick={() => pickFile((p) => setForm({ ...form, tlsClientKeyPath: p }))} onClear={() => setForm({ ...form, tlsClientKeyPath: undefined })} browse={t.browse} clear={t.clear} />
+              </div>
+            )}
           </div>
 
           {/* Base Topic & Client ID */}
@@ -326,7 +428,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <p className="text-xs font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
                 <RefreshCw className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} /><span>{t.autoUpdate}</span>
               </p>
-              <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{updateStatusText || `${t.currentVersion}: v0.7.0`}</p>
+              <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{updateStatusText || `${t.currentVersion}: v${__APP_VERSION__}`}</p>
             </div>
             <button type="button" onClick={onCheckUpdate} className="btn-ghost !px-3 !py-1.5 text-xs font-medium">{t.checkForUpdates}</button>
           </div>

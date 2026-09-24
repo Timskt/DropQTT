@@ -81,6 +81,7 @@ const IconAction: React.FC<{ title: string; hoverVar: string; onClick: () => voi
   <button
     onClick={onClick}
     title={title}
+    aria-label={title}
     className="p-1 rounded transition"
     style={{ color: 'var(--text-muted)' }}
     onMouseEnter={(e) => (e.currentTarget.style.color = hoverVar)}

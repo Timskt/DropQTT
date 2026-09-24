@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ConsolePublishParams, FeedBatch, MqttGenericMessage, TopicSubscription } from '../types';
 import { usePersistentState } from './usePersistentState';
+import { toast } from '../utils/toast';
 
 const MAX_MESSAGES = 500;
 
@@ -92,7 +93,7 @@ export function useMqttMessages(isConnected: boolean) {
       );
       if (connectedRef.current) {
         await invoke('subscribe_topic', { topic: trimmed, qos }).catch((e) => {
-          console.error('Subscribe error:', e);
+          toast.error(`订阅失败 ${trimmed}: ${e instanceof Error ? e.message : String(e)}`);
         });
       }
     },

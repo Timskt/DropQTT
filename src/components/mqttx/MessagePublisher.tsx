@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, Trash2, Sparkles, Code2, CheckCircle2, Sliders, Eye, Columns2, Eraser } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Send, Trash2, Sparkles, Code2, CheckCircle2, Sliders, Eye, Columns2, Eraser, Timer, Square, Play } from 'lucide-react';
 import { ConsolePublishParams, PubProperties } from '../../types';
 import { Translations } from '../../i18n';
 import { PAYLOAD_FORMATS, PayloadError, PayloadFormat, payloadToBytes } from '../../utils/payload';
+import { renderTemplate, TEMPLATE_TOKENS } from '../../utils/template';
 import { uint8ToBase64 } from '../../utils/cbor';
 import { usePersistentState } from '../../hooks/usePersistentState';
 import { HtmlPreview, MarkdownView } from './RichText';
@@ -100,6 +101,14 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   const [messageExpiry, setMessageExpiry] = useState<string>('');
   const [userProps, setUserProps] = useState<[string, string][]>([]);
 
+  // Auto-publish (scheduled / loop) + template counter
+  const [showLoop, setShowLoop] = useState(false);
+  const [loopOn, setLoopOn] = useState(false);
+  const [loopIntervalSec, setLoopIntervalSec] = useState<number>(2);
+  const [loopCount, setLoopCount] = useState<number>(0); // 0 = infinite
+  const [loopSent, setLoopSent] = useState<number>(0);
+  const counterRef = useRef(0);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const payload = payloadByFormat[format] ?? '';
@@ -133,12 +142,14 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   const previewKind = format === 'markdown' ? 'md' : format === 'html' ? 'html' : format === 'json' ? 'json' : null;
   const canPreview = previewKind !== null;
 
-  const doPublish = async () => {
-    if (!topic.trim() || !connected || isPublishing) return;
-    setIsPublishing(true);
-    setErrorText(null);
+  // Core send: renders ${...} template tokens against the running counter.
+  // Returns true on success so both manual and loop callers can react.
+  const publishNow = useCallback(async (increment = false): Promise<boolean> => {
+    if (!topic.trim() || !connected) return false;
+    if (increment) counterRef.current += 1;
     try {
-      const bytes = payloadToBytes(format as PayloadFormat, payload);
+      const rendered = renderTemplate(payload, counterRef.current);
+      const bytes = payloadToBytes(format as PayloadFormat, rendered);
       const props: PubProperties = {
         contentType: contentType.trim() || PAYLOAD_FORMATS.find((f) => f.id === format)?.contentType,
         userProperties: userProps.filter(([k]) => k.trim().length > 0),
@@ -151,15 +162,76 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
         retain,
         properties: props,
       });
-      setSuccessToast(true);
-      setTimeout(() => setSuccessToast(false), 2000);
-      // Track recently used topics (dedup, most-recent-first, cap 8)
       setRecentTopics((prev) => [topic.trim(), ...prev.filter((tp) => tp !== topic.trim())].slice(0, 8));
+      return true;
     } catch (err) {
       setErrorText(err instanceof PayloadError ? err.message : String(err));
-    } finally {
-      setIsPublishing(false);
+      setLoopOn(false);
+      return false;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic, connected, payload, format, contentType, userProps, messageExpiry, qos, retain]);
+
+  const doPublish = async () => {
+    if (!topic.trim() || !connected || isPublishing) return;
+    setIsPublishing(true);
+    setErrorText(null);
+    const ok = await publishNow();
+    if (ok) {
+      setSuccessToast(true);
+      setTimeout(() => setSuccessToast(false), 2000);
+    }
+    setIsPublishing(false);
+  };
+
+  // Loop timer: fires publishNow(true) every interval while enabled.
+  useEffect(() => {
+    if (!loopOn) return;
+    if (!connected) {
+      setLoopOn(false);
+      return;
+    }
+    const ms = Math.max(200, loopIntervalSec * 1000);
+    const iv = setInterval(async () => {
+      const ok = await publishNow(true);
+      if (ok) {
+        setLoopSent((n) => {
+          const next = n + 1;
+          if (loopCount > 0 && next >= loopCount) setLoopOn(false);
+          return next;
+        });
+      }
+    }, ms);
+    return () => clearInterval(iv);
+  }, [loopOn, connected, loopIntervalSec, loopCount, publishNow]);
+
+  // Stop looping if the panel unmounts or connection drops mid-run.
+  useEffect(() => {
+    if (!connected) setLoopOn(false);
+  }, [connected]);
+
+  const startLoop = () => {
+    counterRef.current = 0;
+    setLoopSent(0);
+    setErrorText(null);
+    setLoopOn(true);
+  };
+
+  // Insert a template token at the textarea cursor.
+  const insertToken = (token: string) => {
+    const el = textareaRef.current;
+    if (!el) {
+      setPayload(payload + token);
+      return;
+    }
+    const start = el.selectionStart ?? payload.length;
+    const end = el.selectionEnd ?? payload.length;
+    const next = payload.slice(0, start) + token + payload.slice(end);
+    setPayload(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.selectionStart = el.selectionEnd = start + token.length;
+    });
   };
 
   const handlePublish = async (e: React.FormEvent) => {
@@ -198,6 +270,17 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
         </span>
 
         <div className="flex items-center space-x-3">
+          <button
+            type="button"
+            onClick={() => setShowLoop((v) => !v)}
+            className={`flex items-center space-x-1 px-2 py-0.5 rounded border text-[10px] transition ${showLoop ? 'font-semibold' : 'opacity-70'}`}
+            style={{ borderColor: loopOn ? 'var(--success)' : 'var(--border-panel)', color: loopOn ? 'var(--success)' : 'var(--accent)' }}
+            title={t.autoPublish}
+          >
+            <Timer className="w-3 h-3" />
+            <span>{t.autoPublish}</span>
+            {loopOn && <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--success)' }} />}
+          </button>
           {isV5 && (
             <button
               type="button"
@@ -282,6 +365,49 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
             <span>{t.retain}</span>
           </label>
         </div>
+
+        {/* Auto-publish (scheduled / loop) control */}
+        {showLoop && (
+          <div className="inset-box p-3 animate-fade-in">
+            <div className="flex flex-wrap items-end gap-3 text-[11px]">
+              <div>
+                <label className="block mb-1" style={{ color: 'var(--text-secondary)' }}>{t.publishInterval}</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number" min={0.2} step={0.1} value={loopIntervalSec}
+                    disabled={loopOn}
+                    onChange={(e) => setLoopIntervalSec(Math.max(0.2, Number(e.target.value) || 1))}
+                    className="field-input w-20"
+                  />
+                  <span style={{ color: 'var(--text-muted)' }}>s</span>
+                </div>
+              </div>
+              <div>
+                <label className="block mb-1" style={{ color: 'var(--text-secondary)' }}>{t.publishCount}</label>
+                <input
+                  type="number" min={0} step={1} value={loopCount}
+                  disabled={loopOn}
+                  onChange={(e) => setLoopCount(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="field-input w-20"
+                  title={t.publishCountHint}
+                />
+              </div>
+              {loopOn ? (
+                <button type="button" onClick={() => setLoopOn(false)} className="btn-ghost flex items-center gap-1.5 !py-1.5" style={{ color: 'var(--danger)' }}>
+                  <Square className="w-3 h-3" /><span>{t.stopPublish}</span>
+                </button>
+              ) : (
+                <button type="button" onClick={startLoop} disabled={!connected || !topic.trim()} className="btn-accent flex items-center gap-1.5 !py-1.5">
+                  <Play className="w-3 h-3" /><span>{t.startPublish}</span>
+                </button>
+              )}
+              <div className="ml-auto text-right" style={{ color: 'var(--text-muted)' }}>
+                <div>{t.published}: <span className="font-mono" style={{ color: 'var(--success)' }}>{loopSent}</span>{loopCount > 0 && ` / ${loopCount}`}</div>
+                <div className="text-[10px]">{t.templateTokens}</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* MQTT v5 properties panel */}
         {isV5 && showProps && (
@@ -420,6 +546,23 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               <Eraser className="w-3 h-3" />
             </button>
           </div>
+        </div>
+
+        {/* Template-variable insert chips (substituted at publish time) */}
+        <div className="flex items-center flex-wrap gap-1.5 text-[10px]">
+          <span style={{ color: 'var(--text-muted)' }}>{t.templateTokens}:</span>
+          {TEMPLATE_TOKENS.map((tk) => (
+            <button
+              key={tk.token}
+              type="button"
+              onClick={() => insertToken(tk.token)}
+              title={tk.desc}
+              className="px-1.5 py-0.5 rounded border font-mono transition hover:opacity-100 opacity-80"
+              style={{ borderColor: 'var(--border-inset)', color: 'var(--accent)', background: 'var(--bg-inset)' }}
+            >
+              {tk.token}
+            </button>
+          ))}
         </div>
 
         {/* Editor + optional live preview */}

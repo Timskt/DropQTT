@@ -15,12 +15,12 @@ tauri-build = { version = "2.0", features = [] }
 [dependencies]
 regex = "1"
 rquickjs = "0.8"
-tauri = { version = "2.0", features = ["devtools"] }
+tauri = { version = "2.0", features = [] }
 tauri-plugin-opener = "2.0"
 tauri-plugin-dialog = "2.0"
 tauri-plugin-fs = "2.0"
 tauri-plugin-updater = "2.0"
-rumqttc = "0.24"
+rumqttc = { version = "0.24", features = ["websocket"] }
 tokio = { version = "1.38", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -32,3 +32,4 @@ base64 = "0.22"
 dirs = "5.0"
 thiserror = "1.0"
 chrono = "0.4"
+rusqlite = { version = "0.31", features = ["bundled"] }

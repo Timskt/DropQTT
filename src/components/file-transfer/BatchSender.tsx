@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import { Send, Plus, Trash2, FileText, Layers } from 'lucide-react';
 import { BatchFileItem } from '../../types';
 import { Translations } from '../../i18n';
@@ -65,7 +66,18 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
       const selected = await open({ multiple: true, directory: false });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
-        const newItems = paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || 'file', size: 0 }));
+        // Resolve real file sizes so the batch total is accurate (was always 0).
+        const newItems = await Promise.all(
+          paths.map(async (p) => {
+            let size = 0;
+            try {
+              size = await invoke<number>('file_size', { path: p });
+            } catch {
+              /* stat failed (e.g. browser dev) — leave 0 */
+            }
+            return { path: p, name: p.split(/[\\/]/).pop() || 'file', size };
+          }),
+        );
         onAddFiles(newItems);
       }
     } catch (e) {

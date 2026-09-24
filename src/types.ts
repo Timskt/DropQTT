@@ -2,6 +2,8 @@ export interface BrokerConfig {
   host: string;
   port: number;
   useTls: boolean;
+  /** Route over WebSocket/WSS instead of raw TCP */
+  useWebsocket?: boolean;
   clientId: string;
   username?: string;
   password?: string;
@@ -12,6 +14,15 @@ export interface BrokerConfig {
   protocolVersion?: number;
   /** MQTT 3.1.1 clean_session / MQTT 5 clean_start */
   cleanSession?: boolean;
+  // ---- Last Will & Testament ----
+  willTopic?: string;
+  willPayload?: string;
+  willQos?: number;
+  willRetain?: boolean;
+  // ---- mTLS / custom trust (PEM file paths) ----
+  tlsCaPath?: string;
+  tlsClientCertPath?: string;
+  tlsClientKeyPath?: string;
 }
 
 export interface BrokerProfile {
@@ -90,6 +101,40 @@ export interface TopicSubscription {
   qos: number;
   color?: string;
   createdAt?: string;
+}
+
+/** One broker $SYS health metric line */
+export interface SysRow {
+  topic: string;
+  value: string;
+  lastSeen: number;
+}
+
+// ---- Persistent message history (SQLite) ----
+
+export interface HistoryRow {
+  id: string;
+  topic: string;
+  payload: string;
+  payloadBase64: string;
+  payloadLen: number;
+  qos: number;
+  retain: boolean;
+  contentType?: string | null;
+  direction: string;
+  /** Epoch milliseconds */
+  ts: number;
+}
+
+export interface HistorySeriesPoint {
+  bucket: number;
+  count: number;
+}
+
+export interface HistoryStats {
+  rows: number;
+  oldestTs?: number | null;
+  newestTs?: number | null;
 }
 
 /** Batched console-feed emission from the backend (100 ms cadence) */

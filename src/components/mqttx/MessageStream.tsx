@@ -171,6 +171,7 @@ const MessageRow = React.memo(function MessageRow({
             className="transition hover:opacity-100 opacity-60 disabled:opacity-25 disabled:cursor-not-allowed"
             style={{ color: replayed ? 'var(--success)' : 'var(--accent)' }}
             title={msg.truncated ? t.replayTruncated : t.replay}
+            aria-label={t.replay}
           >
             {replayed ? <Check className="w-3 h-3" /> : <RotateCcw className="w-3 h-3" />}
           </button>
@@ -178,6 +179,7 @@ const MessageRow = React.memo(function MessageRow({
             onClick={() => onCopy(msg.id, display)}
             className="transition hover:opacity-100 opacity-60"
             style={{ color: 'var(--accent)' }}
+            aria-label={t.copy}
           >
             {copied ? <Check className="w-3 h-3" style={{ color: 'var(--success)' }} /> : <Copy className="w-3 h-3" />}
           </button>
@@ -487,6 +489,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
           <button
             onClick={onClearMessages}
             title={t.clearMessages}
+            aria-label={t.clearMessages}
             className="p-2 rounded border transition hover:opacity-100 opacity-60"
             style={{ background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--danger)' }}
           >

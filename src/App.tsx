@@ -13,8 +13,11 @@ import { SubscriptionsBar } from './components/mqttx/SubscriptionsBar';
 import { MessageStream } from './components/mqttx/MessageStream';
 import { MessagePublisher } from './components/mqttx/MessagePublisher';
 import { TopicTrafficPanel } from './components/mqttx/TopicTrafficPanel';
+import { BrokerSysPanel } from './components/mqttx/BrokerSysPanel';
 import { BridgePanel } from './components/bridge/BridgePanel';
+import { HistoryPanel } from './components/history/HistoryPanel';
 import { SettingsModal } from './components/SettingsModal';
+import { ToastHost } from './components/ToastHost';
 
 import { BrokerConfig } from './types';
 import { Language, translations } from './i18n';
@@ -25,6 +28,7 @@ import { useBridge } from './hooks/useBridge';
 import { useMqttMessages } from './hooks/useMqttMessages';
 import { useSubscriptionStats } from './hooks/useSubscriptionStats';
 import { useTopicStats } from './hooks/useTopicStats';
+import { useBrokerSys } from './hooks/useBrokerSys';
 import { useTransfers } from './hooks/useTransfers';
 import { useBatchSender } from './hooks/useBatchSender';
 
@@ -32,7 +36,7 @@ export function App() {
   // ---- Workspace preferences (raw-string localStorage keys, back-compat) ----
   const [modeStr, setModeStr] = usePersistentString('dropqtt_workspace_mode', 'transfer');
   const activeMode: WorkspaceMode =
-    modeStr === 'mqttx' || modeStr === 'bridge' ? modeStr : 'transfer';
+    modeStr === 'mqttx' || modeStr === 'bridge' || modeStr === 'history' ? modeStr : 'transfer';
 
   const [langStr, setLangStr] = usePersistentString('dropqtt_lang', 'zh-CN');
   const lang = langStr as Language;
@@ -79,6 +83,9 @@ export function App() {
 
   // Live per-topic traffic ranking (hot-topic finder)
   const topicStats = useTopicStats(activeMode === 'mqttx');
+
+  // Broker $SYS health metrics (console + connected only)
+  const brokerSys = useBrokerSys(broker.isConnected && activeMode === 'mqttx');
 
   const handleClearRetained = async (topics: string[]) => {
     for (const topic of topics) {
@@ -215,7 +222,10 @@ export function App() {
         )}
 
         <main className="flex-1 overflow-y-auto p-4 space-y-4">
-          {activeMode === 'bridge' ? (
+          {activeMode === 'history' ? (
+            /* Mode 4: Persistent message history */
+            <HistoryPanel t={t} />
+          ) : activeMode === 'bridge' ? (
             /* Mode 3: Broker-to-Broker Data Bridge */
             <BridgePanel options={bridgeOptions} bridge={bridge} onOpenSettings={() => setIsSettingsOpen(true)} t={t} />
           ) : activeMode === 'transfer' ? (
@@ -275,6 +285,13 @@ export function App() {
                 t={t}
               />
 
+              <BrokerSysPanel
+                rows={brokerSys.rows}
+                connected={broker.isConnected}
+                onClear={brokerSys.clear}
+                t={t}
+              />
+
               <TopicTrafficPanel
                 rows={topicStats.rows}
                 onReset={topicStats.resetTopicStats}
@@ -329,6 +346,9 @@ export function App() {
           )}
         </main>
       </div>
+
+      {/* Global toast surface */}
+      <ToastHost />
 
       {/* Settings Modal */}
       <SettingsModal

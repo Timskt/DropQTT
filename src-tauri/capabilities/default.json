@@ -7,7 +7,6 @@
     "core:default",
     "dialog:default",
     "fs:default",
-    "opener:default",
     "updater:default"
   ]
 }

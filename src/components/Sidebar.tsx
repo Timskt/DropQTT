@@ -1,10 +1,10 @@
 import React from 'react';
-import { Layers, Terminal, Settings, Globe, Palette, Server, GitBranch } from 'lucide-react';
+import { Layers, Terminal, Settings, Globe, Palette, Server, GitBranch, Archive } from 'lucide-react';
 import { Language, Translations } from '../i18n';
 import { Theme } from '../themes';
 import { DropQTTLogo } from './DropQTTLogo';
 
-export type WorkspaceMode = 'transfer' | 'mqttx' | 'bridge';
+export type WorkspaceMode = 'transfer' | 'mqttx' | 'bridge' | 'history';
 
 interface SidebarProps {
   activeMode: WorkspaceMode;
@@ -97,13 +97,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
               <div className="flex items-center space-x-1">
                 <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: 'var(--info)' }}></span>
-                <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>v0.7.1-core</span>
+                <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>v{__APP_VERSION__}-core</span>
               </div>
             </div>
           </div>
           <button
             onClick={onOpenSettings}
             title={t.settings}
+            aria-label={t.settings}
             className="p-1.5 rounded transition"
             style={{ color: 'var(--text-muted)' }}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--hover)')}
@@ -158,6 +159,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
             accentVar="var(--warn)"
             chipClass="chip-warn"
             count={activeBridgeRulesCount}
+          />
+
+          <NavItem
+            active={activeMode === 'history'}
+            onClick={() => setActiveMode('history')}
+            icon={<Archive className="w-4 h-4" />}
+            title={t.modeHistory}
+            subtitle={t.modeHistoryDesc}
+            accentVar="var(--sky)"
+            chipClass="chip-sky"
           />
         </div>
 

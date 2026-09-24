@@ -17,6 +17,54 @@ export interface Translations {
   port: string;
   tls: string;
   tlsDesc: string;
+  advancedConn: string;
+  transport: string;
+  transportTcp: string;
+  transportWs: string;
+  willTopic: string;
+  willPayload: string;
+  willQos: string;
+  willRetain: string;
+  tlsCaCert: string;
+  clientCert: string;
+  clientKey: string;
+  clear: string;
+  autoPublish: string;
+  publishInterval: string;
+  publishCount: string;
+  publishCountHint: string;
+  startPublish: string;
+  stopPublish: string;
+  published: string;
+  templateTokens: string;
+  brokerSys: string;
+  sysVersion: string;
+  sysUptime: string;
+  sysConnections: string;
+  sysMsgReceived: string;
+  sysMsgSent: string;
+  sysLoad: string;
+  sysFilter: string;
+  sysClear: string;
+  sysEmptyWaiting: string;
+  sysEmptyOffline: string;
+  sysExpandHint: string;
+  collapse: string;
+  expandAll: string;
+  refresh: string;
+  modeHistory: string;
+  modeHistoryDesc: string;
+  historyTitle: string;
+  historyRowsUnit: string;
+  historyClear: string;
+  historyClearConfirm: string;
+  historySearchHint: string;
+  historyQuery: string;
+  historyTrend: string;
+  historyAllTopics: string;
+  historyNoTrend: string;
+  historyWindowTotal: string;
+  historyEmpty: string;
   clientId: string;
   username: string;
   password: string;
@@ -299,6 +347,54 @@ export const translations: Record<Language, Translations> = {
     port: '端口',
     tls: 'TLS / SSL 安全加密',
     tlsDesc: '使用安全证书加密传输 (例如 8883 端口)',
+    advancedConn: '高级连接 (遗嘱消息 / mTLS)',
+    transport: '传输协议',
+    transportTcp: 'TCP',
+    transportWs: 'WebSocket',
+    willTopic: '遗嘱主题 (Last Will)',
+    willPayload: '遗嘱载荷',
+    willQos: '遗嘱 QoS',
+    willRetain: '遗嘱保留',
+    tlsCaCert: 'CA 证书',
+    clientCert: '客户端证书',
+    clientKey: '客户端私钥',
+    clear: '清除',
+    autoPublish: '自动发布',
+    publishInterval: '间隔 (秒)',
+    publishCount: '次数',
+    publishCountHint: '0 = 无限循环直到手动停止',
+    startPublish: '开始',
+    stopPublish: '停止',
+    published: '已发',
+    templateTokens: '模板变量',
+    brokerSys: 'Broker 监控 ($SYS)',
+    sysVersion: '版本',
+    sysUptime: '运行时长',
+    sysConnections: '连接数',
+    sysMsgReceived: '接收消息',
+    sysMsgSent: '发送消息',
+    sysLoad: '负载',
+    sysFilter: '筛选 $SYS 主题…',
+    sysClear: '清空指标',
+    sysEmptyWaiting: '等待 Broker 上报 $SYS 指标（部分 Broker 需授权后才开放）',
+    sysEmptyOffline: '连接后自动采集 Broker 的 $SYS 健康指标',
+    sysExpandHint: '展开查看全部 $SYS 指标明细',
+    collapse: '收起',
+    expandAll: '展开全部',
+    refresh: '刷新',
+    modeHistory: '报文历史',
+    modeHistoryDesc: 'SQLite 持久化检索',
+    historyTitle: '报文历史检索',
+    historyRowsUnit: '条记录',
+    historyClear: '清空历史',
+    historyClearConfirm: '确定删除所有持久化的报文历史？此操作不可撤销。',
+    historySearchHint: '搜索主题或报文正文（回车查询）…',
+    historyQuery: '查询',
+    historyTrend: '趋势',
+    historyAllTopics: '全部主题',
+    historyNoTrend: '所选时间范围内无数据',
+    historyWindowTotal: '区间总数',
+    historyEmpty: '没有匹配的历史记录',
     clientId: '客户端标识 (Client ID)',
     username: '用户名 (可选)',
     password: '密码 (可选)',
@@ -579,6 +675,54 @@ export const translations: Record<Language, Translations> = {
     port: 'Port',
     tls: 'TLS / SSL Encryption',
     tlsDesc: 'Encrypted transfer (e.g. port 8883)',
+    advancedConn: 'Advanced (Last Will / mTLS)',
+    transport: 'Transport',
+    transportTcp: 'TCP',
+    transportWs: 'WebSocket',
+    willTopic: 'Will Topic (Last Will)',
+    willPayload: 'Will Payload',
+    willQos: 'Will QoS',
+    willRetain: 'Will Retain',
+    tlsCaCert: 'CA Certificate',
+    clientCert: 'Client Cert',
+    clientKey: 'Client Key',
+    clear: 'Clear',
+    autoPublish: 'Auto Publish',
+    publishInterval: 'Interval (s)',
+    publishCount: 'Count',
+    publishCountHint: '0 = loop until stopped',
+    startPublish: 'Start',
+    stopPublish: 'Stop',
+    published: 'Sent',
+    templateTokens: 'Tokens',
+    brokerSys: 'Broker Monitor ($SYS)',
+    sysVersion: 'Version',
+    sysUptime: 'Uptime',
+    sysConnections: 'Connections',
+    sysMsgReceived: 'Msgs Received',
+    sysMsgSent: 'Msgs Sent',
+    sysLoad: 'Load',
+    sysFilter: 'Filter $SYS topics…',
+    sysClear: 'Clear metrics',
+    sysEmptyWaiting: 'Waiting for broker $SYS metrics (some brokers require authorization)',
+    sysEmptyOffline: 'Connect to auto-collect broker $SYS health metrics',
+    sysExpandHint: 'Expand to view all $SYS metrics',
+    collapse: 'Collapse',
+    expandAll: 'Expand all',
+    refresh: 'Refresh',
+    modeHistory: 'Message History',
+    modeHistoryDesc: 'SQLite search',
+    historyTitle: 'Message History Search',
+    historyRowsUnit: 'rows',
+    historyClear: 'Clear history',
+    historyClearConfirm: 'Delete all persisted message history? This cannot be undone.',
+    historySearchHint: 'Search topic or payload (Enter to query)…',
+    historyQuery: 'Query',
+    historyTrend: 'Trend',
+    historyAllTopics: 'All topics',
+    historyNoTrend: 'No data in the selected window',
+    historyWindowTotal: 'Window total',
+    historyEmpty: 'No matching history records',
     clientId: 'Client Identifier (Client ID)',
     username: 'Username (Optional)',
     password: 'Password (Optional)',
@@ -859,6 +1003,54 @@ export const translations: Record<Language, Translations> = {
     port: '埠號 (Port)',
     tls: 'TLS / SSL 安全加密',
     tlsDesc: '使用安全憑證加密傳輸 (例如 8883 埠)',
+    advancedConn: '進階連線 (遗嘱訊息 / mTLS)',
+    transport: '傳輸協定',
+    transportTcp: 'TCP',
+    transportWs: 'WebSocket',
+    willTopic: '遗嘱主題 (Last Will)',
+    willPayload: '遗嘱載荷',
+    willQos: '遗嘱 QoS',
+    willRetain: '遗嘱保留',
+    tlsCaCert: 'CA 憑證',
+    clientCert: '客戶端憑證',
+    clientKey: '客戶端私鑰',
+    clear: '清除',
+    autoPublish: '自動發布',
+    publishInterval: '間隔 (秒)',
+    publishCount: '次數',
+    publishCountHint: '0 = 無限循環直到手動停止',
+    startPublish: '開始',
+    stopPublish: '停止',
+    published: '已發',
+    templateTokens: '範本變數',
+    brokerSys: 'Broker 監控 ($SYS)',
+    sysVersion: '版本',
+    sysUptime: '運行時長',
+    sysConnections: '連線數',
+    sysMsgReceived: '接收訊息',
+    sysMsgSent: '發送訊息',
+    sysLoad: '負載',
+    sysFilter: '篩選 $SYS 主題…',
+    sysClear: '清空指標',
+    sysEmptyWaiting: '等待 Broker 上報 $SYS 指標（部分 Broker 需授權後才開放）',
+    sysEmptyOffline: '連線後自動收集 Broker 的 $SYS 健康指標',
+    sysExpandHint: '展開檢視全部 $SYS 指標明細',
+    collapse: '收起',
+    expandAll: '展開全部',
+    refresh: '重新整理',
+    modeHistory: '報文歷史',
+    modeHistoryDesc: 'SQLite 持久化檢索',
+    historyTitle: '報文歷史檢索',
+    historyRowsUnit: '條記錄',
+    historyClear: '清空歷史',
+    historyClearConfirm: '確定刪除所有持久化的報文歷史？此操作無法復原。',
+    historySearchHint: '搜尋主題或報文正文（Enter 查詢）…',
+    historyQuery: '查詢',
+    historyTrend: '趨勢',
+    historyAllTopics: '全部主題',
+    historyNoTrend: '所選時間範圍內無資料',
+    historyWindowTotal: '區間總數',
+    historyEmpty: '沒有相符的歷史記錄',
     clientId: '用戶端標識 (Client ID)',
     username: '使用者名稱 (選填)',
     password: '密碼 (選填)',
@@ -1139,6 +1331,54 @@ export const translations: Record<Language, Translations> = {
     port: 'ポート',
     tls: 'TLS / SSL 暗号化',
     tlsDesc: 'セキュア暗号化転送 (例: ポート 8883)',
+    advancedConn: '詳細接続 (Last Will / mTLS)',
+    transport: 'トランスポート',
+    transportTcp: 'TCP',
+    transportWs: 'WebSocket',
+    willTopic: 'Will トピック (Last Will)',
+    willPayload: 'Will ペイロード',
+    willQos: 'Will QoS',
+    willRetain: 'Will 保持',
+    tlsCaCert: 'CA 証明書',
+    clientCert: 'クライアント証明書',
+    clientKey: 'クライアント秘密鍵',
+    clear: 'クリア',
+    autoPublish: '自動発行',
+    publishInterval: '間隔 (秒)',
+    publishCount: '回数',
+    publishCountHint: '0 = 手動停止までループ',
+    startPublish: '開始',
+    stopPublish: '停止',
+    published: '送信済',
+    templateTokens: 'テンプレート変数',
+    brokerSys: 'Broker モニタ ($SYS)',
+    sysVersion: 'バージョン',
+    sysUptime: '稼働時間',
+    sysConnections: '接続数',
+    sysMsgReceived: '受信メッセージ',
+    sysMsgSent: '送信メッセージ',
+    sysLoad: '負荷',
+    sysFilter: '$SYS トピックを絞り込み…',
+    sysClear: '指標をクリア',
+    sysEmptyWaiting: 'Broker の $SYS 指標を待機中（認可が必要な Broker があります）',
+    sysEmptyOffline: '接続すると Broker の $SYS 指標を自動収集',
+    sysExpandHint: '展開して全ての $SYS 指標を表示',
+    collapse: '折りたたむ',
+    expandAll: '全て展開',
+    refresh: '更新',
+    modeHistory: 'メッセージ履歴',
+    modeHistoryDesc: 'SQLite 検索',
+    historyTitle: 'メッセージ履歴検索',
+    historyRowsUnit: '件',
+    historyClear: '履歴を消去',
+    historyClearConfirm: '保存された全メッセージ履歴を削除しますか？元に戻せません。',
+    historySearchHint: 'トピックまたは本文を検索（Enter で実行）…',
+    historyQuery: '実行',
+    historyTrend: 'トレンド',
+    historyAllTopics: '全トピック',
+    historyNoTrend: '選択範囲にデータがありません',
+    historyWindowTotal: '期間合計',
+    historyEmpty: '一致する履歴がありません',
     clientId: 'クライアント ID',
     username: 'ユーザー名 (任意)',
     password: 'パスワード (任意)',

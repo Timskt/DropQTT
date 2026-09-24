@@ -124,6 +124,15 @@ const DEFAULT_TOPIC_STATS_CAP: usize = 5_000;
 const MIN_TOPIC_STATS_CAP: usize = 100;
 const MAX_TOPIC_STATS_CAP: usize = 200_000;
 
+/// One broker `$SYS` metric line (latest value + last-update epoch seconds)
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SysRow {
+    pub topic: String,
+    pub value: String,
+    pub last_seen: u64,
+}
+
 pub struct MqttManager {
     client: RwLock<Option<MqttClient>>,
     loop_control: Mutex<Option<(JoinHandle<()>, Arc<AtomicBool>)>>,
@@ -134,6 +143,10 @@ pub struct MqttManager {
     subscription_hits: Mutex<HashMap<String, u64>>,
     /// Actual topic -> live traffic meter (resettable)
     topic_stats: Mutex<HashMap<String, TopicTraffic>>,
+    /// Broker `$SYS/*` metrics: topic -> (latest value, last-seen epoch secs)
+    sys_metrics: Mutex<HashMap<String, (String, u64)>>,
+    /// Optional persistent history store (attached at app setup)
+    history: RwLock<Option<Arc<crate::history::HistoryStore>>>,
     /// Runtime-configurable tracking cap (LRU eviction when full)
     topic_stats_cap: std::sync::atomic::AtomicUsize,
     base_topic: RwLock<String>,
@@ -163,6 +176,8 @@ impl MqttManager {
             subscriptions: Mutex::new(HashMap::new()),
             subscription_hits: Mutex::new(HashMap::new()),
             topic_stats: Mutex::new(HashMap::new()),
+            sys_metrics: Mutex::new(HashMap::new()),
+            history: RwLock::new(None),
             topic_stats_cap: std::sync::atomic::AtomicUsize::new(DEFAULT_TOPIC_STATS_CAP),
             base_topic: RwLock::new("dropqtt".to_string()),
             download_dir: RwLock::new(def_download),
@@ -273,6 +288,9 @@ impl MqttManager {
                             for (topic, qos) in subs {
                                 let _ = client.subscribe(&topic, qos).await;
                             }
+                            // Broker health metrics — subscribed out-of-band so
+                            // $SYS never pollutes the console feed or traffic stats.
+                            let _ = client.subscribe("$SYS/#", 0).await;
                         }
                         let first = !this.is_connected.swap(true, Ordering::SeqCst);
                         if first {
@@ -334,6 +352,9 @@ impl MqttManager {
             let _ = tokio::fs::remove_file(&trans.temp_path).await;
         }
         incoming.clear();
+
+        // Drop the previous broker's $SYS snapshot so a reconnect starts clean
+        self.sys_metrics.lock().await.clear();
     }
 
     pub async fn subscribe_topic(&self, topic: String, qos_val: u8) -> Result<(), String> {
@@ -357,6 +378,75 @@ impl MqttManager {
             client.unsubscribe(&topic).await;
         }
         Ok(())
+    }
+
+    /// Latest broker `$SYS` metrics, sorted by topic (hottest health first).
+    pub async fn get_broker_sys(&self) -> Vec<SysRow> {
+        let m = self.sys_metrics.lock().await;
+        let mut rows: Vec<SysRow> = m
+            .iter()
+            .map(|(topic, (value, seen))| SysRow {
+                topic: topic.clone(),
+                value: value.clone(),
+                last_seen: *seen,
+            })
+            .collect();
+        rows.sort_by(|a, b| a.topic.cmp(&b.topic));
+        rows
+    }
+
+    pub async fn clear_broker_sys(&self) {
+        self.sys_metrics.lock().await.clear();
+    }
+
+    /// Attach the persistent history store (called once at app setup).
+    pub fn attach_history(&self, store: Arc<crate::history::HistoryStore>) {
+        if let Ok(mut g) = self.history.try_write() {
+            *g = Some(store);
+        }
+    }
+
+    pub async fn query_history(
+        &self,
+        search: &str,
+        direction: &str,
+        limit: i64,
+    ) -> Vec<crate::history::HistoryRow> {
+        self.history
+            .read()
+            .await
+            .as_ref()
+            .map(|h| h.query(search, direction, limit))
+            .unwrap_or_default()
+    }
+
+    pub async fn history_series(
+        &self,
+        topic: &str,
+        bucket_ms: i64,
+        since_ms: i64,
+    ) -> Vec<crate::history::HistorySeriesPoint> {
+        self.history
+            .read()
+            .await
+            .as_ref()
+            .map(|h| h.series(topic, bucket_ms, since_ms))
+            .unwrap_or_default()
+    }
+
+    pub async fn history_stats(&self) -> crate::history::HistoryStats {
+        self.history
+            .read()
+            .await
+            .as_ref()
+            .map(|h| h.stats())
+            .unwrap_or(crate::history::HistoryStats { rows: 0, oldest_ts: None, newest_ts: None })
+    }
+
+    pub async fn clear_history(&self) {
+        if let Some(h) = self.history.read().await.as_ref() {
+            h.clear();
+        }
     }
 
     /// Stage one console-feed message (never blocks the routing path; the
@@ -390,6 +480,10 @@ impl MqttManager {
         };
         if batch.is_empty() {
             return;
+        }
+        // Mirror the batch to SQLite before it is consumed by the emit.
+        if let Some(h) = self.history.read().await.as_ref() {
+            h.append(&batch);
         }
         let dropped = self.feed_dropped.load(Ordering::SeqCst);
         let _ = app.emit(
@@ -640,6 +734,14 @@ impl MqttManager {
     async fn route_message(self: &Arc<Self>, app: &AppHandle, publish: crate::transport::NormalizedPublish) {
         let topic = publish.topic;
 
+        // Broker $SYS metrics: capture latest value, keep out of feed + traffic.
+        if topic.starts_with("$SYS/") {
+            let value = String::from_utf8_lossy(&publish.payload).trim().to_string();
+            let now = chrono::Utc::now().timestamp().max(0) as u64;
+            self.sys_metrics.lock().await.insert(topic, (value, now));
+            return;
+        }
+
         // Per-topic traffic meter (count / bytes / per-second rate)
         self.record_topic(&topic, publish.payload.len() as u64).await;
 
@@ -716,6 +818,11 @@ impl MqttManager {
         let expected_chunks =
             meta.file_size.div_ceil(meta.chunk_size as u64).max(1) as usize;
         if expected_chunks != meta.total_chunks {
+            return;
+        }
+        // transfer_id is embedded in the temp file name — reject traversal.
+        if !is_safe_transfer_id(&meta.transfer_id) {
+            eprintln!("Rejected transfer with unsafe id");
             return;
         }
 
@@ -1606,13 +1713,18 @@ pub(crate) fn wildcard_match(filter: &str, topic: &str) -> bool {
 }
 
 fn sanitize_file_name(name: &str) -> String {
-    let base = Path::new(name)
-        .file_name()
-        .and_then(|s| s.to_str())
+    // Reduce to a single safe basename: strip every path component (both POSIX
+    // and Windows separators), drop filesystem-hostile chars, and refuse the
+    // traversal tokens. Callers MUST pass the result to `dir.join`.
+    let base = name
+        .rsplit(['/', '\\'])
+        .next()
         .unwrap_or("");
     let cleaned: String = base
         .chars()
-        .filter(|c| !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'))
+        .filter(|c| {
+            !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0') && !c.is_control()
+        })
         .collect();
     let trimmed = cleaned.trim();
     if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
@@ -1622,17 +1734,28 @@ fn sanitize_file_name(name: &str) -> String {
     }
 }
 
+/// Validate a peer-supplied transfer id used to build temp file names: only a
+/// conservative charset, bounded length. Rejects path separators / traversal.
+fn is_safe_transfer_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 fn get_unique_path(dir: &Path, file_name: &str) -> PathBuf {
-    let target = dir.join(file_name);
+    // Defense in depth: always operate on a sanitized basename so the joined
+    // result can never escape `dir`, regardless of what a caller passes.
+    let file_name = sanitize_file_name(file_name);
+    let target = dir.join(&file_name);
     if !target.exists() {
         return target;
     }
 
-    let stem = Path::new(file_name)
+    let stem = Path::new(&file_name)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("file");
-    let ext = Path::new(file_name)
+    let ext = Path::new(&file_name)
         .extension()
         .and_then(|s| s.to_str())
         .map(|e| format!(".{}", e))
@@ -1891,6 +2014,36 @@ mod tests {
         assert!(wildcard_match("a/b", "a/b"));
         assert!(!wildcard_match("a/b", "a/b/c"));
         assert!(!wildcard_match("a/b/c", "a/b"));
+    }
+
+    #[test]
+    fn sanitize_strips_traversal_and_absolute() {
+        assert_eq!(sanitize_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(sanitize_file_name("/absolute/name.txt"), "name.txt");
+        assert_eq!(sanitize_file_name("..\\windows\\evil.exe"), "evil.exe");
+        assert_eq!(sanitize_file_name(".."), "received_file");
+        assert_eq!(sanitize_file_name(""), "received_file");
+        assert_eq!(sanitize_file_name("ok file.log"), "ok file.log");
+    }
+
+    #[test]
+    fn get_unique_path_stays_inside_dir() {
+        let dir = std::path::Path::new("/tmp/dropqtt_test_dir");
+        for evil in ["/etc/passwd", "../../.ssh/authorized_keys", "..\\evil"] {
+            let p = get_unique_path(dir, evil);
+            assert!(p.starts_with(dir), "{} escaped dir: {:?}", evil, p);
+            assert_eq!(p.parent(), Some(dir));
+        }
+    }
+
+    #[test]
+    fn transfer_id_charset_enforced() {
+        assert!(is_safe_transfer_id("abc-123_XY"));
+        assert!(!is_safe_transfer_id("../../x"));
+        assert!(!is_safe_transfer_id("a/b"));
+        assert!(!is_safe_transfer_id("a\\b"));
+        assert!(!is_safe_transfer_id(""));
+        assert!(!is_safe_transfer_id(&"x".repeat(200)));
     }
 
     #[test]

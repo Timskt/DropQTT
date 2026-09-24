@@ -19,7 +19,7 @@ interface BrokerStatusBarProps {
 }
 
 const modeAccent = (mode: WorkspaceMode) =>
-  mode === 'transfer' ? 'var(--info)' : mode === 'bridge' ? 'var(--warn)' : 'var(--ok)';
+  mode === 'transfer' ? 'var(--info)' : mode === 'bridge' ? 'var(--warn)' : mode === 'history' ? 'var(--sky)' : 'var(--ok)';
 
 export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
   activeMode,
@@ -45,7 +45,7 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
         <div className="flex items-center space-x-1.5 inset-box px-2 py-0.5">
           <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>MODE:</span>
           <span className="font-semibold" style={{ color: accent }}>
-            {activeMode === 'transfer' ? t.modeFileTransfer : activeMode === 'bridge' ? t.modeBridge : t.modeMqttClient}
+            {activeMode === 'transfer' ? t.modeFileTransfer : activeMode === 'bridge' ? t.modeBridge : activeMode === 'history' ? t.modeHistory : t.modeMqttClient}
           </span>
         </div>
 
