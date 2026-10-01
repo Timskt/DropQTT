@@ -1983,14 +1983,31 @@ impl MqttManager {
             );
         }
 
+        // The sender has to listen on the very ctrl topic its peer answers to:
+        // NACK is the only trigger for chunk retransmission and COMPLETED is the
+        // only proof the receiver actually verified the file. Without this the
+        // resilience the protocol defines never engages, and the row sits at
+        // "awaiting peer confirmation" forever. Registered rather than ad-hoc so
+        // a mid-transfer reconnect replays it.
+        let ctrl_filter = format!("{}/ctrl/{}", topic_prefix, transfer_id);
+        let _ = self
+            .subscribe_topic(
+                ctrl_filter.clone(),
+                crate::protocol::SubOptions { qos: 1, ..Default::default() },
+            )
+            .await;
+
         // Delayed cleanup so late NACKs can still be served
         {
             let this = self.clone();
             let tid = transfer_id.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                let mut outgoing = this.outgoing_transfers.lock().await;
-                outgoing.remove(&tid);
+                {
+                    let mut outgoing = this.outgoing_transfers.lock().await;
+                    outgoing.remove(&tid);
+                }
+                let _ = this.unsubscribe_topic(ctrl_filter).await;
             });
         }
 
