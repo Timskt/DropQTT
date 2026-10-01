@@ -226,6 +226,16 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                   value={snapshot.mqtt.confirmTimeouts}
                   color={snapshot.mqtt.confirmTimeouts ? 'var(--warn)' : 'var(--text-primary)'}
                 />
+                <Metric
+                  label={t.opsRpcPending}
+                  value={snapshot.mqtt.rpcPending ?? 0}
+                  color={snapshot.mqtt.rpcPending ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsRpcTimeouts}
+                  value={snapshot.mqtt.rpcTimeouts ?? 0}
+                  color={snapshot.mqtt.rpcTimeouts ? 'var(--warn)' : 'var(--text-primary)'}
+                />
               </div>
             </Section>
 

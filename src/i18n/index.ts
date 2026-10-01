@@ -486,6 +486,22 @@ export interface Translations {
   scheduleRunDone: string;
   scheduleRunFailed: string;
   scheduleRunStopped: string;
+  rpcTitle: string;
+  rpcAwaitReply: string;
+  rpcTimeoutLabel: string;
+  rpcHint: string;
+  rpcPending: string;
+  rpcResolved: string;
+  rpcNoReply: string;
+  rpcRoundTrip: string;
+  rpcResponseTopicPh: string;
+  rpcPairedByPosition: string;
+  rpcCorrelationLabel: string;
+  rpcReplyBody: string;
+  rpcClear: string;
+  rpcEmpty: string;
+  opsRpcPending: string;
+  opsRpcTimeouts: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -975,6 +991,22 @@ export const translations: Record<Language, Translations> = {
     scheduleRunDone: '已完成',
     scheduleRunFailed: '已失败',
     scheduleRunStopped: '已停止',
+    rpcTitle: '请求 / 响应',
+    rpcAwaitReply: '等待应答',
+    rpcTimeoutLabel: '超时 (ms)',
+    rpcHint: '请求会带上应答主题与关联数据；应答优先按关联数据配对，未带时按发送先后配对',
+    rpcPending: '待应答',
+    rpcResolved: '已应答',
+    rpcNoReply: '无应答',
+    rpcRoundTrip: '往返',
+    rpcResponseTopicPh: '留空自动生成',
+    rpcPairedByPosition: '按先后配对（应答未带关联数据）',
+    rpcCorrelationLabel: '关联数据',
+    rpcReplyBody: '应答内容',
+    rpcClear: '清除已结束',
+    rpcEmpty: '还没有请求；打开“等待应答”后发布即成为请求',
+    opsRpcPending: '待应答请求',
+    opsRpcTimeouts: '无应答请求',
   },
   'en': {
     appName: 'DropQTT',
@@ -1462,6 +1494,22 @@ export const translations: Record<Language, Translations> = {
     scheduleRunDone: 'Done',
     scheduleRunFailed: 'Failed',
     scheduleRunStopped: 'Stopped',
+    rpcTitle: 'Request / Response',
+    rpcAwaitReply: 'Await reply',
+    rpcTimeoutLabel: 'Timeout (ms)',
+    rpcHint: 'A request carries a response topic and correlation data; replies pair by correlation data, or by send order when they carry none',
+    rpcPending: 'Pending',
+    rpcResolved: 'Answered',
+    rpcNoReply: 'No reply',
+    rpcRoundTrip: 'Round trip',
+    rpcResponseTopicPh: 'blank = generated',
+    rpcPairedByPosition: 'paired by order (reply carried no correlation data)',
+    rpcCorrelationLabel: 'Correlation data',
+    rpcReplyBody: 'Reply body',
+    rpcClear: 'Clear finished',
+    rpcEmpty: 'No requests yet — turn on “Await reply” and publish to make one',
+    opsRpcPending: 'pending requests',
+    opsRpcTimeouts: 'unanswered requests',
   },
   'zh-TW': {
     appName: 'DropQTT',
@@ -1949,6 +1997,22 @@ export const translations: Record<Language, Translations> = {
     scheduleRunDone: '已完成',
     scheduleRunFailed: '已失敗',
     scheduleRunStopped: '已停止',
+    rpcTitle: '請求 / 回應',
+    rpcAwaitReply: '等待應答',
+    rpcTimeoutLabel: '逾時 (ms)',
+    rpcHint: '請求會帶上應答主題與關聯資料；應答優先依關聯資料配對，未帶時依發送先後配對',
+    rpcPending: '待應答',
+    rpcResolved: '已應答',
+    rpcNoReply: '無應答',
+    rpcRoundTrip: '往返',
+    rpcResponseTopicPh: '留空自動產生',
+    rpcPairedByPosition: '依先後配對（應答未帶關聯資料）',
+    rpcCorrelationLabel: '關聯資料',
+    rpcReplyBody: '應答內容',
+    rpcClear: '清除已結束',
+    rpcEmpty: '還沒有請求；開啟「等待應答」後發布即成為請求',
+    opsRpcPending: '待應答請求',
+    opsRpcTimeouts: '無應答請求',
   },
   'ja': {
     appName: 'DropQTT',
@@ -2436,5 +2500,21 @@ export const translations: Record<Language, Translations> = {
     scheduleRunDone: '完了',
     scheduleRunFailed: '失敗',
     scheduleRunStopped: '停止',
+    rpcTitle: 'リクエスト / 応答',
+    rpcAwaitReply: '応答を待機',
+    rpcTimeoutLabel: 'タイムアウト (ms)',
+    rpcHint: 'リクエストは応答トピックと相関データを持ちます。応答は相関データで、無い場合は送信順に対応付けられます',
+    rpcPending: '待機中',
+    rpcResolved: '応答済み',
+    rpcNoReply: '応答なし',
+    rpcRoundTrip: '往復',
+    rpcResponseTopicPh: '空欄で自動生成',
+    rpcPairedByPosition: '順序で対応付け（応答に相関データなし）',
+    rpcCorrelationLabel: '相関データ',
+    rpcReplyBody: '応答内容',
+    rpcClear: '完了をクリア',
+    rpcEmpty: 'リクエストはまだありません。「応答を待機」を ON にして公開すると作成されます',
+    opsRpcPending: '待機中のリクエスト',
+    opsRpcTimeouts: '応答なしのリクエスト',
   },
 };

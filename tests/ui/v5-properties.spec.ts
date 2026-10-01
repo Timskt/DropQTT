@@ -57,6 +57,7 @@ const boot = async (page: any, protocolVersion: number) => {
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];
         if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
         if (cmd === 'schedule_list' || cmd === 'bench_progress') return [];
+        if (cmd === 'rpc_list') return [];
         return null;
       },
     };

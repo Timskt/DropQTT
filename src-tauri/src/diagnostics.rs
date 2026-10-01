@@ -43,6 +43,10 @@ pub struct MqttDiagnostics {
     pub feed_lost: u64,
     /// Sends whose peer never sent a receipt, this session
     pub confirm_timeouts: u64,
+    /// Request/response calls still waiting for an answer right now
+    pub rpc_pending: usize,
+    /// Request/response calls that were never answered, this session
+    pub rpc_timeouts: u64,
     pub topic_stats_count: usize,
     /// Backend-scheduled publishes still running
     pub scheduled_runs: usize,
@@ -262,6 +266,25 @@ fn build_checks(mqtt: &MqttDiagnostics, bridge: &BridgeDiagnostics) -> Vec<Diagn
     };
     checks.push(check("transfer_activity", transfer_level, transfer_detail));
 
+    // Waiting on an answer is normal; answers that never came are the thing a
+    // user needs told, together with the one diagnostic that explains most of
+    // them: nobody is listening on the response topic.
+    let (rpc_level, rpc_detail) = if mqtt.rpc_timeouts > 0 {
+        (
+            "warn",
+            format!(
+                "{} request(s) never answered, {} still waiting (is a responder subscribed to the response topic?)",
+                mqtt.rpc_timeouts, mqtt.rpc_pending
+            ),
+        )
+    } else {
+        (
+            "ok",
+            format!("{} request(s) waiting for an answer", mqtt.rpc_pending),
+        )
+    };
+    checks.push(check("rpc_activity", rpc_level, rpc_detail));
+
     let bridge_level =
         if (bridge.enabled_rules > 0 && bridge.connected_connections == 0) || bridge.errors > 0 {
             "warn"
@@ -333,6 +356,8 @@ mod tests {
             feed_dropped: 0,
             feed_lost: 0,
             confirm_timeouts: 0,
+            rpc_pending: 0,
+            rpc_timeouts: 0,
             topic_stats_count: 4,
             scheduled_runs: 0,
             bench_runs: 0,

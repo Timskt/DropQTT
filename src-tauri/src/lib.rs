@@ -4,6 +4,7 @@ pub mod diagnostics;
 pub mod history;
 pub mod mqtt_manager;
 pub mod protocol;
+pub mod rpc;
 pub mod scheduler;
 pub mod silence;
 pub mod transport;
@@ -279,6 +280,27 @@ async fn publish_console(
     state.mqtt.publish_console(app, params).await
 }
 
+/// MQTT5 request/response: publish a request, watch its response topic, and
+/// pair the answer by correlation data (`rpc.rs` owns the matching rules).
+#[tauri::command]
+async fn rpc_request(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    spec: rpc::RpcSpec,
+) -> Result<rpc::RpcCall, String> {
+    state.mqtt.clone().rpc_request(app, spec).await
+}
+
+#[tauri::command]
+async fn rpc_list(state: State<'_, AppState>) -> Result<Vec<rpc::RpcCall>, String> {
+    Ok(state.mqtt.rpc_list().await)
+}
+
+#[tauri::command]
+async fn rpc_clear_finished(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(state.mqtt.rpc_clear_finished().await)
+}
+
 /// Start a backend-scheduled publish (see `scheduler.rs` for the state machine).
 #[tauri::command]
 async fn schedule_start(
@@ -500,6 +522,9 @@ pub fn run() {
             bench_stop,
             bench_clear_finished,
             publish_console,
+            rpc_request,
+            rpc_list,
+            rpc_clear_finished,
             schedule_start,
             schedule_stop,
             schedule_list,

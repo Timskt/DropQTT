@@ -173,6 +173,19 @@
   - 审计**漏了一条更重的**：`cancel_transfer` 只对发送方向有效，接收中的传输点"取消"是彻底空操作 —— 现在接收方向走 `reject_transfer`，会删临时文件并回一条 ERROR 控制消息。
 - **验证过程中我自己发现的新缺陷（审计没有，正向用例也没有覆盖到）**：接收端的 finalize 任务与"取消"抢跑 —— 取消已经把条目摘掉、临时文件删掉，finalize 仍在跑 SHA 校验，跑完**无条件**广播 `awaiting_approval`（或自动接收的 `completed`），于是队列里冒出一行指向已不存在文件的"待确认接收"，点它只会得到一个"No such file"。修法是把**"取消即失去所有权"做成不变量**：三条终态分支（校验失败 / 自动接收 / 待确认）各自在锁内 claim 条目，claim 失败就彻底闭嘴 —— 不广播，也不给发送端发伪造的"SHA 校验失败"。
 
+### 3.10 MQTT5 请求/响应成为一等公民（第六轮，2026-10-02）
+
+之前 `responseTopic` / `correlationData` 只是"能发出去"的协议字段（§3.8），发完就没人管了。这一轮把它变成**真正的请求-响应**：
+
+- **入口**：发布面板 v5 属性区新增 `等待应答` 勾选与 `超时 (ms)`（默认 5000，后端钳制 100 ms–120 s）。勾选后同一个"发布"按钮改走 `rpc_request`，未勾选时行为与过去完全一致（`tests/ui/rpc.spec.ts` 第 6 条专门钉住这点）。
+- **应答主题留空即自动生成** `<base_topic>/rpc/<id 前 8 位>`（取自连接配置里的 base topic，不是写死的 `dropqtt`），关联数据留空则用本次调用的 uuid。生成的主题会在行内显示出来，用户因此知道"对方该往哪儿回"。
+- **配对规则（顺序即优先级）**：① 入站主题的 `correlationData` 与请求相等 → 精确配对；② 应答**没带** correlationData → 与该应答主题上**最早**的未决请求按先后配对，并把这一"更弱的结论"永久标在行上（`pairedByPosition`），不伪装成精确匹配；③ 应答带了**别人的** correlationData → 与我们无关，请求继续等（真机验证过，见 §4.16）。
+- **临时订阅是引用计数的**（`rpc.rs::ResponseWatch`）：解析/超时/清除/断链都会 release；最后一个引用释放时才 `unsubscribe`。若这个应答主题**用户本来就自己订阅过**，我们只借用、绝不替他退订。
+- **断链即终态**：`disconnect()` 把所有未决调用一次转成超时（`expire_all`），不留"永远待应答"的幽灵行，也不会把这个临时订阅重放到下一个 broker 上。
+- **往返延迟的定义**：`发出那一刻 → 收到应答那一刻`，不是 ack 时间；因此它包含对端的处理耗时，界面标签写的是"往返"而不是"网络延迟"。
+- 运维诊断新增 `待应答请求 / 无应答请求` 两个计数与健康检查 `rpc_activity`（有超时时转 warn，文案直接问"是否有人订阅了应答主题"）。
+- 与定时发布一样是**会话级**的：调用活在 Rust，面板卸载/`reload` 不丢，重启应用不恢复。
+
 ## 4. 验证矩阵（哪些真跑过）
 
 | 项目 | 命令 | 结果 | 说明 |
@@ -420,6 +433,35 @@ Playwright 用例通过 `window.__TAURI_INTERNALS__` 桩替换了 IPC，它证�
 
 P0-2 的计数**只有单元测试证明**（`storage_failure_is_not_reported_as_empty_results` 断言 `lost_rows == 2`）；真机上只验证了面板把"未能写入历史"渲染出来且读数为 0 —— 制造一次真实 DB 写失败需要锁库或换只读目录，这轮没做。
 
+### 4.15 一个只有测试能抓到的 UI 缺陷（我自己引入的）
+
+新加的 `超时 (ms)` 数字框我当时写了 `min=100 step=500`。浏览器于是把它变成**表单校验错误**：填 2500（2500-100 不是 500 的整数倍）会让 `type=submit` 的"发布"按钮**静默失效** —— 不报错、不提示、什么都不发生。真机 UI 用例的表现是"点击发布后 30 s 超时，`rpc_request` 一次都没发生"。
+
+去掉 `step` 后 6/6 通过。**教训**：任何放进 `<form>` 的 number 输入都只能有宽松的 `step`（默认 1），否则它会以"校验失败"的名义吞掉整个提交；而这类缺陷在类型检查、单元测试和肉眼review里都不存在。
+
+同期还有一次反向教训：`rpc_list` 命令上线后，3 个既有 spec 的 mock 走到默认分支返回 `null`，`useRpc` 把它塞进 state，`RpcPanel` 立刻在 `calls.filter` 上崩掉整个控制台 —— 9 条用例集体超时。**我选择把 mock 改诚实（补 `if (cmd === 'rpc_list') return []`），而不是给前端加 `Array.isArray` 兜底**：真实后端永远不会返回 null，为不存在的失败写防御代码只会掩盖下一个真 bug。
+
+### 4.16 请求/响应真机取证（第六轮，两个实例 + lab broker 18831）
+
+第三方独立订阅端 `mosquitto_sub -V mqttv5 -t 'lab/rpc/#' -F '%t|%p'` 在场。应答由第二个 DropQTT 实例发出 —— 它的 **publish 侧 v5 属性编码已在 §4.9 用独立 MQTT5 sink 做过字节级验证**，所以"对方带属性回答我"这一侧是可信的；本机没有可用的第三方 v5 客户端（mosquitto 2.0.15 的 `--property` 只支持 user property，仓库里也没有 mqtt.js/paho），这一点如实记在这里。
+
+| 场景 | 实测 |
+| --- | --- |
+| 请求发出、应答主题尚未被用户订阅 | `get_subscription_stats` 出现 `lab/rpc/reply` ✓ 自动订阅生效 |
+| 对端先回一条 `correlationData=nope-not-this-call` | 请求仍是 `pending` ✓ **不按主题乱配对** |
+| 对端再回正确的 `c-live-1` | `resolved`，`往返 1866 ms`（含我脚本自己的 900 ms 间隔），应答体 base64 解出 `pong` ✓ |
+| 精确匹配的行 | `pairedByPosition=false` ✓ 不夸大成"按顺序猜的" |
+| 解析完成后 | `get_subscription_stats` 里 `lab/rpc/reply` 消失 ✓ 引用释放即退订 |
+| 应答主题留空 | 自动生成 `dropqtt/rpc/afcad1dd`（取自 base topic）✓ |
+| 1500 ms 无人应答 | 行转 `timeout`，生成的订阅同步退订 ✓ |
+| 应答不带 correlationData | 按先后配对成功，行上标 `按先后配对（应答未带关联数据）` ✓ |
+| 独立订阅端旁观 | 抓到 `lab/rpc/witness\|visible-request` 与 `lab/rpc/wreply\|visible-reply` ✓ 报文真的上线 |
+| 运维快照 | `rpcTimeouts=2`、`rpcPending=0`，`rpc_activity` = warn，文案 `2 request(s) never answered, 0 still waiting (is a responder subscribed to the response topic?)` ✓ |
+
+界面实拍：`test-results/demo-rpc-panel.png`（该目录被 .gitignore 忽略，只在本机看）。
+
+门：Rust harness **90/90**（新增 13 条 RPC 状态机用例）、`cargo clippy --all-targets` 干净、`cargo build` 通过、`npx tsc --noEmit` 通过、`npm test` **20/20**、`npx playwright test` **38/38**（新增 6 条）。
+
 ## 5. 已知限制（必须如实告知）
 
 ### 5.1 环境：本机 MSVC 不可用，但 gnu 可以完整跑起应用
@@ -478,6 +520,14 @@ error: linking with `link.exe` failed
 
 另外：NACK 的"缺哪片补哪片"分支在本地回环下无法真实触发，目前只有代码路径与 §4.1 的单元测试级保证。
 
+### 5.8 请求/响应的三条边界（第六轮）
+
+1. **一问只一答**：第一条匹配上的应答就终结这次调用，后续重复应答被忽略（`the_first_reply_wins_a_double_answer` 钉住了行为）。想要"多方响应/广播式收集"的语义需要另一种设计，现在没有做，也不会假装支持。
+2. **RETAINED 应答是已知风险**：如果应答主题上留有 retained 消息，自动订阅会在订阅那一刻收到**上一次遗留的应答**；按顺序配对（应答不带 correlationData 时）就可能把它错配给一个新请求。带正确 correlationData 的请求不受影响。绕开方式是别让应答主题用 retain —— 我没有在界面里替你禁止，因为这不是普遍错误；知道这条边界再决定。
+3. **未决请求没有"取消"按钮**：只能等它自己超时。有界（最长 120 s）且必然终结，所以我不为它再造一套状态机。
+
+另外与定时发布一样：**调用表是会话级的**，重启应用不恢复（§5.6 同理）。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。
@@ -487,9 +537,9 @@ error: linking with `link.exe` failed
 
 按性价比排序：
 
-> **已完成的插入项**：文件传输"对端确认"超时与独立终态（§4.11）；重新发送入口与批次诚实化（§4.12）；审计报告 P0-1/P0-2/P0-3 的复核修复 + 取消/finalize 竞态（§3.9、§4.13）。剩下的同类问题是**断点续传**（重发是复用同一 transferId 还是新开一笔已定为新开），以及**给所有权判定补可回归的纯函数测试**。
+> **已完成的插入项**：文件传输"对端确认"超时与独立终态（§4.11）；重新发送入口与批次诚实化（§4.12）；审计报告 P0-1/P0-2/P0-3 的复核修复 + 取消/finalize 竞态（§3.9、§4.13）；**列表第 1 项 RPC 已在第六轮完成并真机取证**（§3.10、§4.16）。剩下的同类问题是**断点续传**（重发是复用同一 transferId 还是新开一笔已定为新开），以及**给所有权判定补可回归的纯函数测试**。
 
-1. **RPC 一等公民**：带 `responseTopic` 自动临时订阅应答主题、按 `correlationData` 配对、显示往返延迟与超时。
+1. ~~**RPC 一等公民**~~ ✅ **第六轮完成**（§3.10 / §4.16）。它的同类收尾项：**一问多答的收集模式**、**应答主题带 retain 时的错配处理**（§5.8 第 2 条），以及把 `rpc_request` 接进脚本钩子/桥接，让转发的消息也能挂上请求。
 2. **压测吞吐开关**：允许压测运行不镜像到 feed/历史，把 §5.5 的实测 ~315 msg/s 提到通道上限；同时才有资格谈"高压下"的 P50/P95/P99。
 3. **多连接**：单 client 槽 → `HashMap<connId, Connection>`。建议单独一轮，需先定"历史与流量榜按连接归属"的语义。
 4. **B2 的收尾**：入站主题别名的线上验证（目前只有源码依据，见 §4.9）；桥接对 user-property 转发的字节级复核。
@@ -517,3 +567,6 @@ error: linking with `link.exe` failed
 **第三轮新增**：`src-tauri/src/{topic,sysmonitor}.rs`、`src/components/ops/OpsPanel.tsx`（看门狗 / `$SYS` / 诊断）
 **第四轮新增**：`src-tauri/src/{scheduler,bench}.rs`、`src/hooks/{useSchedules,useBench}.ts`、`tests/ui/{scheduler,bench,v5-properties,transfer-confirm}.spec.ts`
 **第五轮修改**：`src-tauri/src/{bridge,history,diagnostics,mqtt_manager,lib}.rs`（P0-1/P0-2/P0-3 + 取消/finalize 所有权）、`src/components/ops/OpsPanel.tsx`、`src/types.ts`、`src/i18n/index.ts`
+
+**第六轮新增**：`src-tauri/src/rpc.rs`（请求/响应状态机，13 条单元测试）、`src/hooks/useRpc.ts`、`src/components/mqttx/RpcPanel.tsx`、`tests/ui/rpc.spec.ts`
+**第六轮修改**：`src-tauri/src/{mqtt_manager,lib,diagnostics}.rs`、`src/{App.tsx,types.ts,i18n/index.ts}`、`src/components/mqttx/MessagePublisher.tsx`、`src/components/ops/OpsPanel.tsx`、`tests/ui/{bench,v5-properties,subscribe-options}.spec.ts`（mock 补 `rpc_list`）

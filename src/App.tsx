@@ -34,6 +34,8 @@ import { useBrokerSys } from './hooks/useBrokerSys';
 import { useHistoryCount } from './hooks/useHistoryCount';
 import { useTransfers } from './hooks/useTransfers';
 import { useBatchSender } from './hooks/useBatchSender';
+import { useRpc } from './hooks/useRpc';
+import { RpcPanel } from './components/mqttx/RpcPanel';
 
 const MODE_TITLES: Record<WorkspaceMode, (t: Translations) => string> = {
   transfer: (t) => t.modeFileTransfer,
@@ -183,6 +185,9 @@ export function App() {
   };
 
   const isV5 = (broker.config.protocolVersion ?? 3) === 5;
+
+  // Request/response calls live in Rust; the console lists them while it is open
+  const rpc = useRpc(activeMode === 'mqttx', broker.isConnected);
 
   return (
     <div className="min-h-screen flex overflow-hidden font-sans">
@@ -378,10 +383,13 @@ export function App() {
 
               <MessagePublisher
                 onPublishMessage={mqtt.publish}
+                onRpcRequest={isV5 && broker.isConnected ? rpc.request : undefined}
                 connected={broker.isConnected}
                 isV5={isV5}
                 t={t}
               />
+
+              {isV5 && <RpcPanel calls={rpc.calls} onClearFinished={rpc.clearFinished} t={t} />}
 
               {/* Console-side error surface for failed publishes */}
               {broker.connectionError && (

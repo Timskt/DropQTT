@@ -127,6 +127,15 @@ pub struct FeedBatch {
     pub dropped: u64,
 }
 
+/// One terminal transition of a request/response call. Pending is not emitted:
+/// the caller already holds the call it just created.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcEvent {
+    pub kind: &'static str,
+    pub call: crate::rpc::RpcCall,
+}
+
 /// Cardinality guard for the traffic table. Configurable at runtime
 /// (platforms with tens of thousands of topics can raise it); when full we
 /// batch-evict the least recently active topics instead of refusing new ones.
@@ -161,6 +170,10 @@ pub struct MqttManager {
     pub scheduler: Arc<SchedulerManager>,
     /// Registry of built-in publish stress runs (latency + ack accounting)
     pub bench: Arc<BenchManager>,
+    /// MQTT5 request/response calls for this session
+    rpc: Mutex<crate::rpc::RpcRegistry>,
+    /// Refcounted interest in the response topics those calls declared
+    rpc_watch: Mutex<crate::rpc::ResponseWatch>,
     /// Optional persistent history store (attached at app setup)
     history: RwLock<Option<Arc<crate::history::HistoryStore>>>,
     /// Runtime-configurable tracking cap (LRU eviction when full)
@@ -205,6 +218,8 @@ impl MqttManager {
             silence_watchdog: Arc::new(SilenceWatchdog::default()),
             scheduler: Arc::new(SchedulerManager::new()),
             bench: Arc::new(crate::bench::BenchManager::new()),
+            rpc: Mutex::new(crate::rpc::RpcRegistry::default()),
+            rpc_watch: Mutex::new(crate::rpc::ResponseWatch::default()),
             history: RwLock::new(None),
             topic_stats_cap: std::sync::atomic::AtomicUsize::new(DEFAULT_TOPIC_STATS_CAP),
             base_topic: RwLock::new("dropqtt".to_string()),
@@ -282,6 +297,11 @@ impl MqttManager {
                 None => (false, String::new(), 1883, String::new(), false, false, 3),
             };
 
+        let rpc_stats = {
+            let reg = self.rpc.lock().await;
+            (reg.pending(), reg.timeouts())
+        };
+
         crate::diagnostics::MqttDiagnostics {
             configured,
             connected,
@@ -299,6 +319,8 @@ impl MqttManager {
             feed_dropped: self.feed_dropped.load(Ordering::SeqCst),
             feed_lost: self.feed_lost.load(Ordering::SeqCst),
             confirm_timeouts: self.confirm_timeouts.load(Ordering::SeqCst),
+            rpc_pending: rpc_stats.0,
+            rpc_timeouts: rpc_stats.1,
             topic_stats_count,
             scheduled_runs: self.scheduler.running_count(),
             bench_runs: self.bench.running_count(),
@@ -501,6 +523,19 @@ impl MqttManager {
         // here, which is what makes a broker switch reset the registry.
         self.scheduler.stop_all();
         self.bench.stop_all();
+        // No answer can arrive on a link we just closed, so open calls finish as
+        // timeouts and their temporary response subscriptions are not replayed
+        // onto the next broker.
+        let expired: Vec<crate::rpc::RpcCall> = {
+            let mut reg = self.rpc.lock().await;
+            reg.expire_all()
+        };
+        for call in expired {
+            let dead = self.rpc_watch.lock().await.release(&call.response_topic);
+            if let Some(dead) = dead {
+                let _ = self.unsubscribe_topic(dead).await;
+            }
+        }
 
         let control = self.loop_control.lock().await.take();
         let client = self.client.write().await.take();
@@ -995,6 +1030,184 @@ impl MqttManager {
     }
 
     // ------------------------------------------------------------------
+    // Request / response (MQTT5)
+    // ------------------------------------------------------------------
+
+    /// Publish a request, open its response topic, and pair the answer by
+    /// correlation data. Returns the call as recorded so the UI can show which
+    /// response topic it settled on even when the user left that field blank.
+    pub async fn rpc_request(
+        self: &Arc<Self>,
+        app: AppHandle,
+        spec: crate::rpc::RpcSpec,
+    ) -> Result<crate::rpc::RpcCall, String> {
+        if spec.topic.trim().is_empty() {
+            return Err("Request topic must not be empty".to_string());
+        }
+        let timeout_ms = crate::rpc::clamp_timeout(spec.timeout_ms);
+        let base_topic = self.base_topic.read().await.clone();
+        let id = uuid::Uuid::new_v4().to_string();
+        let correlation = spec
+            .correlation_data
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| id.clone());
+        let response_topic = spec
+            .response_topic
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("{base_topic}/rpc/{}", &id[..8]));
+
+        // Subscribe before publishing: a peer that answers in microseconds must
+        // not be able to reply into a topic we have not opened yet.
+        let already_ours = self.subscriptions.lock().await.contains_key(&response_topic);
+        self.subscribe_topic(
+            response_topic.clone(),
+            crate::protocol::SubOptions {
+                qos: spec.qos.max(1),
+                ..Default::default()
+            },
+        )
+        .await?;
+        self.rpc_watch.lock().await.acquire(&response_topic, already_ours);
+
+        let params = ConsolePublishParams {
+            topic: spec.topic.clone(),
+            payload_base64: spec.payload_base64.clone(),
+            qos: spec.qos,
+            retain: spec.retain,
+            properties: PubProperties {
+                content_type: spec.content_type.clone(),
+                user_properties: spec.user_properties.clone(),
+                message_expiry: spec.message_expiry,
+                response_topic: Some(response_topic.clone()),
+                correlation_data: Some(correlation.clone()),
+                payload_format: spec.payload_format,
+                topic_alias: spec.topic_alias,
+            },
+        };
+        let sent_at_ms = chrono::Utc::now().timestamp_millis();
+        if let Err(e) = self.publish_console(app.clone(), params).await {
+            // The request never went out, so the topic we opened is ours to close.
+            let dead = self.rpc_watch.lock().await.release(&response_topic);
+            if let Some(dead) = dead {
+                let _ = self.unsubscribe_topic(dead).await;
+            }
+            return Err(e);
+        }
+
+        let call = crate::rpc::RpcCall {
+            id,
+            request_topic: spec.topic.clone(),
+            response_topic: response_topic.clone(),
+            correlation,
+            sent_at_ms,
+            timeout_ms,
+            state: crate::rpc::RpcState::Pending,
+            rtt_ms: None,
+            reply: None,
+            paired_by_position: false,
+        };
+        self.rpc.lock().await.record(call.clone());
+
+        let manager = self.clone();
+        let tid = call.id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(timeout_ms)).await;
+            let expired = {
+                let mut reg = manager.rpc.lock().await;
+                reg.expire(&tid)
+            };
+            if let Some(call) = expired {
+                let dead = manager.rpc_watch.lock().await.release(&call.response_topic);
+                if let Some(dead) = dead {
+                    let _ = manager.unsubscribe_topic(dead).await;
+                }
+                let _ = app.emit(
+                    "rpc-event",
+                    RpcEvent {
+                        kind: "timeout",
+                        call,
+                    },
+                );
+            }
+        });
+
+        Ok(call)
+    }
+
+    pub async fn rpc_list(&self) -> Vec<crate::rpc::RpcCall> {
+        self.rpc.lock().await.snapshot()
+    }
+
+    pub async fn rpc_clear_finished(&self) -> usize {
+        let dropped: Vec<String> = {
+            let reg = self.rpc.lock().await;
+            reg.snapshot()
+                .iter()
+                .filter(|c| c.state != crate::rpc::RpcState::Pending)
+                .map(|c| c.response_topic.clone())
+                .collect()
+        };
+        let n = self.rpc.lock().await.clear_finished();
+        // Rows cleared from the list are calls that already finished; make sure
+        // no watch is left holding a subscription they were the last user of.
+        for topic in dropped {
+            let dead = self.rpc_watch.lock().await.release(&topic);
+            if let Some(dead) = dead {
+                let _ = self.unsubscribe_topic(dead).await;
+            }
+        }
+        n
+    }
+
+    /// Try to pair an inbound message with an open request.
+    #[allow(clippy::too_many_arguments)]
+    async fn rpc_observe(
+        &self,
+        app: &AppHandle,
+        topic: &str,
+        correlation: Option<&str>,
+        payload: &[u8],
+        qos: u8,
+        retain: bool,
+        content_type: Option<&str>,
+    ) {
+        if self.rpc.lock().await.pending() == 0 {
+            return;
+        }
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let reply = crate::rpc::RpcReply {
+            topic: topic.to_string(),
+            payload_base64: base64::engine::general_purpose::STANDARD.encode(payload),
+            payload_len: payload.len(),
+            qos,
+            retain,
+            correlation_data: correlation.map(str::to_string),
+            content_type: content_type.map(str::to_string),
+            timestamp_ms: now_ms,
+        };
+        let matched = {
+            let mut reg = self.rpc.lock().await;
+            reg.match_reply(topic, correlation, now_ms, reply)
+        };
+        let Some(matched) = matched else {
+            return;
+        };
+        let dead = self.rpc_watch.lock().await.release(&matched.response_topic);
+        if let Some(dead) = dead {
+            let _ = self.unsubscribe_topic(dead).await;
+        }
+        let _ = app.emit(
+            "rpc-event",
+            RpcEvent {
+                kind: "resolved",
+                call: matched,
+            },
+        );
+    }
+
+    // ------------------------------------------------------------------
     // Scheduled publishing
     // ------------------------------------------------------------------
 
@@ -1174,6 +1387,19 @@ impl MqttManager {
             };
             self.push_feed(msg).await;
         }
+
+        // Pair against open requests before the transfer dispatch: a response
+        // topic can live anywhere in the tree, including inside a chunk tree.
+        self.rpc_observe(
+            app,
+            &topic,
+            publish.correlation_data.as_deref(),
+            &publish.payload,
+            publish.qos,
+            publish.retain,
+            publish.content_type.as_deref(),
+        )
+        .await;
 
         if topic.ends_with("/meta") {
             self.handle_meta(app, &topic, publish.payload).await;

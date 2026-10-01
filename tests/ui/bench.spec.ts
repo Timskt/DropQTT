@@ -51,6 +51,7 @@ const boot = async (page: any, startReply: 'ok' | 'reject' = 'ok') => {
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];
         if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
         if (cmd === 'schedule_list') return [];
+        if (cmd === 'rpc_list') return [];
         if (cmd === 'bench_progress') return w.__runs.map((r: any) => ({ ...r }));
         if (cmd === 'bench_start' && mode === 'reject') {
           throw 'rate must be between 1 and 20000 msg/s';

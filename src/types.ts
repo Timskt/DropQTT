@@ -260,6 +260,56 @@ export interface HistoryStats {
   lostRows?: number;
 }
 
+// ---- MQTT5 request / response ----
+
+export type RpcState = 'pending' | 'resolved' | 'timeout';
+
+export interface RpcReply {
+  topic: string;
+  payloadBase64: string;
+  payloadLen: number;
+  qos: number;
+  retain: boolean;
+  correlationData?: string | null;
+  contentType?: string | null;
+  timestampMs: number;
+}
+
+export interface RpcCall {
+  id: string;
+  requestTopic: string;
+  responseTopic: string;
+  correlation: string;
+  sentAtMs: number;
+  timeoutMs: number;
+  state: RpcState;
+  rttMs?: number | null;
+  reply?: RpcReply | null;
+  /** The reply carried no correlation data, so it was paired by send order */
+  pairedByPosition: boolean;
+}
+
+/** What the publisher sends when "wait for the answer" is on. */
+export interface RpcSpec {
+  topic: string;
+  payloadBase64: string;
+  qos: number;
+  retain: boolean;
+  timeoutMs: number;
+  responseTopic?: string;
+  correlationData?: string;
+  contentType?: string;
+  userProperties?: [string, string][];
+  payloadFormat?: number;
+  topicAlias?: number;
+  messageExpiry?: number;
+}
+
+export interface RpcEvent {
+  kind: 'resolved' | 'timeout';
+  call: RpcCall;
+}
+
 // ---- Operations diagnostics ----
 
 export interface RuntimeInfo {
@@ -293,6 +343,8 @@ export interface MqttDiagnostics {
   benchRuns: number;
   /** Sends whose peer never sent a receipt, this session */
   confirmTimeouts: number;
+  rpcPending?: number;
+  rpcTimeouts?: number;
   historyAvailable: boolean;
   history: HistoryStats;
   downloadDir: string;

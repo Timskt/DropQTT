@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Send, Trash2, Sparkles, Code2, CheckCircle2, Sliders, Eye, Columns2, Eraser, Timer, Square, Play } from 'lucide-react';
-import { ConsolePublishParams, PubProperties, RunStatus } from '../../types';
+import { ConsolePublishParams, PubProperties, RpcCall, RpcSpec, RunStatus } from '../../types';
 import { Translations } from '../../i18n';
 import { PAYLOAD_FORMATS, PayloadError, PayloadFormat, payloadToBytes } from '../../utils/payload';
 import { renderTemplate, TEMPLATE_TOKENS } from '../../utils/template';
@@ -12,6 +12,8 @@ import { HtmlPreview, MarkdownView } from './RichText';
 
 interface MessagePublisherProps {
   onPublishMessage: (params: ConsolePublishParams) => Promise<void>;
+  /** When present and "await reply" is on, a publish becomes a request. */
+  onRpcRequest?: (spec: RpcSpec) => Promise<RpcCall>;
   connected: boolean;
   isV5: boolean;
   t: Translations;
@@ -83,6 +85,7 @@ const RUN_STATUS_LABEL: Record<RunStatus, (t: Translations) => string> = {
 
 export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   onPublishMessage,
+  onRpcRequest,
   connected,
   isV5,
   t,
@@ -127,6 +130,12 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   // '' leaves the Payload Format Indicator off the wire entirely
   const [payloadFormat, setPayloadFormat] = useState<'' | '0' | '1'>('');
   const [topicAlias, setTopicAlias] = useState('');
+  // Request/response is a per-publish choice, so it deliberately does not persist.
+  const [rpcMode, setRpcMode] = useState(false);
+  const [rpcTimeoutMs, setRpcTimeoutMs] = usePersistentState<number>(
+    'dropqtt_console_rpc_timeout',
+    5_000,
+  );
 
   // Scheduled publishing is driven by the backend; these are just the parameters
   // for the next run the user starts.
@@ -227,11 +236,45 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic, connected, payload, format, buildProps, qos, retain]);
 
+  const rememberTopic = useCallback(() => {
+    setRecentTopics((prev) => [topic.trim(), ...prev.filter((tp) => tp !== topic.trim())].slice(0, 8));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic]);
+
   const doPublish = async () => {
     if (!topic.trim() || !connected || isPublishing) return;
     setIsPublishing(true);
     setErrorText(null);
-    const ok = await publishNow();
+    let ok = false;
+    try {
+      if (rpcMode && onRpcRequest) {
+        // Same rendering as a manual publish, then handed to the request machine
+        // so the response topic and correlation data go on the wire with it.
+        const rendered = renderTemplate(payload, counterRef.current);
+        const bytes = payloadToBytes(format as PayloadFormat, rendered);
+        const props = buildProps();
+        await onRpcRequest({
+          topic: topic.trim(),
+          payloadBase64: uint8ToBase64(bytes),
+          qos,
+          retain,
+          timeoutMs: Math.round(rpcTimeoutMs) || 5_000,
+          responseTopic: props.responseTopic,
+          correlationData: props.correlationData,
+          contentType: props.contentType,
+          userProperties: props.userProperties,
+          payloadFormat: props.payloadFormat,
+          topicAlias: props.topicAlias,
+          messageExpiry: props.messageExpiry,
+        });
+        rememberTopic();
+        ok = true;
+      } else {
+        ok = await publishNow();
+      }
+    } catch (err) {
+      setErrorText(err instanceof PayloadError ? err.message : String(err));
+    }
     if (ok) {
       setSuccessToast(true);
       setTimeout(() => setSuccessToast(false), 2000);
@@ -598,6 +641,37 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 title={t.correlationDataHint}
               />
             </div>
+            {onRpcRequest && (
+              <div className="flex flex-wrap items-center gap-2">
+                <label
+                  className="flex items-center gap-1.5 text-[11px] cursor-pointer"
+                  title={t.rpcHint}
+                  htmlFor="dropqtt-rpc-await"
+                >
+                  <input
+                    type="checkbox"
+                    id="dropqtt-rpc-await"
+                    checked={rpcMode}
+                    onChange={(e) => setRpcMode(e.target.checked)}
+                    className="w-3 h-3"
+                  />
+                  <span style={{ color: 'var(--text-secondary)' }}>{t.rpcAwaitReply}</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px]" htmlFor="dropqtt-rpc-timeout">
+                  <span style={{ color: 'var(--text-muted)' }}>{t.rpcTimeoutLabel}</span>
+                  <input
+                    type="number"
+                    id="dropqtt-rpc-timeout"
+                    min={100}
+                    max={120000}
+                    value={rpcTimeoutMs}
+                    onChange={(e) => setRpcTimeoutMs(Number(e.target.value) || 5_000)}
+                    className="field-input text-[11px] w-24"
+                    title={t.rpcHint}
+                  />
+                </label>
+              </div>
+            )}
             {userProps.map(([k, v], idx) => (
               <div key={idx} className="flex items-center gap-2">
                 <input
