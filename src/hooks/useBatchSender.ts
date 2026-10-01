@@ -78,16 +78,27 @@ export function useBatchSender({ publishTopic, waitForSendComplete }: UseBatchSe
           });
 
           const final = await waitForSendComplete(transferId);
-          const ok = final.status === 'delivered' || final.status === 'sent';
+          // Only a receipt counts as success. "Every chunk went out" with nobody
+          // answering used to be reported as completed, which hid exactly the
+          // cases the user needs to act on.
+          const outcome =
+            final.status === 'delivered'
+              ? ('completed' as const)
+              : final.status === 'confirm_timeout' || final.status === 'sent'
+                ? ('unconfirmed' as const)
+                : ('failed' as const);
 
           setBatchFiles((prev) =>
             prev.map((item, idx) =>
               idx === i
                 ? {
                     ...item,
-                    status: ok ? 'completed' : 'failed',
+                    status: outcome,
                     transferId,
-                    error: ok ? undefined : final.errorMessage ?? final.status,
+                    error:
+                      outcome === 'completed'
+                        ? undefined
+                        : final.errorMessage ?? final.status,
                   }
                 : item,
             ),

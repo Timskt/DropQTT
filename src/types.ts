@@ -289,6 +289,8 @@ export interface MqttDiagnostics {
   scheduledRuns: number;
   /** Bench lab runs still publishing */
   benchRuns: number;
+  /** Sends whose peer never sent a receipt, this session */
+  confirmTimeouts: number;
   historyAvailable: boolean;
   history: HistoryStats;
   downloadDir: string;
@@ -496,7 +498,11 @@ export interface BatchFileItem {
   path: string;
   name: string;
   size: number;
-  status: 'pending' | 'sending' | 'completed' | 'failed';
+  /**
+   * All bytes left this machine but the peer never confirmed. Deliberately not
+   * folded into 'failed': the send may well have succeeded.
+   */
+  status: 'pending' | 'sending' | 'completed' | 'unconfirmed' | 'failed';
   progress?: number;
   speedBps?: number;
   transferId?: string;

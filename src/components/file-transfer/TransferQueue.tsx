@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import {
   Layers, ArrowUpRight, ArrowDownRight, Pause, Play, X, FolderOpen,
-  ShieldCheck, Check, Trash2, AlertTriangle,
+  ShieldCheck, Check, Trash2, AlertTriangle, RotateCcw,
 } from 'lucide-react';
 import { TransferProgress, TransferStatus } from '../../types';
 import { Translations } from '../../i18n';
@@ -14,6 +14,7 @@ interface TransferQueueProps {
   onReveal: (path: string) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onResend: (item: TransferProgress) => void;
   onClearFinished: () => void;
   t: Translations;
 }
@@ -94,7 +95,7 @@ const IconAction: React.FC<{ title: string; hoverVar: string; onClick: () => voi
 );
 
 const TransferRow = React.memo(function TransferRow({
-  item, t, onPause, onResume, onCancel, onReveal, onApprove, onReject,
+  item, t, onPause, onResume, onCancel, onReveal, onApprove, onReject, onResend,
 }: {
   item: TransferProgress;
   t: Translations;
@@ -104,6 +105,7 @@ const TransferRow = React.memo(function TransferRow({
   onReveal: (path: string) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onResend: (item: TransferProgress) => void;
 }) {
   const percent =
     item.totalBytes > 0
@@ -203,6 +205,15 @@ const TransferRow = React.memo(function TransferRow({
               <FolderOpen className="w-3 h-3" />
             </IconAction>
           )}
+          {/* A send that got no receipt, or failed outright, can be retried —
+              as a new transfer, never as a replay of the same id. */}
+          {isSend &&
+            item.savePath &&
+            (item.status === 'confirm_timeout' || item.status === 'failed') && (
+              <IconAction title={t.resendHint} hoverVar="var(--info)" onClick={() => onResend(item)}>
+                <RotateCcw className="w-3 h-3" />
+              </IconAction>
+            )}
         </div>
       </div>
 
@@ -244,11 +255,16 @@ const TransferRow = React.memo(function TransferRow({
 });
 
 export const TransferQueue: React.FC<TransferQueueProps> = ({
-  transfers, onPause, onResume, onCancel, onReveal, onApprove, onReject, onClearFinished, t,
+  transfers, onPause, onResume, onCancel, onReveal, onApprove, onReject, onResend, onClearFinished, t,
 }) => {
   const items = useMemo(() => Object.values(transfers).reverse(), [transfers]);
   const finishedCount = items.filter(
-    (i) => i.status === 'completed' || i.status === 'failed' || i.status === 'cancelled' || i.status === 'delivered',
+    (i) =>
+      i.status === 'completed' ||
+      i.status === 'failed' ||
+      i.status === 'cancelled' ||
+      i.status === 'delivered' ||
+      i.status === 'confirm_timeout',
   ).length;
 
   return (
@@ -284,6 +300,7 @@ export const TransferQueue: React.FC<TransferQueueProps> = ({
                 onReveal={onReveal}
                 onApprove={onApprove}
                 onReject={onReject}
+                onResend={onResend}
               />
             </div>
           ))}

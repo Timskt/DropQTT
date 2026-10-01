@@ -32,10 +32,26 @@ const CHUNK_OPTIONS = [
 const OPT_STYLE = { background: 'var(--bg-panel-solid)', color: 'var(--text-primary)' };
 
 const statusChip = (status: string) =>
-  status === 'completed' ? 'chip-ok' : status === 'sending' ? 'chip-info animate-pulse' : status === 'failed' ? 'chip-bad' : 'chip-neutral';
+  status === 'completed'
+    ? 'chip-ok'
+    : status === 'sending'
+      ? 'chip-info animate-pulse'
+      : status === 'unconfirmed'
+        ? 'chip-warn'
+        : status === 'failed'
+          ? 'chip-bad'
+          : 'chip-neutral';
 
 const statusLabel = (status: string, t: Translations) =>
-  status === 'completed' ? t.completed : status === 'sending' ? t.sending : t.pending;
+  status === 'completed'
+    ? t.completed
+    : status === 'sending'
+      ? t.sending
+      : status === 'unconfirmed'
+        ? t.confirmTimeout
+        : status === 'failed'
+          ? t.failed
+          : t.pending;
 
 export const BatchSender: React.FC<BatchSenderProps> = ({
   publishTopic,
@@ -228,7 +244,10 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
                   </div>
 
                   <div className="flex items-center space-x-3">
-                    <span className={`chip ${statusChip(file.status)}`}>{statusLabel(file.status, t)}</span>
+                    {/* The reason was previously computed and then never shown. */}
+                    <span className={`chip ${statusChip(file.status)}`} title={file.error}>
+                      {statusLabel(file.status, t)}
+                    </span>
                     {!isSending && (
                       <button
                         onClick={(e) => { e.stopPropagation(); onRemoveFile(file.id); }}

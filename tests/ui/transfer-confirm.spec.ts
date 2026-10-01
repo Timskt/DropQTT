@@ -60,7 +60,10 @@ const progress = (over: any) => ({
   direction: 'send', bytesTransferred: 1048576, totalBytes: 1048576,
   chunksTransferred: 16, totalChunks: 16, speedBps: 0,
   status: 'confirm_timeout', errorMessage: 'peer never confirmed the transfer',
-  sha256: '9794449e9dbdf3cf', ...over,
+  sha256: '9794449e9dbdf3cf',
+  // For a send row this is the source file, which is what a resend re-reads.
+  savePath: '/tmp/archive-1mb.bin',
+  ...over,
 });
 
 test('an unconfirmed send gets its own terminal state, not a silent success', async ({ page }) => {
@@ -94,4 +97,42 @@ test('a confirmed send still reads as verified, and the two never merge', async 
   // one that never did.
   await expect(page.getByText('archive-1mb.bin')).toBeVisible();
   await expect(page.getByText('photo-2mb.bin')).toBeVisible();
+});
+
+test('an unconfirmed send can be re-sent as a new transfer', async ({ page }) => {
+  await boot(page);
+  await expect
+    .poll(async () => {
+      await page.evaluate((p) => (window as any).__fire('transfer-progress', p), progress({}));
+      return page.getByText('Sent · peer never confirmed').isVisible().catch(() => false);
+    })
+    .toBe(true);
+
+  await page.getByRole('button', { name: 'Resend as a new transfer' }).click();
+
+  await expect
+    .poll(async () =>
+      (await page.evaluate(() => (window as any).calls)).filter((c: any) => c.cmd === 'start_send_file').at(-1),
+    )
+    .toMatchObject({
+      args: {
+        // Same source file and same prefix; the backend mints a fresh transfer id,
+        // because replaying the old id would be deduped by a mid-flight receiver.
+        filePath: '/tmp/archive-1mb.bin',
+        customPublishTopic: 'deaf/files',
+        chunkSize: 65536,
+        qos: 1,
+      },
+    });
+});
+
+test('a timed-out row is clearable', async ({ page }) => {
+  await boot(page);
+  await expect
+    .poll(async () => {
+      await page.evaluate((p) => (window as any).__fire('transfer-progress', p), progress({}));
+      return page.getByText('Sent · peer never confirmed').isVisible().catch(() => false);
+    })
+    .toBe(true);
+  await expect(page.getByRole('button', { name: /Clear Finished|清除已结束/ })).toBeVisible();
 });

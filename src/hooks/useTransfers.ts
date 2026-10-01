@@ -79,12 +79,42 @@ export function useTransfers() {
     await runWithToast(() => invoke('reveal_file', { filePath: path }), 'Reveal failed');
   }, []);
 
+  /**
+   * Re-send a file whose peer never confirmed. This starts a *new* transfer
+   * rather than replaying the old id: a receiver that is mid-transfer dedupes
+   * by id and would ignore the replay, while one that already saved the file
+   * would be handed a second copy under a "(1)" name either way. A fresh id is
+   * the only option whose worst case is a visible duplicate.
+   */
+  const resendTransfer = useCallback(
+    async (item: TransferProgress) => {
+      if (!item.savePath) return;
+      const chunks = Math.max(1, item.totalChunks);
+      const chunkSize = Math.ceil(Math.max(1, item.totalBytes) / chunks);
+      await runWithToast(
+        () =>
+          invoke<string>('start_send_file', {
+            filePath: item.savePath,
+            chunkSize,
+            qos: 1,
+            customPublishTopic: item.channel || undefined,
+          }),
+        'Resend failed',
+      );
+    },
+    [],
+  );
+
   const clearFinished = useCallback(() => {
     setTransfers((prev) => {
       const next: Record<string, TransferProgress> = {};
       for (const [id, t] of Object.entries(prev)) {
         const terminal =
-          t.status === 'delivered' || t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
+          t.status === 'delivered' ||
+          t.status === 'completed' ||
+          t.status === 'confirm_timeout' ||
+          t.status === 'failed' ||
+          t.status === 'cancelled';
         if (!terminal) next[id] = t;
       }
       return next;
@@ -95,30 +125,22 @@ export function useTransfers() {
   const waitForSendComplete = useCallback((transferId: string): Promise<TransferProgress> => {
     return new Promise((resolve) => {
       const started = Date.now();
-      let sentAt: number | null = null;
 
       const timer = setInterval(() => {
         const t = transfersRef.current[transferId];
-        if (t) {
-          if (
-            t.status === 'delivered' ||
+        if (
+          t &&
+          (t.status === 'delivered' ||
             t.status === 'failed' ||
-            t.status === 'cancelled'
-          ) {
-            clearInterval(timer);
-            resolve(t);
-            return;
-          }
-          if (t.status === 'sent') {
-            // All chunks published; allow a grace window for the receiver's
-            // COMPLETED/ERROR receipt before declaring "sent without receipt".
-            if (sentAt === null) sentAt = Date.now();
-            else if (Date.now() - sentAt > 60_000) {
-              clearInterval(timer);
-              resolve(t);
-              return;
-            }
-          }
+            t.status === 'cancelled' ||
+            // The backend owns the "peer never confirmed" decision, and its
+            // window scales with the file size. Duplicating a guess here is how
+            // a batch ends up calling an unacknowledged send a success.
+            t.status === 'confirm_timeout')
+        ) {
+          clearInterval(timer);
+          resolve(t);
+          return;
         }
         // Hard safety net: never block a batch forever
         if (Date.now() - started > 30 * 60_000) {
@@ -153,6 +175,7 @@ export function useTransfers() {
     resumeTransfer,
     cancelTransfer,
     revealFile,
+    resendTransfer,
     clearFinished,
     waitForSendComplete,
   };

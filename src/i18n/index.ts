@@ -187,6 +187,7 @@ export interface Translations {
   opsTrackedTopics: string;
   opsScheduledRuns: string;
   opsBenchRuns: string;
+  opsConfirmTimeouts: string;
   opsBridgeConnections: string;
   opsEnabledRules: string;
   opsVersion: string;
@@ -430,6 +431,7 @@ export interface Translations {
   reject: string;
   sent: string;
   confirmTimeout: string;
+  resendHint: string;
   delivered: string;
   clearFinished: string;
   cancelBatch: string;
@@ -673,6 +675,7 @@ export const translations: Record<Language, Translations> = {
     opsTrackedTopics: '跟踪主题',
     opsScheduledRuns: '定时发布运行中',
     opsBenchRuns: '压测运行中',
+    opsConfirmTimeouts: '对端未确认的发送',
     opsBridgeConnections: '桥接连接',
     opsEnabledRules: '启用规则',
     opsVersion: '版本',
@@ -916,6 +919,7 @@ export const translations: Record<Language, Translations> = {
     reject: '拒绝',
     sent: '已发送·待对端确认',
     confirmTimeout: '已发送·对端未确认',
+    resendHint: '重新发送（作为一笔新传输）',
     delivered: '对端已确认接收',
     clearFinished: '清除已结束',
     cancelBatch: '终止批次',
@@ -1157,6 +1161,7 @@ export const translations: Record<Language, Translations> = {
     opsTrackedTopics: 'tracked topics',
     opsScheduledRuns: 'scheduled runs',
     opsBenchRuns: 'bench runs',
+    opsConfirmTimeouts: 'unconfirmed sends',
     opsBridgeConnections: 'Bridge connections',
     opsEnabledRules: 'enabled rules',
     opsVersion: 'Version',
@@ -1400,6 +1405,7 @@ export const translations: Record<Language, Translations> = {
     reject: 'Reject',
     sent: 'Sent · Awaiting Receipt',
     confirmTimeout: 'Sent · peer never confirmed',
+    resendHint: 'Resend as a new transfer',
     delivered: 'Delivered (peer confirmed)',
     clearFinished: 'Clear Finished',
     cancelBatch: 'Cancel Batch',
@@ -1641,6 +1647,7 @@ export const translations: Record<Language, Translations> = {
     opsTrackedTopics: '追蹤主題',
     opsScheduledRuns: '定時發布執行中',
     opsBenchRuns: '壓測執行中',
+    opsConfirmTimeouts: '對端未確認的發送',
     opsBridgeConnections: '橋接連線',
     opsEnabledRules: '啟用規則',
     opsVersion: '版本',
@@ -1884,6 +1891,7 @@ export const translations: Record<Language, Translations> = {
     reject: '拒絕',
     sent: '已發送·待對端確認',
     confirmTimeout: '已發送·對端未確認',
+    resendHint: '重新發送（作為一筆新傳輸）',
     delivered: '對端已確認接收',
     clearFinished: '清除已結束',
     cancelBatch: '終止批次',
@@ -2125,6 +2133,7 @@ export const translations: Record<Language, Translations> = {
     opsTrackedTopics: '追跡トピック',
     opsScheduledRuns: '定期発行の実行中',
     opsBenchRuns: 'ベンチの実行中',
+    opsConfirmTimeouts: '未確認の送信',
     opsBridgeConnections: 'ブリッジ接続',
     opsEnabledRules: '有効ルール',
     opsVersion: 'バージョン',
@@ -2368,6 +2377,7 @@ export const translations: Record<Language, Translations> = {
     reject: '拒否',
     sent: '送信完了·相手確認待ち',
     confirmTimeout: '送信完了·相手確認なし',
+    resendHint: '新しい転送として再送',
     delivered: '相手が受領確認',
     clearFinished: '完了分を消去',
     cancelBatch: 'バッチ中止',

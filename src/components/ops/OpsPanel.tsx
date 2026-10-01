@@ -221,6 +221,11 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                   value={snapshot.mqtt.benchRuns}
                   color={snapshot.mqtt.benchRuns ? 'var(--warn)' : 'var(--text-primary)'}
                 />
+                <Metric
+                  label={t.opsConfirmTimeouts}
+                  value={snapshot.mqtt.confirmTimeouts}
+                  color={snapshot.mqtt.confirmTimeouts ? 'var(--warn)' : 'var(--text-primary)'}
+                />
               </div>
             </Section>
 
