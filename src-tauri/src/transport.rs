@@ -99,7 +99,10 @@ pub enum NetEvent {
     ConnectionError(String),
     /// Incoming publish packet
     Publish(NormalizedPublish),
-    /// Any other packet we intentionally ignore (SubAck, PubAck, ...)
+    /// PUBACK (QoS1) or PUBCOMP (QoS2, i.e. the final half of the handshake)
+    /// for one of our publishes
+    PublishAcked,
+    /// Any other packet we intentionally ignore (SubAck, PubRec, ...)
     Other,
 }
 
@@ -338,6 +341,9 @@ impl MqttEventLoop {
                         correlation_data: None,
                     })
                 }
+                Ok(rumqttc::Event::Incoming(
+                    rumqttc::Packet::PubAck(_) | rumqttc::Packet::PubComp(_),
+                )) => NetEvent::PublishAcked,
                 Ok(_) => NetEvent::Other,
                 Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
             },
@@ -369,6 +375,10 @@ impl MqttEventLoop {
                         correlation_data,
                     })
                 }
+                Ok(rumqttc::v5::Event::Incoming(
+                    rumqttc::v5::mqttbytes::v5::Packet::PubAck(_)
+                    | rumqttc::v5::mqttbytes::v5::Packet::PubComp(_),
+                )) => NetEvent::PublishAcked,
                 Ok(_) => NetEvent::Other,
                 Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
             },

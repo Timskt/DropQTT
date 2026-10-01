@@ -405,6 +405,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               onChange={(e) => setRetain(e.target.checked)}
               className="rounded focus:ring-0"
               style={{ accentColor: 'var(--accent)' }}
+              aria-label={`${t.publisher} ${t.retain}`}
             />
             <span>{t.retain}</span>
           </label>

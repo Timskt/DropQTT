@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod bench;
 pub mod diagnostics;
 pub mod history;
 pub mod mqtt_manager;
@@ -239,15 +240,33 @@ async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 /// Built-in publish stress generator (loops back through our own subscription,
 /// exercising the batched feed + traffic stats under real load)
 #[tauri::command]
-async fn start_bench(
+async fn bench_start(
     app: AppHandle,
     state: State<'_, AppState>,
-    topic: String,
-    rate: u32,
-    size: u32,
-    duration: u32,
+    spec: bench::BenchSpec,
 ) -> Result<(), String> {
-    state.mqtt.start_bench(app, topic, rate, size, duration).await
+    state.mqtt.clone().bench_start(app, spec).await
+}
+
+#[tauri::command]
+async fn bench_progress(
+    state: State<'_, AppState>,
+) -> Result<Vec<bench::BenchProgress>, String> {
+    Ok(state.mqtt.bench_progress())
+}
+
+#[tauri::command]
+async fn bench_stop(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    state.mqtt.bench_stop(&app, &id).await
+}
+
+#[tauri::command]
+async fn bench_clear_finished(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(state.mqtt.bench_clear_finished())
 }
 
 #[tauri::command]
@@ -475,7 +494,10 @@ pub fn run() {
             clear_history,
             set_topic_stats_cap,
             get_topic_stats_cap,
-            start_bench,
+            bench_start,
+            bench_progress,
+            bench_stop,
+            bench_clear_finished,
             publish_console,
             schedule_start,
             schedule_stop,

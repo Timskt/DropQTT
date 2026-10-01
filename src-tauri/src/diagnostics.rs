@@ -42,6 +42,10 @@ pub struct MqttDiagnostics {
     /// archive queue was saturated. Non-zero means retention is incomplete.
     pub feed_lost: u64,
     pub topic_stats_count: usize,
+    /// Backend-scheduled publishes still running
+    pub scheduled_runs: usize,
+    /// Bench lab runs still publishing
+    pub bench_runs: usize,
     pub history_available: bool,
     pub history: HistoryStats,
     pub download_dir: String,
@@ -301,6 +305,8 @@ mod tests {
             feed_dropped: 0,
             feed_lost: 0,
             topic_stats_count: 4,
+            scheduled_runs: 0,
+            bench_runs: 0,
             history_available: true,
             history: HistoryStats {
                 rows: 12,

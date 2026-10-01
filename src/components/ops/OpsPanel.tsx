@@ -209,6 +209,18 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                 <Metric label={t.clientId} value={snapshot.mqtt.clientId || '—'} />
                 <Metric label={t.opsSubscriptions} value={snapshot.mqtt.subscriptions} />
                 <Metric label={t.opsTrackedTopics} value={snapshot.mqtt.topicStatsCount} />
+                {/* Background publishers keep running after the console is closed,
+                    so they have to be visible somewhere the user can audit. */}
+                <Metric
+                  label={t.opsScheduledRuns}
+                  value={snapshot.mqtt.scheduledRuns}
+                  color={snapshot.mqtt.scheduledRuns ? 'var(--ok)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsBenchRuns}
+                  value={snapshot.mqtt.benchRuns}
+                  color={snapshot.mqtt.benchRuns ? 'var(--warn)' : 'var(--text-primary)'}
+                />
               </div>
             </Section>
 

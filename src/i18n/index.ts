@@ -185,6 +185,8 @@ export interface Translations {
   opsNever: string;
   opsSubscriptions: string;
   opsTrackedTopics: string;
+  opsScheduledRuns: string;
+  opsBenchRuns: string;
   opsBridgeConnections: string;
   opsEnabledRules: string;
   opsVersion: string;
@@ -329,6 +331,12 @@ export interface Translations {
   benchHint: string;
   benchSent: string;
   benchFailed: string;
+  benchStop: string;
+  benchAcked: string;
+  benchObserved: string;
+  benchLatency: string;
+  benchClear: string;
+  benchDurationHint: string;
   capHint: string;
   exportTraffic: string;
   alertSummary: string;
@@ -654,6 +662,8 @@ export const translations: Record<Language, Translations> = {
     opsNever: '尚未采样',
     opsSubscriptions: '订阅数',
     opsTrackedTopics: '跟踪主题',
+    opsScheduledRuns: '定时发布运行中',
+    opsBenchRuns: '压测运行中',
     opsBridgeConnections: '桥接连接',
     opsEnabledRules: '启用规则',
     opsVersion: '版本',
@@ -790,7 +800,7 @@ export const translations: Record<Language, Translations> = {
     actualTopicNote: '按实际到达主题统计，非通配符过滤器',
     trafficCap: '主题数已达 1000 上限，新主题不再统计',
     benchLab: '压测台',
-    benchTopicPh: '压测主题 (回环计入自己的订阅统计)',
+    benchTopicPh: '压测主题，逗号或空格分隔 (回环计入自己的订阅统计)',
     benchRate: '速率/s',
     benchSize: '字节',
     benchDuration: '秒',
@@ -798,6 +808,12 @@ export const translations: Record<Language, Translations> = {
     benchHint: '向本地 broker 发布高压流量，验证统计精度与界面流畅度',
     benchSent: '已发送',
     benchFailed: '启动失败：检查连接状态',
+    benchStop: '停止',
+    benchAcked: '已确认',
+    benchObserved: '已采样',
+    benchLatency: '回环延迟',
+    benchClear: '清除已结束',
+    benchDurationHint: '0 = 直到手动停止',
     capHint: '主题跟踪上限（满时自动驱逐最久不活跃主题）',
     exportTraffic: '导出流量表 CSV',
     alertSummary: '发现 {n} 个异常快 topic（≥{x}/s）：',
@@ -1121,6 +1137,8 @@ export const translations: Record<Language, Translations> = {
     opsNever: 'Not sampled',
     opsSubscriptions: 'Subscriptions',
     opsTrackedTopics: 'tracked topics',
+    opsScheduledRuns: 'scheduled runs',
+    opsBenchRuns: 'bench runs',
     opsBridgeConnections: 'Bridge connections',
     opsEnabledRules: 'enabled rules',
     opsVersion: 'Version',
@@ -1257,7 +1275,7 @@ export const translations: Record<Language, Translations> = {
     actualTopicNote: 'Counted per actual arrived topic, not wildcard filter',
     trafficCap: 'Topic tracking hit the 1000 cap — new topics not counted',
     benchLab: 'Bench Lab',
-    benchTopicPh: 'Bench topic (loops back into your subscriptions)',
+    benchTopicPh: 'Bench topics, comma or space separated (loops back into your subscriptions)',
     benchRate: 'rate/s',
     benchSize: 'bytes',
     benchDuration: 'secs',
@@ -1265,6 +1283,12 @@ export const translations: Record<Language, Translations> = {
     benchHint: 'Publishes high-rate load to the broker to verify stat accuracy & UI smoothness',
     benchSent: 'sent',
     benchFailed: 'Start failed: check connection',
+    benchStop: 'Stop',
+    benchAcked: 'acked',
+    benchObserved: 'timed',
+    benchLatency: 'loopback latency',
+    benchClear: 'Clear finished',
+    benchDurationHint: '0 = until stopped',
     capHint: 'Topic tracking cap (LRU-evicts least active when full)',
     exportTraffic: 'Export traffic CSV',
     alertSummary: '{n} anomalously fast topics (≥{x}/s):',
@@ -1588,6 +1612,8 @@ export const translations: Record<Language, Translations> = {
     opsNever: '尚未取樣',
     opsSubscriptions: '訂閱數',
     opsTrackedTopics: '追蹤主題',
+    opsScheduledRuns: '定時發布執行中',
+    opsBenchRuns: '壓測執行中',
     opsBridgeConnections: '橋接連線',
     opsEnabledRules: '啟用規則',
     opsVersion: '版本',
@@ -1724,7 +1750,7 @@ export const translations: Record<Language, Translations> = {
     actualTopicNote: '按實際到達主題統計，非萬用字元過濾器',
     trafficCap: '主題數已達 1000 上限，新主題不再統計',
     benchLab: '壓測台',
-    benchTopicPh: '壓測主題（回環計入自己的訂閱統計）',
+    benchTopicPh: '壓測主題，逗號或空格分隔（回環計入自己的訂閱統計）',
     benchRate: '速率/s',
     benchSize: '位元組',
     benchDuration: '秒',
@@ -1732,6 +1758,12 @@ export const translations: Record<Language, Translations> = {
     benchHint: '向本地 broker 發布高壓流量，驗證統計精度與介面流暢度',
     benchSent: '已發送',
     benchFailed: '啟動失敗：檢查連線狀態',
+    benchStop: '停止',
+    benchAcked: '已確認',
+    benchObserved: '已採樣',
+    benchLatency: '回環延遲',
+    benchClear: '清除已結束',
+    benchDurationHint: '0 = 直到手動停止',
     capHint: '主題追蹤上限（滿時自動驅逐最久不活躍主題）',
     exportTraffic: '匯出流量表 CSV',
     alertSummary: '發現 {n} 個異常快 topic（≥{x}/s）：',
@@ -2055,6 +2087,8 @@ export const translations: Record<Language, Translations> = {
     opsNever: '未取得',
     opsSubscriptions: '購読数',
     opsTrackedTopics: '追跡トピック',
+    opsScheduledRuns: '定期発行の実行中',
+    opsBenchRuns: 'ベンチの実行中',
     opsBridgeConnections: 'ブリッジ接続',
     opsEnabledRules: '有効ルール',
     opsVersion: 'バージョン',
@@ -2191,7 +2225,7 @@ export const translations: Record<Language, Translations> = {
     actualTopicNote: '実際に届いたトピック単位で集計（ワイルドカードではない）',
     trafficCap: 'トピック追跡が 1000 上限に到達 — 新規は非集計',
     benchLab: 'ベンチ台',
-    benchTopicPh: 'ベンチトピック（自分の購読にループバック）',
+    benchTopicPh: 'ベンチトピック（カンマ/スペース区切り、自分の購読にループバック）',
     benchRate: '速度/s',
     benchSize: 'バイト',
     benchDuration: '秒',
@@ -2199,6 +2233,12 @@ export const translations: Record<Language, Translations> = {
     benchHint: 'ブローカーへ高負荷送信し統計精度と UI 応答性を検証',
     benchSent: '送信済',
     benchFailed: '開始失敗：接続を確認してください',
+    benchStop: '停止',
+    benchAcked: 'ack 済み',
+    benchObserved: '計測数',
+    benchLatency: 'ループバック遅延',
+    benchClear: '終了分を消去',
+    benchDurationHint: '0 = 手動停止まで',
     capHint: 'トピック追跡上限（満杯時は最不活性を自動退避）',
     exportTraffic: 'トラフィック CSV エクスポート',
     alertSummary: '異常に速いトピック {n} 件（≥{x}/s）：',

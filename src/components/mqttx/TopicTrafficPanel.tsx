@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { Activity, Camera, Download, Flame, RotateCcw, Zap } from 'lucide-react';
-import { TopicStatRow } from '../../types';
+import React, { useMemo, useState } from 'react';
+import { Activity, Camera, Download, Flame, RotateCcw, Square, Zap } from 'lucide-react';
+import { BenchStatus, TopicStatRow } from '../../types';
 import { Translations } from '../../i18n';
 import { usePersistentState } from '../../hooks/usePersistentState';
+import { useBench } from '../../hooks/useBench';
 import { saveTextFile } from '../../utils/exportMessages';
 
 interface TopicTrafficPanelProps {
@@ -15,12 +14,6 @@ interface TopicTrafficPanelProps {
   cap: number;
   setCap: (cap: number) => void;
   t: Translations;
-}
-
-interface BenchProgress {
-  sent: number;
-  elapsedMs: number;
-  done?: boolean;
 }
 
 /** Snapshot row for delta comparison ("who ramped up since I looked") */
@@ -36,6 +29,20 @@ interface Snapshot {
 type SortKey = 'rate' | 'peak' | 'bytes' | 'count';
 
 const CAP_OPTIONS = [1000, 5000, 20000, 50000, 200000];
+
+const BENCH_COLOR: Record<BenchStatus, string> = {
+  running: 'var(--success)',
+  finished: 'var(--accent)',
+  stopped: 'var(--text-muted)',
+  failed: 'var(--danger)',
+};
+
+const BENCH_LABEL: Record<BenchStatus, (t: Translations) => string> = {
+  running: () => '',
+  finished: (t) => t.scheduleRunDone,
+  stopped: (t) => t.scheduleRunStopped,
+  failed: (t) => t.scheduleRunFailed,
+};
 
 const formatBytes = (n: number): string => {
   if (n < 1024) return `${n} B`;
@@ -114,41 +121,32 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
 
   // Built-in publish stress lab (loops back through our own subscription)
   const [benchOpen, setBenchOpen] = useState(false);
-  const [benchTopic, setBenchTopic] = useState('bench/hot');
+  const [benchTopics, setBenchTopics] = useState('bench/hot');
   const [benchRate, setBenchRate] = useState(3000);
   const [benchSize, setBenchSize] = useState(64);
+  const [benchQos, setBenchQos] = useState(0);
+  const [benchRetain, setBenchRetain] = useState(false);
   const [benchDuration, setBenchDuration] = useState(30);
-  const [bench, setBench] = useState<BenchProgress | null>(null);
+  const {
+    runs: benchRuns,
+    lastError: benchError,
+    start: startBenchRun,
+    stop: stopBenchRun,
+    clearFinished: clearBenchFinished,
+  } = useBench(benchOpen);
 
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    let disposed = false;
-    (async () => {
-      const fn = await listen<BenchProgress>('bench-progress', (e) => {
-        if (!disposed) setBench(e.payload);
-      });
-      if (disposed) fn();
-      else un = fn;
-    })();
-    return () => {
-      disposed = true;
-      un?.();
-    };
-  }, []);
-
-  const startBench = async () => {
-    try {
-      setBench({ sent: 0, elapsedMs: 0 });
-      await invoke('start_bench', {
-        topic: benchTopic.trim() || 'bench/hot',
-        rate: Math.max(1, Math.min(20000, benchRate)),
-        size: Math.max(1, Math.min(4096, benchSize)),
-        duration: Math.max(1, Math.min(300, benchDuration)),
-      });
-    } catch (e) {
-      setBench({ sent: -1, elapsedMs: 0 });
-      console.error('start_bench:', e);
-    }
+  const startBench = () => {
+    const topics = benchTopics.split(/[\s,]+/).filter(Boolean);
+    if (topics.length === 0) return;
+    void startBenchRun({
+      id: `bench-${Date.now().toString(36)}`,
+      topics,
+      rate: Math.max(1, Math.min(20000, benchRate)),
+      size: Math.max(1, Math.min(4096, benchSize)),
+      qos: benchQos,
+      retain: benchRetain,
+      durationSec: Math.max(0, Math.min(3600, benchDuration)),
+    });
   };
 
   return (
@@ -214,8 +212,8 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
 
       {benchOpen && (
         <div className="px-4 py-3 border-b space-y-2" style={{ borderColor: 'var(--border-panel)', background: 'var(--bg-inset)' }}>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-            <input className="field-input md:col-span-2 font-mono" placeholder={t.benchTopicPh} value={benchTopic} onChange={(e) => setBenchTopic(e.target.value)} spellCheck={false} />
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+            <input className="field-input md:col-span-2 font-mono" placeholder={t.benchTopicPh} value={benchTopics} onChange={(e) => setBenchTopics(e.target.value)} spellCheck={false} />
             <label className="flex items-center gap-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
               {t.benchRate}
               <input type="number" min={1} max={20000} className="field-input flex-1 min-w-0" value={benchRate} onChange={(e) => setBenchRate(Number(e.target.value))} />
@@ -226,16 +224,100 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
             </label>
             <label className="flex items-center gap-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
               {t.benchDuration}
-              <input type="number" min={1} max={300} className="field-input flex-1 min-w-0" value={benchDuration} onChange={(e) => setBenchDuration(Number(e.target.value))} />
+              <input
+                type="number" min={0} max={3600} className="field-input flex-1 min-w-0" value={benchDuration}
+                title={t.benchDurationHint}
+                onChange={(e) => setBenchDuration(Number(e.target.value))}
+              />
             </label>
+            <div className="flex items-center gap-2">
+              <select
+                className="field-input !py-0.5 !px-1 text-[10px]"
+                value={benchQos}
+                onChange={(e) => setBenchQos(Number(e.target.value))}
+                title="QoS"
+              >
+                <option value={0}>QoS 0</option>
+                <option value={1}>QoS 1</option>
+                <option value={2}>QoS 2</option>
+              </select>
+              <label className="flex items-center gap-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                <input
+                  type="checkbox" checked={benchRetain}
+                  onChange={(e) => setBenchRetain(e.target.checked)}
+                  style={{ accentColor: 'var(--accent)' }}
+                  aria-label={`${t.benchLab} ${t.retain}`}
+                />
+                {t.retain}
+              </label>
+            </div>
           </div>
+
+          {/* Live counters come from the backend run, not from this component */}
+          {benchRuns.length > 0 && (
+            <div className="space-y-1">
+              {benchRuns.map((r) => {
+                const rate = r.sent > 0 ? (r.sent / Math.max(1, r.elapsedMs)) * 1000 : 0;
+                return (
+                  <div key={r.id} className="space-y-0.5">
+                    <div className="flex items-center gap-2 text-[10px] font-mono">
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: BENCH_COLOR[r.status] }} />
+                      <span className="truncate" style={{ color: 'var(--text-primary)' }} title={r.topics.join(' ')}>
+                        {r.topics.join(' ')}
+                      </span>
+                      <span className="shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        {r.size}B · QoS {r.qos}
+                        {r.retain ? ' · R' : ''}
+                      </span>
+                      <span className="ml-auto shrink-0" style={{ color: 'var(--text-secondary)' }}>
+                        {r.sent.toLocaleString()} {t.benchSent}
+                        {r.qos > 0 ? ` · ${r.acked.toLocaleString()} ${t.benchAcked}` : ''}
+                        {` · ${rate.toFixed(0)}/s`}
+                      </span>
+                      <span className="shrink-0" style={{ color: r.latency.samples ? 'var(--accent)' : 'var(--text-muted)' }}>
+                        {r.latency.samples
+                          ? `p50 ${r.latency.p50Ms} · p95 ${r.latency.p95Ms} · p99 ${r.latency.p99Ms} ms`
+                          : `${t.benchObserved} 0`}
+                      </span>
+                      {r.status === 'running' ? (
+                        <button
+                          type="button"
+                          onClick={() => void stopBenchRun(r.id)}
+                          className="shrink-0 opacity-70 hover:opacity-100"
+                          title={t.benchStop}
+                        >
+                          <Square className="w-3 h-3" />
+                        </button>
+                      ) : (
+                        <span className="shrink-0" style={{ color: BENCH_COLOR[r.status] }}>
+                          {BENCH_LABEL[r.status](t)}
+                        </span>
+                      )}
+                    </div>
+                    {r.lastError && (
+                      <div className="pl-3.5 text-[10px] break-all" style={{ color: 'var(--danger)' }}>
+                        {r.lastError}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {benchRuns.some((r) => r.status !== 'running') && (
+                <button
+                  type="button"
+                  onClick={() => void clearBenchFinished()}
+                  className="text-[10px] underline opacity-60 hover:opacity-100"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {t.benchClear}
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-              {bench
-                ? bench.sent < 0
-                  ? t.benchFailed
-                  : `${bench.sent.toLocaleString()} ${t.benchSent} · ${(bench.elapsedMs / 1000).toFixed(1)}s`
-                : t.benchHint}
+            <span className="text-[10px] font-mono truncate" style={{ color: benchError ? 'var(--danger)' : 'var(--text-muted)' }}>
+              {benchError || (benchRuns.length ? '' : t.benchHint)}
             </span>
             <button onClick={startBench} disabled={!connected} className="btn-accent !py-1 text-[11px] flex items-center gap-1" title={connected ? '' : t.connect}>
               <Zap className="w-3 h-3" />

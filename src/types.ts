@@ -120,7 +120,6 @@ export interface ScheduleSpec {
 }
 
 export type RunStatus = 'running' | 'completed' | 'failed' | 'stopped';
-
 /** Live state of one run as reported by the scheduler registry. */
 export interface RunInfo {
   id: string;
@@ -136,6 +135,50 @@ export interface RunInfo {
   lastError?: string;
   startedAtMs: number;
   lastFireMs?: number;
+}
+
+// ---- Built-in publish stress lab ----
+
+export interface BenchSpec {
+  id: string;
+  /** Round-robin across these exact topics */
+  topics: string[];
+  /** Total messages per second across all topics */
+  rate: number;
+  size: number;
+  qos: number;
+  retain: boolean;
+  /** 0 = until stopped */
+  durationSec: number;
+}
+
+export interface LatencySummary {
+  samples: number;
+  dropped: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  maxMs: number;
+  meanMs: number;
+}
+
+export type BenchStatus = 'running' | 'finished' | 'stopped' | 'failed';
+
+export interface BenchProgress {
+  id: string;
+  topics: string[];
+  rate: number;
+  size: number;
+  qos: number;
+  retain: boolean;
+  sent: number;
+  /** PUBACK (QoS1) / PUBCOMP (QoS2) received for this run's publishes */
+  acked: number;
+  observed: number;
+  elapsedMs: number;
+  status: BenchStatus;
+  lastError?: string;
+  latency: LatencySummary;
 }
 
 /** MQTT v5 subscription options; ignored by the backend on v3.1.1 links. */
@@ -228,6 +271,10 @@ export interface MqttDiagnostics {
   /** Non-zero when overload also escaped SQLite retention. */
   feedLost: number;
   topicStatsCount: number;
+  /** Backend-scheduled publishes still running */
+  scheduledRuns: number;
+  /** Bench lab runs still publishing */
+  benchRuns: number;
   historyAvailable: boolean;
   history: HistoryStats;
   downloadDir: string;

@@ -14,6 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
+use crate::bench::{self, BenchManager, BenchProgress, BenchSpec, BenchStatus};
 use crate::protocol::*;
 use crate::scheduler::{self, RunStatus, ScheduleSpec, SchedulerManager};
 use crate::topic::wildcard_match;
@@ -158,6 +159,8 @@ pub struct MqttManager {
     pub silence_watchdog: Arc<SilenceWatchdog>,
     /// Registry of backend-scheduled publishes for this session
     pub scheduler: Arc<SchedulerManager>,
+    /// Registry of built-in publish stress runs (latency + ack accounting)
+    pub bench: Arc<BenchManager>,
     /// Optional persistent history store (attached at app setup)
     history: RwLock<Option<Arc<crate::history::HistoryStore>>>,
     /// Runtime-configurable tracking cap (LRU eviction when full)
@@ -196,6 +199,7 @@ impl MqttManager {
             sys_metrics: Mutex::new(HashMap::new()),
             silence_watchdog: Arc::new(SilenceWatchdog::default()),
             scheduler: Arc::new(SchedulerManager::new()),
+            bench: Arc::new(crate::bench::BenchManager::new()),
             history: RwLock::new(None),
             topic_stats_cap: std::sync::atomic::AtomicUsize::new(DEFAULT_TOPIC_STATS_CAP),
             base_topic: RwLock::new("dropqtt".to_string()),
@@ -288,6 +292,8 @@ impl MqttManager {
             feed_dropped: self.feed_dropped.load(Ordering::SeqCst),
             feed_lost: self.feed_lost.load(Ordering::SeqCst),
             topic_stats_count,
+            scheduled_runs: self.scheduler.running_count(),
+            bench_runs: self.bench.running_count(),
             history_available,
             history,
             download_dir: download_dir.to_string_lossy().to_string(),
@@ -393,6 +399,11 @@ impl MqttManager {
                     NetEvent::Publish(publish) => {
                         this.route_message(&app_handle, publish).await;
                     }
+                    NetEvent::PublishAcked => {
+                        // Only the bench lab cares, and it compares this against
+                        // `sent` to show client-side backpressure.
+                        this.bench.record_ack();
+                    }
                     NetEvent::Other => {}
                 }
             }
@@ -479,6 +490,7 @@ impl MqttManager {
         // it instead of erroring against a dropped client. connect() also lands
         // here, which is what makes a broker switch reset the registry.
         self.scheduler.stop_all();
+        self.bench.stop_all();
 
         let control = self.loop_control.lock().await.take();
         let client = self.client.write().await.take();
@@ -783,79 +795,111 @@ impl MqttManager {
         self.topic_stats_cap.load(Ordering::SeqCst)
     }
 
-    /// Built-in publish stress generator: pushes `rate` msgs/sec of `size`
-    /// bytes to `topic` for `duration` seconds on the main session client.
-    /// Runs as a background task; a second call replaces the previous run.
-    pub async fn start_bench(
-        &self,
+    /// Built-in publish stress lab: pushes `rate` msgs/sec of `size` bytes across
+    /// `topics` for `duration_sec` (0 = until stopped) on the session client.
+    /// Runs live in `bench::BenchManager`, so they can be listed, stopped, and
+    /// timed from the copies the broker loops back to us.
+    pub async fn bench_start(
+        self: &Arc<Self>,
         app: AppHandle,
-        topic: String,
-        rate: u32,
-        size: u32,
-        duration: u32,
+        spec: BenchSpec,
     ) -> Result<(), String> {
+        self.bench.preflight(&spec)?;
         let client = self
             .client
             .read()
             .await
             .clone()
             .ok_or_else(|| "MQTT client not connected".to_string())?;
-        if topic.trim().is_empty() {
-            return Err("bench topic must not be empty".to_string());
-        }
-        let rate = rate.clamp(1, 20_000);
-        let size = size.clamp(1, 4096) as usize;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let manager = self.clone();
+        let task_app = app.clone();
+        let task_spec = spec.clone();
+        let task_cancel = cancel.clone();
+        let handle = tokio::spawn(async move {
+            manager
+                .run_bench(task_app, client, task_spec, task_cancel)
+                .await
+        });
+        self.bench.register(spec, cancel, handle);
+        Ok(())
+    }
 
-        let payload = Bytes::from(
-            (0..size)
-                .map(|i| (b'a' + (i % 26) as u8) as char)
-                .collect::<String>(),
-        );
-        let topic = std::sync::Arc::new(topic);
-        let seq = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-
-        let app_out = app.clone();
-        let seq_out = seq.clone();
-        tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_micros(1_000_000 / rate as u64));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            let mut ticker =
-                tokio::time::interval(std::time::Duration::from_millis(500));
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            let start = Instant::now();
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        seq_out.fetch_add(1, Ordering::SeqCst);
-                        let _ = client
-                            .publish(&topic, 0, false, payload.clone(), None)
-                            .await;
+    async fn run_bench(
+        self: &Arc<Self>,
+        app: AppHandle,
+        client: MqttClient,
+        spec: BenchSpec,
+        cancel: Arc<AtomicBool>,
+    ) {
+        // Absolute grid, same reasoning as `run_schedule`: `rate` is a total across
+        // topics, so one message leaves every 1e6/rate microseconds.
+        let period = std::time::Duration::from_micros(1_000_000 / spec.rate as u64);
+        let mut next = tokio::time::Instant::now();
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let limit =
+            (spec.duration_sec > 0).then(|| std::time::Duration::from_secs(spec.duration_sec as u64));
+        let started = Instant::now();
+        let mut seq: u32 = 0;
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(next) => {
+                    if cancel.load(Ordering::SeqCst) {
+                        return;
                     }
-                    _ = ticker.tick() => {
-                        let _ = app_out.emit(
-                            "bench-progress",
-                            serde_json::json!({
-                                "sent": seq_out.load(Ordering::SeqCst),
-                                "elapsedMs": start.elapsed().as_millis() as u64,
-                            }),
-                        );
+                    if let Some(limit) = limit {
+                        if started.elapsed() >= limit {
+                            self.bench.finish(&spec.id, BenchStatus::Finished, None);
+                            self.emit_bench_progress(&app).await;
+                            return;
+                        }
+                    }
+                    let topic = spec.topics[(seq as usize) % spec.topics.len()].clone();
+                    let payload = Bytes::from(bench::bench_payload(
+                        spec.size as usize,
+                        seq,
+                        chrono::Utc::now().timestamp_millis(),
+                    ));
+                    if let Err(e) = client.publish(&topic, spec.qos, spec.retain, payload, None).await {
+                        self.bench.finish(&spec.id, BenchStatus::Failed, Some(e.to_string()));
+                        self.emit_bench_progress(&app).await;
+                        return;
+                    }
+                    seq = seq.wrapping_add(1);
+                    self.bench.record_sent(&spec.id);
+                    next += period;
+                    if tokio::time::Instant::now() > next + period {
+                        next = tokio::time::Instant::now();
                     }
                 }
-                if start.elapsed() >= std::time::Duration::from_secs(duration as u64) {
-                    break;
+                _ = ticker.tick() => {
+                    self.emit_bench_progress(&app).await;
                 }
             }
-            let _ = app_out.emit(
-                "bench-progress",
-                serde_json::json!({
-                    "sent": seq_out.load(Ordering::SeqCst),
-                    "elapsedMs": start.elapsed().as_millis() as u64,
-                    "done": true,
-                }),
-            );
-        });
+        }
+    }
+
+    pub fn bench_progress(&self) -> Vec<BenchProgress> {
+        self.bench.progress()
+    }
+
+    pub async fn bench_stop(&self, app: &AppHandle, id: &str) -> Result<(), String> {
+        if !self.bench.stop(id) {
+            return Err(format!("no bench run named '{id}'"));
+        }
+        self.emit_bench_progress(app).await;
         Ok(())
+    }
+
+    pub fn bench_clear_finished(&self) -> usize {
+        self.bench.clear_finished()
+    }
+
+    /// One throttled event carries every run, so a 20k msg/s bench never emits
+    /// per-message and the panel still shows live percentiles.
+    async fn emit_bench_progress(&self, app: &AppHandle) {
+        let _ = app.emit("bench-progress", self.bench.progress());
     }
 
     pub async fn publish_console(
@@ -1044,6 +1088,9 @@ impl MqttManager {
         // Silence watchdog needs every publish, including $SYS, to be able to
         // watch broker-side topics too.
         self.silence_watchdog.observe(&topic, chrono::Utc::now().timestamp());
+        // Bench latency: a looped-back copy of our own publish carries the send
+        // timestamp, which is what makes publish-to-return timing measurable.
+        self.bench.observe(&topic, &publish.payload, chrono::Utc::now().timestamp_millis());
 
         // Broker $SYS metrics: capture latest value, keep out of feed + traffic.
         if topic.starts_with("$SYS/") {

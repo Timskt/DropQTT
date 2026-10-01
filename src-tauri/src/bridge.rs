@@ -529,6 +529,8 @@ impl BridgeManager {
                     NetEvent::Publish(publish) => {
                         this.route(&app_handle, &conn_id, publish).await;
                     }
+                    // Bridge links forward; nothing here waits on a publish ack.
+                    NetEvent::PublishAcked => {}
                     NetEvent::Other => {}
                 }
             }
