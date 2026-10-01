@@ -542,6 +542,30 @@ pub fn run() {
             bridge_reset_stats,
             bridge_test_transform
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let (mqtt, bridge) = {
+                    let state = window.state::<AppState>();
+                    (state.mqtt.clone(), state.bridge.clone())
+                };
+                let win = window.clone();
+                // Closing the window used to drop the process mid-session, so the
+                // broker saw an abnormal disconnect instead of a DISCONNECT. Hold
+                // the close briefly, tell both sides we are leaving, then destroy.
+                api.prevent_close();
+                tauri::async_runtime::spawn(async move {
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(1_200),
+                        async {
+                            mqtt.disconnect().await;
+                            bridge.disconnect_all().await;
+                        },
+                    )
+                    .await;
+                    let _ = win.destroy();
+                });
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

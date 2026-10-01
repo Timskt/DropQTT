@@ -1012,7 +1012,6 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
- "thiserror 1.0.69",
  "tokio",
  "uuid",
 ]

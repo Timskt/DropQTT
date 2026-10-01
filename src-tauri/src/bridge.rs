@@ -463,10 +463,18 @@ impl BridgeManager {
         // console's client id would get the older session kicked.
         let mut config = config;
         let suffix: String = uuid::Uuid::new_v4().simple().to_string()[..6].to_string();
-        config.client_id = format!("{}_b{}", config.client_id, suffix)
-            .chars()
-            .take(23)
-            .collect();
+        // The suffix is what keeps two bridged sessions apart, so it must survive
+        // any length cap: truncate the base instead of the whole string. MQTT 3.1
+        // recommends a 23-character id; v5 has no such limit.
+        let tail = format!("_b{}", suffix);
+        let budget = if config.is_v5() {
+            usize::MAX
+        } else {
+            23usize.saturating_sub(tail.chars().count())
+        };
+        let base: String = config.client_id.chars().take(budget).collect();
+        let base = if base.trim().is_empty() { "dropqtt".to_string() } else { base };
+        config.client_id = format!("{}{}", base, tail);
 
         let (client, mut eventloop) = build_connection(&config)?;
         let connected = Arc::new(AtomicBool::new(false));

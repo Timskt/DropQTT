@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { formatBytes } from '../../utils/format';
 import {
   Layers, ArrowUpRight, ArrowDownRight, Pause, Play, X, FolderOpen,
   ShieldCheck, Check, Trash2, AlertTriangle, RotateCcw,
@@ -19,13 +20,6 @@ interface TransferQueueProps {
   t: Translations;
 }
 
-const formatBytes = (bytes: number) => {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
 
 const formatSpeed = (bps: number) => {
   if (!bps || bps <= 0) return '0 B/s';

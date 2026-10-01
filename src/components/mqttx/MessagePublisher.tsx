@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { formatBytes } from '../../utils/format';
 import { Send, Trash2, Sparkles, Code2, CheckCircle2, Sliders, Eye, Columns2, Eraser, Timer, Square, Play } from 'lucide-react';
 import { ConsolePublishParams, PubProperties, RpcCall, RpcSpec, RunStatus } from '../../types';
 import { Translations } from '../../i18n';
@@ -67,7 +68,6 @@ interface PublisherDraft {
   retain: boolean;
 }
 
-const formatBytes = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(2)} KB`);
 
 const RUN_STATUS_COLOR: Record<RunStatus, string> = {
   running: 'var(--success)',
@@ -760,7 +760,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               title={t.payloadFormat}
             >
               <Sparkles className="w-3 h-3" />
-              <span>Template</span>
+              <span>{t.btnTemplate}</span>
             </button>
             {(format === 'json' || format === 'cbor') && (
               <>
@@ -771,7 +771,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                   className="flex items-center space-x-1 transition opacity-70 hover:opacity-100"
                 >
                   <Code2 className="w-3 h-3" />
-                  <span>Prettify</span>
+                  <span>{t.btnPrettify}</span>
                 </button>
               </>
             )}
@@ -861,7 +861,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
             className="btn-accent flex items-center space-x-2"
           >
             <Send className={`w-3.5 h-3.5 ${isPublishing ? 'animate-spin' : ''}`} />
-            <span>{isPublishing ? 'Publishing...' : t.publish}</span>
+            <span>{isPublishing ? t.publishingNow : t.publish}</span>
           </button>
         </div>
       </form>

@@ -3,6 +3,7 @@ import { marked, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
 import { copyToClipboard } from '../../utils/clipboard';
+import { currentTranslations } from '../../i18n';
 
 /**
  * Rich-text renderers for untrusted MQTT payloads.
@@ -57,7 +58,7 @@ marked.use({
         `<div class="md-pre">` +
           `<div class="md-pre-head">` +
             `<span class="md-pre-lang">${escapeHtml(label)}</span>` +
-            `<button type="button" class="md-copy" data-copy>Copy</button>` +
+            `<button type="button" class="md-copy" data-copy>${currentTranslations().copyBtn}</button>` +
           `</div>` +
           `<pre class="md-pre-body"><code class="hljs language-${escapeHtml(label)}">${html}</code></pre>` +
         `</div>`
@@ -106,10 +107,10 @@ export const MarkdownView: React.FC<{ text: string; className?: string }> = ({ t
     const code = block?.querySelector('code')?.textContent ?? '';
     const ok = await copyToClipboard(code);
     if (!ok) return;
-    btn.textContent = 'Copied ✓';
+    btn.textContent = currentTranslations().copiedBtn;
     btn.classList.add('md-copy-done');
     setTimeout(() => {
-      btn.textContent = 'Copy';
+      btn.textContent = currentTranslations().copyBtn;
       btn.classList.remove('md-copy-done');
     }, 1400);
   }, []);

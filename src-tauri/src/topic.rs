@@ -34,10 +34,110 @@ pub fn wildcard_match(filter: &str, topic: &str) -> bool {
     f.len() == t.len()
 }
 
+/// Longest topic name MQTT allows (two-byte length prefix in the packet).
+pub const MAX_TOPIC_LEN: usize = 65535;
+
+/// Why a string may not be used as a *publish* topic.
+///
+/// Wildcards are illegal in a PUBLISH (MQTT 5 §3.3.2.2 / 3.1.1 §4.7): a broker
+/// may drop the packet, reject it, or -- on some builds -- tear down the whole
+/// session. Empty levels are equally malformed. So the tool checks before it
+/// sends, instead of letting a typo cost the user their connection.
+///
+/// `$`-prefixed topics are deliberately allowed through: publishing to `$SYS/…`
+/// is a broker policy question, and a debugging client that refuses to try it
+/// cannot show what the broker actually does.
+pub fn publish_topic_error(topic: &str) -> Option<String> {
+    if topic.is_empty() {
+        return Some("Topic must not be empty".to_string());
+    }
+    if topic.contains('#') || topic.contains('+') {
+        return Some("A publish topic may not contain wildcards ('+' or '#')".to_string());
+    }
+    if topic.contains('\0') {
+        return Some("Topic may not contain a NUL character".to_string());
+    }
+    if topic.len() > MAX_TOPIC_LEN {
+        return Some(format!("Topic is longer than the {}-byte MQTT limit", MAX_TOPIC_LEN));
+    }
+    if topic.split('/').any(|seg| seg.is_empty()) {
+        return Some("Topic contains an empty level (check for a leading, trailing or doubled '/')".to_string());
+    }
+    None
+}
+
+/// Why a string may not be used as a *subscription filter*.
+pub fn filter_topic_error(filter: &str) -> Option<String> {
+    if filter.is_empty() {
+        return Some("Topic filter must not be empty".to_string());
+    }
+    if filter.contains('\0') {
+        return Some("Filter may not contain a NUL character".to_string());
+    }
+    if filter.len() > MAX_TOPIC_LEN {
+        return Some(format!("Filter is longer than the {}-byte MQTT limit", MAX_TOPIC_LEN));
+    }
+    let segs: Vec<&str> = filter.split('/').collect();
+    if segs.iter().any(|s| s.is_empty()) {
+        return Some("Filter contains an empty level (check for a leading, trailing or doubled '/')".to_string());
+    }
+    for (i, seg) in segs.iter().enumerate() {
+        if seg.contains('#') && (*seg != "#" || i != segs.len() - 1) {
+            return Some("'#' is only valid as the last level on its own".to_string());
+        }
+        if seg.contains('+') && *seg != "+" {
+            return Some("'+' must occupy a whole level, not sit inside one".to_string());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::wildcard_match;
+    use super::{filter_topic_error, publish_topic_error, wildcard_match};
 
+    #[test]
+    fn publish_topics_reject_wildcards_anywhere() {
+        assert!(publish_topic_error("dropqtt/+/status").is_some());
+        assert!(publish_topic_error("dropqtt/status/#").is_some());
+        assert!(publish_topic_error("a/b+#/c").is_some());
+        assert!(publish_topic_error("room/devices").is_none());
+    }
+
+    #[test]
+    fn publish_topics_reject_malformed_names() {
+        assert!(publish_topic_error("").is_some());
+        assert!(publish_topic_error("a//b").is_some());
+        assert!(publish_topic_error("/a/b").is_some());
+        assert!(publish_topic_error("a/b/").is_some());
+        assert!(publish_topic_error("a\0b").is_some());
+        assert!(publish_topic_error(&"a".repeat(70000)).is_some());
+    }
+
+    #[test]
+    fn publish_topics_still_allow_dollar_prefixed_names() {
+        // Deliberate: the broker is the authority on $SYS writes, and a debug
+        // client must be able to observe that refusal.
+        assert!(publish_topic_error("$SYS/test").is_none());
+    }
+
+    #[test]
+    fn filters_accept_the_legal_wildcard_shapes() {
+        assert!(filter_topic_error("a/#").is_none());
+        assert!(filter_topic_error("a/+/c").is_none());
+        assert!(filter_topic_error("#").is_none());
+        assert!(filter_topic_error("+/+").is_none());
+        assert!(filter_topic_error("$SYS/#").is_none());
+    }
+
+    #[test]
+    fn filters_reject_the_illegal_wildcard_shapes() {
+        assert!(filter_topic_error("a/#/c").is_some(), "'#' must be last");
+        assert!(filter_topic_error("a/b#").is_some(), "'#' must be a whole level");
+        assert!(filter_topic_error("a/b+c").is_some(), "'+' must be a whole level");
+        assert!(filter_topic_error("a//b").is_some());
+        assert!(filter_topic_error("").is_some());
+    }
     #[test]
     fn exact_match() {
         assert!(wildcard_match("a/b", "a/b"));

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { formatBytes as fmtBytes } from '../../utils/format';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Archive, RefreshCw, Search, Trash2, ArrowUpRight, ArrowDownRight, Clock,
@@ -28,7 +29,6 @@ const WINDOWS = [
 
 const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString();
 const fmtDateTime = (ms: number) => new Date(ms).toLocaleString();
-const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 /** Human span between two epoch-ms stamps (e.g. "2d 3h", "1m 20s"). */
 const fmtSpan = (from?: number | null, to?: number | null): string => {

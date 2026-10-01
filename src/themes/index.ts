@@ -236,7 +236,3 @@ export function applyTheme(theme: Theme) {
   root.dataset.theme = theme;
 }
 
-/** Back-compatible flat accessor used by legacy props */
-export function themeBodyBg(theme: Theme): string {
-  return themes[theme]?.tokens['--bg-app'] ?? themes.cyberpunk.tokens['--bg-app'];
-}

@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { toast } from '../utils/toast';
+import { currentTranslations } from '../i18n';
 import confetti from 'canvas-confetti';
 import { BatchFileItem, TransferProgress } from '../types';
 import { prefersReducedMotion } from '../utils/motion';
@@ -54,6 +56,8 @@ export function useBatchSender({ publishTopic, waitForSendComplete }: UseBatchSe
       setIsSendingBatch(true);
       cancelRef.current = false;
 
+      let delivered = 0;
+      let unconfirmedOrFailed = 0;
       for (let i = 0; i < queue.length; i++) {
         const current = queue[i];
         if (current.status === 'completed') continue;
@@ -88,6 +92,8 @@ export function useBatchSender({ publishTopic, waitForSendComplete }: UseBatchSe
                 ? ('unconfirmed' as const)
                 : ('failed' as const);
 
+          if (outcome === 'completed') delivered += 1;
+          else unconfirmedOrFailed += 1;
           setBatchFiles((prev) =>
             prev.map((item, idx) =>
               idx === i
@@ -104,6 +110,7 @@ export function useBatchSender({ publishTopic, waitForSendComplete }: UseBatchSe
             ),
           );
         } catch (err) {
+          unconfirmedOrFailed += 1;
           setBatchFiles((prev) =>
             prev.map((item, idx) => (idx === i ? { ...item, status: 'failed', error: String(err) } : item)),
           );
@@ -111,8 +118,20 @@ export function useBatchSender({ publishTopic, waitForSendComplete }: UseBatchSe
       }
 
       setIsSendingBatch(false);
-      if (!cancelRef.current && !prefersReducedMotion()) {
-        confetti({ particleCount: 80, spread: 80, origin: { y: 0.7 } });
+      // The celebration has to answer for what actually happened: a batch where
+      // 8 of 10 files never reached a peer is not a confetti moment.
+      if (!cancelRef.current) {
+        const rt = currentTranslations();
+        if (delivered > 0 && unconfirmedOrFailed === 0) {
+          if (!prefersReducedMotion()) confetti({ particleCount: 80, spread: 80, origin: { y: 0.7 } });
+          toast.success(rt.batchSummaryAll.replace('{count}', String(delivered)));
+        } else {
+          toast.error(
+            rt.batchSummaryPartial
+              .replace('{delivered}', String(delivered))
+              .replace('{other}', String(unconfirmedOrFailed)),
+          );
+        }
       }
     },
     [isSendingBatch, publishTopic, waitForSendComplete],

@@ -502,6 +502,26 @@ export interface Translations {
   rpcEmpty: string;
   opsRpcPending: string;
   opsRpcTimeouts: string;
+  uiWorkspaceMode: string;
+  modeSubTransfer: string;
+  modeSubConsole: string;
+  modeSubBridge: string;
+  btnTemplate: string;
+  btnPrettify: string;
+  publishingNow: string;
+  payloadTruncatedTip: string;
+  clickToExpand: string;
+  copyBtn: string;
+  copiedBtn: string;
+  chunkHintIot: string;
+  chunkHintRecommended: string;
+  chunkHintFast: string;
+  chunkHintLan: string;
+  chunkHintMax: string;
+  brokerUserPh: string;
+  subscribeFailedAtConnect: string;
+  batchSummaryAll: string;
+  batchSummaryPartial: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -1007,6 +1027,26 @@ export const translations: Record<Language, Translations> = {
     rpcEmpty: '还没有请求；打开“等待应答”后发布即成为请求',
     opsRpcPending: '待应答请求',
     opsRpcTimeouts: '无应答请求',
+    uiWorkspaceMode: '工作区模式',
+    modeSubTransfer: '分块传输',
+    modeSubConsole: '发布 / 订阅',
+    modeSubBridge: 'Broker ↔ Broker / HTTP',
+    btnTemplate: '模板',
+    btnPrettify: '格式化',
+    publishingNow: '发送中…',
+    payloadTruncatedTip: '控制台仅显示前段内容，展开行可看到完整报文',
+    clickToExpand: '⋯ 点击展开',
+    copyBtn: '复制',
+    copiedBtn: '已复制 ✓',
+    chunkHintIot: '(IoT / 受限链路)',
+    chunkHintRecommended: '(推荐)',
+    chunkHintFast: '(高速)',
+    chunkHintLan: '(局域网)',
+    chunkHintMax: '(最大)',
+    brokerUserPh: '用户名 / Token',
+    subscribeFailedAtConnect: '{count} 个订阅注册失败：{detail}',
+    batchSummaryAll: '{count} 个文件已送达并对端校验通过',
+    batchSummaryPartial: '{delivered} 个已送达，{other} 个未确认或失败',
   },
   'en': {
     appName: 'DropQTT',
@@ -1510,6 +1550,26 @@ export const translations: Record<Language, Translations> = {
     rpcEmpty: 'No requests yet — turn on “Await reply” and publish to make one',
     opsRpcPending: 'pending requests',
     opsRpcTimeouts: 'unanswered requests',
+    uiWorkspaceMode: 'Workspace Mode',
+    modeSubTransfer: 'Chunked Transfer',
+    modeSubConsole: 'Pub/Sub Console',
+    modeSubBridge: 'Broker ↔ Broker / HTTP',
+    btnTemplate: 'Template',
+    btnPrettify: 'Prettify',
+    publishingNow: 'Publishing…',
+    payloadTruncatedTip: 'Only the head of the payload is shown in the feed; expand the row for the whole message',
+    clickToExpand: '⋯ click to expand',
+    copyBtn: 'Copy',
+    copiedBtn: 'Copied ✓',
+    chunkHintIot: '(IoT / Restricted)',
+    chunkHintRecommended: '(Recommended)',
+    chunkHintFast: '(High Speed)',
+    chunkHintLan: '(LAN / Fast)',
+    chunkHintMax: '(Maximum)',
+    brokerUserPh: 'User / Token',
+    subscribeFailedAtConnect: '{count} subscription(s) failed to register: {detail}',
+    batchSummaryAll: '{count} file(s) delivered and confirmed by the peer',
+    batchSummaryPartial: '{delivered} delivered, {other} unconfirmed or failed',
   },
   'zh-TW': {
     appName: 'DropQTT',
@@ -2013,6 +2073,26 @@ export const translations: Record<Language, Translations> = {
     rpcEmpty: '還沒有請求；開啟「等待應答」後發布即成為請求',
     opsRpcPending: '待應答請求',
     opsRpcTimeouts: '無應答請求',
+    uiWorkspaceMode: '工作區模式',
+    modeSubTransfer: '分塊傳輸',
+    modeSubConsole: '發布 / 訂閱',
+    modeSubBridge: 'Broker ↔ Broker / HTTP',
+    btnTemplate: '範本',
+    btnPrettify: '格式化',
+    publishingNow: '發送中…',
+    payloadTruncatedTip: '控制台僅顯示前段內容，展開行可看到完整報文',
+    clickToExpand: '⋯ 點擊展開',
+    copyBtn: '複製',
+    copiedBtn: '已複製 ✓',
+    chunkHintIot: '(IoT / 受限鏈路)',
+    chunkHintRecommended: '(推薦)',
+    chunkHintFast: '(高速)',
+    chunkHintLan: '(區域網)',
+    chunkHintMax: '(最大)',
+    brokerUserPh: '使用者名稱 / Token',
+    subscribeFailedAtConnect: '{count} 個訂閱註冊失敗：{detail}',
+    batchSummaryAll: '{count} 個檔案已送達並對端驗證通過',
+    batchSummaryPartial: '{delivered} 個已送達，{other} 個未確認或失敗',
   },
   'ja': {
     appName: 'DropQTT',
@@ -2516,5 +2596,37 @@ export const translations: Record<Language, Translations> = {
     rpcEmpty: 'リクエストはまだありません。「応答を待機」を ON にして公開すると作成されます',
     opsRpcPending: '待機中のリクエスト',
     opsRpcTimeouts: '応答なしのリクエスト',
+    uiWorkspaceMode: 'ワークスペース',
+    modeSubTransfer: '分割転送',
+    modeSubConsole: '公開 / 購読',
+    modeSubBridge: 'Broker ↔ Broker / HTTP',
+    btnTemplate: 'テンプレート',
+    btnPrettify: '整形',
+    publishingNow: '送信中…',
+    payloadTruncatedTip: 'コンソールは先頭のみ表示します。行を開くと全文を確認できます',
+    clickToExpand: '⋯ クリックで展開',
+    copyBtn: 'コピー',
+    copiedBtn: 'コピーしました ✓',
+    chunkHintIot: '(IoT / 低速回線)',
+    chunkHintRecommended: '(推奨)',
+    chunkHintFast: '(高速)',
+    chunkHintLan: '(LAN)',
+    chunkHintMax: '(最大)',
+    brokerUserPh: 'ユーザー / Token',
+    subscribeFailedAtConnect: '{count} 件の購読の登録に失敗しました：{detail}',
+    batchSummaryAll: '{count} 件の送信と対端確認が完了しました',
+    batchSummaryPartial: '{delivered} 件完了、{other} 件は未確認または失敗',
   },
+};
+
+/**
+ * Translations for hooks that must report a problem themselves and have no
+ * `t` prop (they are not React components). Reads the same persisted language
+ * the app writes, so a toast never comes out in the wrong language.
+ */
+export const currentTranslations = (): Translations => {
+  if (typeof localStorage === 'undefined') return translations['zh-CN'];
+  const raw = localStorage.getItem('dropqtt_lang');
+  const lang = (raw === 'en' || raw === 'zh-TW' || raw === 'ja' || raw === 'zh-CN') ? raw : 'zh-CN';
+  return translations[lang] ?? translations['zh-CN'];
 };

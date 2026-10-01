@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react';
+import { formatBytes } from '../../utils/format';
 import { Activity, Camera, Download, Flame, RotateCcw, Square, Zap } from 'lucide-react';
 import { BenchStatus, TopicStatRow } from '../../types';
 import { Translations } from '../../i18n';
 import { usePersistentState } from '../../hooks/usePersistentState';
 import { useBench } from '../../hooks/useBench';
 import { saveTextFile } from '../../utils/exportMessages';
+import { csvRow } from '../../utils/csv';
 
 interface TopicTrafficPanelProps {
   rows: TopicStatRow[];
@@ -44,12 +46,6 @@ const BENCH_LABEL: Record<BenchStatus, (t: Translations) => string> = {
   failed: (t) => t.scheduleRunFailed,
 };
 
-const formatBytes = (n: number): string => {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(2)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-};
 
 const relativeSec = (unixSec: number, nowSec: number): string => {
   const d = Math.max(0, nowSec - unixSec);
@@ -110,11 +106,11 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
   const exportCsv = async () => {
     const head = 'topic,rate_msgs_s,peak_msgs_s,count,bytes,bytes_s,last_seen';
     const lines = sortedRows.map((r) =>
-      [
-        `"${r.topic.replace(/"/g, '""')}"`,
+      csvRow([
+        r.topic,
         r.rate, r.peakRate, r.count, r.bytes, r.bytesRate,
         new Date(r.lastSeen * 1000).toISOString(),
-      ].join(','),
+      ]),
     );
     await saveTextFile('dropqtt-topic-traffic.csv', [head, ...lines].join('\n'));
   };

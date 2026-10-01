@@ -1,3 +1,4 @@
+import { usePersistentState } from './usePersistentState';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -15,9 +16,9 @@ export function useTransfers() {
   const transfersRef = useRef(transfers);
   transfersRef.current = transfers;
 
-  const [autoReceive, setAutoReceiveState] = useState<boolean>(() => {
-    return localStorage.getItem('dropqtt_auto_receive') !== 'false';
-  });
+  // Same key and the same encoding as before (JSON booleans stringify to
+  // 'true'/'false'), so existing settings are read without a migration.
+  const [autoReceive, setAutoReceiveState] = usePersistentState<boolean>('dropqtt_auto_receive', true);
 
   // Sync persisted approval mode to the backend once at startup
   useEffect(() => {
@@ -51,9 +52,8 @@ export function useTransfers() {
 
   const setAutoReceive = useCallback((enabled: boolean) => {
     setAutoReceiveState(enabled);
-    localStorage.setItem('dropqtt_auto_receive', String(enabled));
     invoke('set_auto_receive', { enabled }).catch((e) => console.error('set_auto_receive:', e));
-  }, []);
+  }, [setAutoReceiveState]);
 
   const approveTransfer = useCallback(async (transferId: string) => {
     await runWithToast(() => invoke('approve_transfer', { transferId }), 'Approve failed');

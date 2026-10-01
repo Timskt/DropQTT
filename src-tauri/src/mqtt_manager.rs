@@ -567,9 +567,10 @@ impl MqttManager {
     }
 
     pub async fn subscribe_topic(&self, topic: String, opts: crate::protocol::SubOptions) -> Result<(), String> {
-        if topic.trim().is_empty() {
-            return Err("Topic must not be empty".to_string());
+        if let Some(err) = crate::topic::filter_topic_error(topic.trim()) {
+            return Err(err);
         }
+        let topic = topic.trim().to_string();
         self.subscriptions.lock().await.insert(topic.clone(), opts);
         self.subscription_hits.lock().await.entry(topic.clone()).or_insert(0);
         if let Some(client) = self.client.read().await.clone() {
@@ -960,6 +961,9 @@ impl MqttManager {
         params: ConsolePublishParams,
     ) -> Result<(), String> {
         let _ = &app; // feed echoes now ride the batched flusher instead of per-msg emits
+        if let Some(err) = crate::topic::publish_topic_error(params.topic.trim()) {
+            return Err(err);
+        }
         let client = self
             .client
             .read()
@@ -2181,6 +2185,12 @@ impl MqttManager {
                 format!("{}/{}", base_topic, channel)
             }
         };
+
+        // The prefix becomes part of every publish topic, so a wildcard typed
+        // into the channel box would put an illegal name on the wire mid-transfer.
+        if let Some(err) = crate::topic::publish_topic_error(&topic_prefix) {
+            return Err(err);
+        }
 
         let client = self
             .client

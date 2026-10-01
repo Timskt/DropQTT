@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { formatBytes } from '../../utils/format';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -21,12 +22,12 @@ interface BatchSenderProps {
   t: Translations;
 }
 
-const CHUNK_OPTIONS = [
-  { label: '64 KB (IoT / Restricted)', value: 64 * 1024 },
-  { label: '256 KB (Recommended)', value: 256 * 1024 },
-  { label: '512 KB (High Speed)', value: 512 * 1024 },
-  { label: '1 MB (LAN / Fast)', value: 1024 * 1024 },
-  { label: '2 MB (Maximum)', value: 2 * 1024 * 1024 },
+const CHUNK_OPTIONS = (t: Translations) => [
+  { label: `64 KB ${t.chunkHintIot}`, value: 64 * 1024 },
+  { label: `256 KB ${t.chunkHintRecommended}`, value: 256 * 1024 },
+  { label: `512 KB ${t.chunkHintFast}`, value: 512 * 1024 },
+  { label: `1 MB ${t.chunkHintLan}`, value: 1024 * 1024 },
+  { label: `2 MB ${t.chunkHintMax}`, value: 2 * 1024 * 1024 },
 ];
 
 const OPT_STYLE = { background: 'var(--bg-panel-solid)', color: 'var(--text-primary)' };
@@ -71,13 +72,6 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
   const [qos, setQos] = useState<number>(1);
   const [dragging, setDragging] = useState(false);
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
 
   // Resolve real file sizes and push into the queue (shared by picker + drop).
   const addPaths = useCallback(
@@ -272,7 +266,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
         <div className="space-y-1">
           <label className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{t.packetChunkSize}</label>
           <select value={chunkSize} disabled={isSending} onChange={(e) => setChunkSize(Number(e.target.value))} className="field-input w-full">
-            {CHUNK_OPTIONS.map((opt) => (
+            {CHUNK_OPTIONS(t).map((opt) => (
               <option key={opt.value} value={opt.value} style={OPT_STYLE}>{opt.label}</option>
             ))}
           </select>

@@ -120,15 +120,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Navigation Modes */}
-        <nav className="p-3 space-y-1" aria-label="Workspace modes">
-          <div className="px-2 py-1 ui-label font-mono">Workspace Mode</div>
+        <nav className="p-3 space-y-1" aria-label={t.uiWorkspaceMode}>
+          <div className="px-2 py-1 ui-label font-mono">{t.uiWorkspaceMode}</div>
 
           <NavItem
             active={activeMode === 'transfer'}
             onClick={() => setActiveMode('transfer')}
             icon={<Layers className="w-4 h-4" />}
             title={t.modeFileTransfer}
-            subtitle="Chunked Transfer"
+            subtitle={t.modeSubTransfer}
             accentVar="var(--info)"
             chipClass="chip-info"
             count={activeTransfersCount}
@@ -140,7 +140,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => setActiveMode('mqttx')}
             icon={<Terminal className="w-4 h-4" />}
             title={t.modeMqttClient}
-            subtitle="Pub/Sub Console"
+            subtitle={t.modeSubConsole}
             accentVar="var(--ok)"
             chipClass="chip-ok"
             count={activeSubsCount}
@@ -160,7 +160,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => setActiveMode('bridge')}
             icon={<GitBranch className="w-4 h-4" />}
             title={t.modeBridge}
-            subtitle="Broker ↔ Broker / HTTP"
+            subtitle={t.modeSubBridge}
             accentVar="var(--warn)"
             chipClass="chip-warn"
             count={activeBridgeRulesCount}

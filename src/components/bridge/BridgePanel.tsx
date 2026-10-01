@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { formatBytes } from '../../utils/format';
 import { invoke } from '@tauri-apps/api/core';
 import {
   ArrowRight,
@@ -60,11 +61,6 @@ const newRuleDraft = (sourceConn: string, targetConn: string): BridgeRule => ({
   enabled: true,
 });
 
-const formatBytes = (n: number): string => {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
-};
 
 /** "from => to" lines <-> mapping rows */
 const parseTopicMap = (text: string): TopicMapEntry[] =>

@@ -186,6 +186,26 @@
 - 运维诊断新增 `待应答请求 / 无应答请求` 两个计数与健康检查 `rpc_activity`（有超时时转 warn，文案直接问"是否有人订阅了应答主题"）。
 - 与定时发布一样是**会话级**的：调用活在 Rust，面板卸载/`reload` 不丢，重启应用不恢复。
 
+### 3.11 审计报告第二批：静默失败、协议合法性与六个重复实现（第七轮，2026-10-02）
+
+`PROJECT_ANALYSIS_v0.9.md` 的 P0 三条已在 §3.9 处理。这一轮把它剩下的条目**逐条对着当前代码复核**（报告写于 v0.9.0 基线，本轮之前的改动已经让它的一部分过期），成立的十项全部修掉：
+
+**先说复核掉的那条**：报告 P1-1"300 秒无条件清理 outgoing，长传输中途 pause/cancel 会静默失效"—— §4.11 的确认窗口（`confirm_grace_secs`，30 s + 1 s/MiB，上限 900 s，且只在最后一片发出后才起算）已经把它替换掉了；现在的清理**只对未确认的已完成发送**发生，进行中的传输不会被摘走条目，再叠加 P0-3 让未知 id 直接报错，这条已经不成立。**审计报告里我核掉的就是这一条。**
+
+成立并修掉的：
+
+- **N-P0-1 → 主题合法性前置校验**（`topic.rs::publish_topic_error` / `filter_topic_error`）。发布主题含 `+`/`#`（任意位置）、空层级、NUL、超 65535 字节一律拒绝；订阅过滤器另加规则：`#` 只能独占最后一级、`+` 只能独占一级。**接入点**：控制台发布、订阅、RPC 请求、文件传输的自定义频道主题。设计上的两个刻意选择：① `$SYS/...` 这类发布**我们不拦**（拦了就没法观察 broker 自己的拒绝行为，这是调试工具的分内事）；② 调度器/压测台上一轮已有同类检查，本轮**没有重复实现**，只是把控制台/订阅/传输这三条漏网路径补齐。
+- **P1-13 → CSV 公式注入**。主题与报文是**外部可控**的：任何人都能往 broker 发一个名叫 `=cmd|'/c calc'!A1` 的主题，导出 CSV 后用 Excel 打开就触发求值。光加引号没用（带引号的 `=` 单元格照样求值），所以新增 `src/utils/csv.ts`：首字符属于 `= + - @ \t \r` 的**字符串**单元格前置单引号（数字/布尔不动，否则速率列会坏），并统一了原先三处各写各的转义（`TopicTrafficPanel` / `exportMessages` / 历史的 `fmtBytes` 邻域）。
+- **P2-22 → 关窗现在是干净断开**。以前窗口一关进程就撕 socket，对端看到的是异常断连。现在 `CloseRequested` 先 `prevent_close()`，在 **1.2 s 上限**内 `mqtt.disconnect()` + `bridge.disconnect_all()`，然后 `window.destroy()` —— 超时会照样销毁，**不会把用户关在打不开的窗口里**。
+- **P2-10 → 桥接 clientId 的唯一性后缀不再被截断**。原来是 `format!("{id}_b{suffix}").take(23)`：长 id 会把 `_bsuffix` 截掉，两个长 id 的会话反而**互相踢下线**。现在截的是基名、后缀必留，且 v5 根本不截（23 是 MQTT 3.1 的历史限制）。
+- **P2-13 → keepAlive 单一来源**：后端 `clamp_keep_alive`（5–600）成为权威，UI 同界。手改配置文件里的 100000 秒不再能把会话拖进未定义行为。
+- **P2-23 → 订阅注册失败不再被吞**：`useBroker` 连接后的订阅循环原来是 `.catch(() => {})`。ACL 拒绝或畸形过滤器**不是瞬时错误**，重试也一样失败，所以汇总成一条 toast（`{count}` + 第一条原因）。
+- **P1-3 → 批次不再"失败也放彩带"**：只有**全部** `delivered` 才庆祝 + 成功 toast；否则红色汇总 toast 说清 `{delivered} 送达 / {other} 未确认或失败`。取消分支保持不庆祝。
+- **P1-9 → 六个 `formatBytes` 合成一个**（`src/utils/format.ts`）。规则：字节取整、KB 一位小数、MB 及以上两位小数。其中发布器那份**根本没有 MB 分支**，30 MB 会显示成 `30720.00 KB`。
+- **P2-2 → 硬编码英文界面文案**：侧边栏（工作区模式与四个副标题）、`模板`/`格式化`/`发送中…`、报文截断提示与"点击展开"、Markdown 代码块的复制/已复制、broker 用户名占位符、五个分块尺寸说明，全部进 i18n（4 语言齐）。非组件环境（hooks、`marked` 渲染器）需要文案时走新增的 `currentTranslations()`，读同一个 `dropqtt_lang`，保证 toast 不会串语言。
+- **P2-20 → `auto_receive` 不再直读 localStorage**：改走 `usePersistentState<boolean>`；JSON 布尔序列化后恰好是 `true`/`false`，与旧值**字节兼容，无需迁移**。
+- **P2-4/5/7 → 死配置与死依赖清理**：`tailwind.config.js` 的 `pulse-slow`（零引用）、`themes/index.ts` 的 `themeBodyBg`（注释自称"legacy props"，实际零引用）、`Cargo.toml` 里从未使用的 `thiserror`。
+
 ## 4. 验证矩阵（哪些真跑过）
 
 | 项目 | 命令 | 结果 | 说明 |
@@ -462,6 +482,29 @@ P0-2 的计数**只有单元测试证明**（`storage_failure_is_not_reported_as
 
 门：Rust harness **90/90**（新增 13 条 RPC 状态机用例）、`cargo clippy --all-targets` 干净、`cargo build` 通过、`npx tsc --noEmit` 通过、`npm test` **20/20**、`npx playwright test` **38/38**（新增 6 条）。
 
+### 4.17 第二批修复的真机取证（第七轮）
+
+单测层面新增：`topic.rs` 5 条（通配符/空层级/NUL/超长/`$` 放行，以及过滤器 `#`、`+` 的合法形状）harness **95/95**；`tests/unit/csv.test.ts` 5 条；`tests/unit/format.test.ts` 4 条 → vitest **29/29**（原 20 + CSV 5 + format 4）。
+
+真机（一次性 lab broker `127.0.0.1:18831`，`log_type all` 落盘，应用实例经 CDP 驱动）：
+
+| 场景 | 实测 |
+| --- | --- |
+| 发布 `lab/bad/+x` / `lab/bad/#` | 均被拒：`A publish topic may not contain wildcards ('+' or '#')` ✓ |
+| 发布 `lab//b` | 被拒：`Topic contains an empty level …` ✓ |
+| 连发四条非法主题之后 | 合法发布仍成功、`subscribe_topic('lab/+/ok')` 成功 ✓ **会话没被 rumqttc 拆掉**（这正是我们要防的代价） |
+| 发布 `$SYS/broker/uptime` | 我们放行，由 broker 决定 ✓ 设计如此 |
+| 订阅 `lab/#/x` / `lab/a+b` | 分别被拒：`'#' is only valid as the last level on its own` / `'+' must occupy a whole level` ✓ |
+| RPC 请求主题含 `+` | 请求被拒**且没有留下临时订阅**（`get_subscription_stats` 只剩 `lab/+/ok`）✓ 与 §4.16 的引用释放语义一致 |
+| 传输频道 `room/+x` | 发送前即拒，不落一条进行中的传输 ✓ |
+| `keepAliveSecs: 100000` 的 profile | 连接成功且 `connected=true` ✓ 钳制生效（旧行为：无上限直发） |
+| 桥接长 clientId（51 字符）v3 / v5 | v3 → `very-long-bridg_b6bafa5`（23 字符，**后缀保住**）；v5 → 全长 + `_bfed004` 不截断 ✓ 两条会话同时 `connected`，没互踢 |
+| 用 `WM_CLOSE` 关窗（等价于用户点 ×） | broker 依次记录 `Received DISCONNECT`：主会话 `val_keepalive`、桥接 `val_bridge_b367ad2`、上面两条长 id 会话 ✓ 进程正常退出 |
+
+> 顺手记录一个**取证工具的坑**：`invoke('plugin:window\|close')` 会被能力清单拒绝（`window.close not allowed. Permissions … do not include …`）。这本身是 P1-4 想收窄的方向 —— 说明 webview 现在没有自助关窗权限。要用 OS 层 `WM_CLOSE`（`SendMessageTimeout`）才能触发真实的 `CloseRequested`，`taskkill` 则完全绕过它。
+
+门：clippy 干净、`cargo build` 通过、harness **95/95**、`npx tsc --noEmit` 通过、`npm test` **29/29**、`npx playwright test` **38/38**、`npx vite build` 通过。
+
 ## 5. 已知限制（必须如实告知）
 
 ### 5.1 环境：本机 MSVC 不可用，但 gnu 可以完整跑起应用
@@ -528,6 +571,23 @@ error: linking with `link.exe` failed
 
 另外与定时发布一样：**调用表是会话级的**，重启应用不恢复（§5.6 同理）。
 
+### 5.9 审计报告里我**这轮没有做**的条目（以及为什么）
+
+复核成立不等于该由我替你决定。以下几条要么改动你的发布/信任模型，要么是需要你先定方向的重构，我选择**留成明确问题**而不是顺手改掉：
+
+| 条目 | 为什么没动 |
+| --- | --- |
+| **P1-2 凭证明文存 localStorage** | 成立，且是报告里最重的安全项。但引入 `tauri-plugin-stronghold` 或 OS keyring 会改变你的**密钥生命周期模型**（首次启动迁移已有明文、keyring 不可用时是硬失败还是回落明文、打包新增依赖），这是产品决定不是清理。至少要配套 `usePersistentState` 的 schema 版本与迁移，那是独立一轮。 |
+| **P1-5 `releaseDraft: false`** | 成立。但它改的是**你的发布流程**：改成草稿后 updater 何时可见需要一个人工/CI 确认步骤。我不替你决定发布节奏。 |
+| **P1-4 capabilities `fs:default` 过宽** | 成立（代码里前端确实不直接调 fs）。但同一条报告还建议顺带声明 dialog 的范围，而我实测到 webview **连 `window.close` 都没有权限**（§4.17），说明这块的实际面比报告假设的更窄。收窄权限需要一次"关窗、选目录、拖文件、更新检查"全量回归，否则很容易把功能砍掉而没人发现。 |
+| **P1-14 历史 payload 双列存储** | 成立（约 2.3× 体积），但 `payload` 列是**文本检索**的字段；只留 base64 就要在 SQLite 侧做解码检索，等于换搜索模型。这不是删一列能了事的。 |
+| **P1-6 CI 加 ESLint（含 react-hooks）** | 成立且投入产出比确实高，但要新增依赖 + 一次性吞掉全仓库告警。建议单独一轮，先以 warn 基线落地。 |
+| **P1-10 / P1-11 IPC 类型化（`ts-rs` / `tauri-specta`）** | 成立。这属于 §6.1"拆 `MqttManager`"同级别的结构性工程，需要一次贯穿全仓库的改动。 |
+| **P2-6 侧边栏 `v0.9.0-core` 后缀** | 显示与 `package.json` 的 `0.9.0` 不一致是事实，但后缀可能有意区分的构建线；这是品牌/发布决定，我不动。 |
+| **§6.1 / §6.2 大文件拆分、§7.1 Shared Subscription、§6.3 统一错误类型** | 报告自己的分级也把它们放在"重构/扩展"，与本轮"静默失败 + 合法性 + 一致性"的主题不同轴，留作后续。 |
+
+报告里剩下的 P2（`MessageStream` 虚拟化、`{n}` 手工插值统一、`BridgePanel` 防连点、`spawn_blocking`、`useTransfers` 去轮询、bridge 事件上限常量、诊断构造迂回、`$SYS` 关键词识别）**仍然成立**，已并入 §6 的候选池。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。
@@ -537,7 +597,7 @@ error: linking with `link.exe` failed
 
 按性价比排序：
 
-> **已完成的插入项**：文件传输"对端确认"超时与独立终态（§4.11）；重新发送入口与批次诚实化（§4.12）；审计报告 P0-1/P0-2/P0-3 的复核修复 + 取消/finalize 竞态（§3.9、§4.13）；**列表第 1 项 RPC 已在第六轮完成并真机取证**（§3.10、§4.16）。剩下的同类问题是**断点续传**（重发是复用同一 transferId 还是新开一笔已定为新开），以及**给所有权判定补可回归的纯函数测试**。
+> **已完成的插入项**：文件传输"对端确认"超时与独立终态（§4.11）；重新发送入口与批次诚实化（§4.12）；审计报告 P0-1/P0-2/P0-3 的复核修复 + 取消/finalize 竞态（§3.9、§4.13）；**列表第 1 项 RPC 已在第六轮完成并真机取证**（§3.10、§4.16）；**审计第二批（静默失败 / 主题合法性 / 一致性）已在第七轮完成**（§3.11、§4.17），其中我不做的部分与原因集中在 §5.9。剩下的同类问题是**断点续传**（重发是复用同一 transferId 还是新开一笔已定为新开），以及**给所有权判定补可回归的纯函数测试**。
 
 1. ~~**RPC 一等公民**~~ ✅ **第六轮完成**（§3.10 / §4.16）。它的同类收尾项：**一问多答的收集模式**、**应答主题带 retain 时的错配处理**（§5.8 第 2 条），以及把 `rpc_request` 接进脚本钩子/桥接，让转发的消息也能挂上请求。
 2. **压测吞吐开关**：允许压测运行不镜像到 feed/历史，把 §5.5 的实测 ~315 msg/s 提到通道上限；同时才有资格谈"高压下"的 P50/P95/P99。
@@ -570,3 +630,5 @@ error: linking with `link.exe` failed
 
 **第六轮新增**：`src-tauri/src/rpc.rs`（请求/响应状态机，13 条单元测试）、`src/hooks/useRpc.ts`、`src/components/mqttx/RpcPanel.tsx`、`tests/ui/rpc.spec.ts`
 **第六轮修改**：`src-tauri/src/{mqtt_manager,lib,diagnostics}.rs`、`src/{App.tsx,types.ts,i18n/index.ts}`、`src/components/mqttx/MessagePublisher.tsx`、`src/components/ops/OpsPanel.tsx`、`tests/ui/{bench,v5-properties,subscribe-options}.spec.ts`（mock 补 `rpc_list`）
+**第七轮新增**：`src/utils/csv.ts`、`src/utils/format.ts`、`tests/unit/csv.test.ts`、`tests/unit/format.test.ts`
+**第七轮修改**：`src-tauri/src/{topic,transport,bridge,mqtt_manager,lib}.rs`、`src-tauri/Cargo.toml`（去掉未用的 thiserror）、`tailwind.config.js`、`src/themes/index.ts`、`src/hooks/{useBroker,useTransfers,useBatchSender}.ts`、`src/components/{Sidebar,SettingsModal}.tsx`、`src/components/{bridge/BridgePanel,file-transfer/BatchSender,file-transfer/TransferQueue,history/HistoryPanel,mqttx/MessagePublisher,mqttx/MessageStream,mqttx/RpcPanel,mqttx/TopicTrafficPanel,mqttx/RichText}.tsx`、`src/utils/exportMessages.ts`、`src/i18n/index.ts`

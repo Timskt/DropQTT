@@ -446,7 +446,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Key className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} /><span>{t.username}</span></span>
               </label>
-              <input type="text" value={form.username || ''} onChange={(e) => { setForm({ ...form, username: e.target.value || undefined }); setTestResult(null); }} className="field-input w-full" placeholder="User / Token" />
+              <input type="text" value={form.username || ''} onChange={(e) => { setForm({ ...form, username: e.target.value || undefined }); setTestResult(null); }} className="field-input w-full" placeholder={t.brokerUserPh} />
             </div>
             <div>
               <label className={LABEL} style={LABEL_COLOR}>

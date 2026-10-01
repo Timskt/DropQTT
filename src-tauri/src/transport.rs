@@ -19,6 +19,17 @@ use crate::protocol::{BrokerConfig, PubProperties, SubOptions};
 /// system roots would let a user believe a private-CA or mTLS pin is enforced
 /// while the broker is in fact validated against the public trust store (or
 /// client auth is simply absent).
+/// Keep-alive band the app accepts. The UI clamps to the same numbers, and this
+/// side is authoritative: a hand-edited profile must not be able to ask for a
+/// zero-second or a hundred-thousand-second keep-alive and quietly break the
+/// session (or flood the broker with PINGREQs).
+pub const MIN_KEEP_ALIVE_SECS: u64 = 5;
+pub const MAX_KEEP_ALIVE_SECS: u64 = 600;
+
+pub fn clamp_keep_alive(requested: u64) -> u64 {
+    requested.clamp(MIN_KEEP_ALIVE_SECS, MAX_KEEP_ALIVE_SECS)
+}
+
 fn read_tls_file(path: &str, kind: &str) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("{} '{}' is unreadable: {}", kind, path, e))
 }
@@ -236,7 +247,7 @@ pub fn build_connection(config: &BrokerConfig) -> Result<(MqttClient, MqttEventL
     let transport = build_transport(config)?;
     if config.is_v5() {
         let mut opts = rumqttc::v5::MqttOptions::new(&config.client_id, &config.host, config.port);
-        opts.set_keep_alive(Duration::from_secs(config.keep_alive_secs.max(5)));
+        opts.set_keep_alive(Duration::from_secs(clamp_keep_alive(config.keep_alive_secs)));
         opts.set_clean_start(config.clean_session);
         opts.set_max_packet_size(Some(10 * 1024 * 1024));
 
@@ -272,7 +283,7 @@ pub fn build_connection(config: &BrokerConfig) -> Result<(MqttClient, MqttEventL
         Ok((MqttClient::V5(client), MqttEventLoop::V5(Box::new(eventloop))))
     } else {
         let mut opts = MqttOptions::new(&config.client_id, &config.host, config.port);
-        opts.set_keep_alive(Duration::from_secs(config.keep_alive_secs.max(5)));
+        opts.set_keep_alive(Duration::from_secs(clamp_keep_alive(config.keep_alive_secs)));
         opts.set_clean_session(config.clean_session);
         opts.set_max_packet_size(10 * 1024 * 1024, 10 * 1024 * 1024);
 

@@ -197,7 +197,7 @@ const MessageRow = React.memo(function MessageRow({
 
         <div className="flex items-center gap-2 text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
           {msg.truncated && (
-            <span style={{ color: 'var(--danger)' }} title="Payload truncated in feed">
+            <span style={{ color: 'var(--danger)' }} title={t.payloadTruncatedTip}>
               …
             </span>
           )}
@@ -278,7 +278,7 @@ const MessageRow = React.memo(function MessageRow({
         >
           {display}
           {overflow && !expanded && (
-            <span className="block text-[11px] mt-1 opacity-60" style={{ color: 'var(--accent)' }}>⋯ click to expand</span>
+            <span className="block text-[11px] mt-1 opacity-60" style={{ color: 'var(--accent)' }}>{t.clickToExpand}</span>
           )}
         </pre>
       )}
