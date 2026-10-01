@@ -310,6 +310,7 @@ export function App() {
                 onReveal={transferState.revealFile}
                 onApprove={transferState.approveTransfer}
                 onReject={transferState.rejectTransfer}
+                onResend={(item) => void transferState.resendTransfer(item)}
                 onClearFinished={transferState.clearFinished}
                 t={t}
               />

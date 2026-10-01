@@ -41,6 +41,8 @@ pub struct MqttDiagnostics {
     /// Evicted from the display buffer *and* lost from history because the
     /// archive queue was saturated. Non-zero means retention is incomplete.
     pub feed_lost: u64,
+    /// Sends whose peer never sent a receipt, this session
+    pub confirm_timeouts: u64,
     pub topic_stats_count: usize,
     /// Backend-scheduled publishes still running
     pub scheduled_runs: usize,
@@ -225,14 +227,27 @@ fn build_checks(mqtt: &MqttDiagnostics, bridge: &BridgeDiagnostics) -> Vec<Diagn
         )
     });
 
-    checks.push(check(
-        "transfer_activity",
-        "ok",
-        format!(
-            "{} inbound and {} outbound transfer(s) active",
-            mqtt.incoming_active, mqtt.outgoing_active
-        ),
-    ));
+    // An unconfirmed send is not a failure, but it is never normal either: either
+    // the peer is offline, or it is not listening on the ctrl topic at all.
+    let (transfer_level, transfer_detail) = if mqtt.confirm_timeouts > 0 {
+        (
+            "warn",
+            format!(
+                "{} inbound and {} outbound transfer(s) active; {} send(s) got no receipt from the peer \
+                 (is it online and subscribed to <prefix>/ctrl/#?)",
+                mqtt.incoming_active, mqtt.outgoing_active, mqtt.confirm_timeouts
+            ),
+        )
+    } else {
+        (
+            "ok",
+            format!(
+                "{} inbound and {} outbound transfer(s) active",
+                mqtt.incoming_active, mqtt.outgoing_active
+            ),
+        )
+    };
+    checks.push(check("transfer_activity", transfer_level, transfer_detail));
 
     let bridge_level =
         if (bridge.enabled_rules > 0 && bridge.connected_connections == 0) || bridge.errors > 0 {
@@ -304,6 +319,7 @@ mod tests {
             feed_buffer_capacity: 2000,
             feed_dropped: 0,
             feed_lost: 0,
+            confirm_timeouts: 0,
             topic_stats_count: 4,
             scheduled_runs: 0,
             bench_runs: 0,
@@ -339,5 +355,21 @@ mod tests {
             .unwrap();
         assert_eq!(check.level, "warn");
         assert!(check.detail.contains('7'));
+    }
+
+    #[test]
+    fn unconfirmed_sends_raise_the_transfer_check() {
+        let mut input = mqtt();
+        input.confirm_timeouts = 2;
+        let snapshot = build_snapshot(input, BridgeDiagnostics::default());
+        let check = snapshot
+            .checks
+            .iter()
+            .find(|c| c.id == "transfer_activity")
+            .unwrap();
+        assert_eq!(check.level, "warn");
+        // The message has to name the fix, not just the symptom.
+        assert!(check.detail.contains("ctrl/#"), "{}", check.detail);
+        assert!(check.detail.contains('2'));
     }
 }

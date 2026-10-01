@@ -178,6 +178,8 @@ pub struct MqttManager {
     incoming_transfers: Mutex<HashMap<String, IncomingTransfer>>,
     outgoing_transfers: Mutex<HashMap<String, ActiveOutgoing>>,
     is_connected: AtomicBool,
+    /// Sends whose peer never confirmed, cumulative for this session
+    confirm_timeouts: std::sync::atomic::AtomicU64,
     /// `topic-alias-maximum` from the latest CONNACK; 0 means the broker takes no
     /// aliases, so an alias on a publish would be a protocol violation.
     broker_alias_max: AtomicU16,
@@ -216,6 +218,7 @@ impl MqttManager {
             outgoing_transfers: Mutex::new(HashMap::new()),
             is_connected: AtomicBool::new(false),
             broker_alias_max: AtomicU16::new(0),
+            confirm_timeouts: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -295,6 +298,7 @@ impl MqttManager {
             feed_buffer_capacity: FEED_BUFFER_MAX,
             feed_dropped: self.feed_dropped.load(Ordering::SeqCst),
             feed_lost: self.feed_lost.load(Ordering::SeqCst),
+            confirm_timeouts: self.confirm_timeouts.load(Ordering::SeqCst),
             topic_stats_count,
             scheduled_runs: self.scheduler.running_count(),
             bench_runs: self.bench.running_count(),
@@ -2140,6 +2144,7 @@ impl MqttManager {
                             let unconfirmed = this.outgoing_transfers.lock().await.remove(&tid_t);
                             if let Some(active) = unconfirmed {
                                 let ctx = active.ctx;
+                                this.confirm_timeouts.fetch_add(1, Ordering::SeqCst);
                                 emit_progress(
                                     &app_t, &ctx.transfer_id, &ctx.topic_prefix, &ctx.file_name,
                                     "send", ctx.file_size, ctx.file_size, ctx.total_chunks,
