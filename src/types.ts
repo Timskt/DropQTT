@@ -102,6 +102,42 @@ export interface ConsolePublishParams {
   properties: PubProperties;
 }
 
+// ---- Backend-scheduled publishing ----
+
+/** One scheduled publish: a payload template replayed on a fixed cadence. */
+export interface ScheduleSpec {
+  id: string;
+  topic: string;
+  /** Editor text; `${...}` tokens are substituted by the backend per fire */
+  payload: string;
+  format: string;
+  intervalMs: number;
+  /** Total messages to send; 0 = until stopped */
+  count: number;
+  qos: number;
+  retain: boolean;
+  properties: PubProperties;
+}
+
+export type RunStatus = 'running' | 'completed' | 'failed' | 'stopped';
+
+/** Live state of one run as reported by the scheduler registry. */
+export interface RunInfo {
+  id: string;
+  topic: string;
+  format: string;
+  intervalMs: number;
+  count: number;
+  qos: number;
+  retain: boolean;
+  sent: number;
+  errors: number;
+  status: RunStatus;
+  lastError?: string;
+  startedAtMs: number;
+  lastFireMs?: number;
+}
+
 /** MQTT v5 subscription options; ignored by the backend on v3.1.1 links. */
 export interface SubOptions {
   qos: number;

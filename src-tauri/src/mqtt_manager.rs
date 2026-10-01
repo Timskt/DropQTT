@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::protocol::*;
+use crate::scheduler::{self, RunStatus, ScheduleSpec, SchedulerManager};
 use crate::topic::wildcard_match;
 use crate::transport::{build_connection, MqttClient, NetEvent};
 use crate::silence::{self, SilenceAlertEvent, SilenceWatchdog};
@@ -155,6 +156,8 @@ pub struct MqttManager {
     sys_metrics: Mutex<HashMap<String, (String, u64)>>,
     /// Silence watchdog: alerts when a topic filter stops carrying traffic
     pub silence_watchdog: Arc<SilenceWatchdog>,
+    /// Registry of backend-scheduled publishes for this session
+    pub scheduler: Arc<SchedulerManager>,
     /// Optional persistent history store (attached at app setup)
     history: RwLock<Option<Arc<crate::history::HistoryStore>>>,
     /// Runtime-configurable tracking cap (LRU eviction when full)
@@ -192,6 +195,7 @@ impl MqttManager {
             topic_stats: Mutex::new(HashMap::new()),
             sys_metrics: Mutex::new(HashMap::new()),
             silence_watchdog: Arc::new(SilenceWatchdog::default()),
+            scheduler: Arc::new(SchedulerManager::new()),
             history: RwLock::new(None),
             topic_stats_cap: std::sync::atomic::AtomicUsize::new(DEFAULT_TOPIC_STATS_CAP),
             base_topic: RwLock::new("dropqtt".to_string()),
@@ -471,6 +475,10 @@ impl MqttManager {
         // Disarm so the outage we are about to cause is not reported as the
         // device having gone quiet.
         self.silence_watchdog.set_connected(false, 0);
+        // Scheduled publishes aim at the session that is ending, so they stop with
+        // it instead of erroring against a dropped client. connect() also lands
+        // here, which is what makes a broker switch reset the registry.
+        self.scheduler.stop_all();
 
         let control = self.loop_control.lock().await.take();
         let client = self.client.write().await.take();
@@ -912,6 +920,118 @@ impl MqttManager {
         self.push_feed(msg).await;
 
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Scheduled publishing
+    // ------------------------------------------------------------------
+
+    /// Start a scheduled publish on the session's own client. The cadence lives
+    /// in the backend rather than a webview `setInterval` so it survives panel
+    /// unmounts, view switches and broker reconnects, and so tick *n* is aimed at
+    /// a fixed period instead of "one period after the last round-trip finished".
+    pub async fn schedule_start(
+        self: &Arc<Self>,
+        app: AppHandle,
+        spec: ScheduleSpec,
+    ) -> Result<(), String> {
+        self.scheduler.preflight(&spec)?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let manager = self.clone();
+        let task_app = app.clone();
+        let task_spec = spec.clone();
+        let task_cancel = cancel.clone();
+        let handle =
+            tokio::spawn(async move { manager.run_schedule(task_app, task_spec, task_cancel).await });
+        self.scheduler.register(spec, cancel, handle);
+        Ok(())
+    }
+
+    async fn run_schedule(
+        self: &Arc<Self>,
+        app: AppHandle,
+        spec: ScheduleSpec,
+        cancel: Arc<AtomicBool>,
+    ) {
+        let period = std::time::Duration::from_millis(spec.interval_ms);
+        // Absolute grid: fire n is aimed at `next`, which advances by exactly one
+        // period no matter how long the publish took. A tokio `interval` with the
+        // Delay policy (and a webview `setInterval`) both re-arm from "now", so
+        // every tick's own cost leaked into the cadence — measured at 100 ms the
+        // Delay version ran p50 110 ms and finished 60 ticks in 6.55 s instead of
+        // 5.9 s. Falling more than one period behind (suspend, stalled runtime)
+        // re-anchors instead of discharging a burst of catch-up publishes.
+        let mut next = tokio::time::Instant::now();
+        let mut seq: u64 = 0;
+        loop {
+            tokio::time::sleep_until(next).await;
+            if cancel.load(Ordering::SeqCst) {
+                return;
+            }
+            seq += 1;
+            next += period;
+            if tokio::time::Instant::now() > next + period {
+                next = tokio::time::Instant::now();
+            }
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let random = (uuid::Uuid::new_v4().as_u128() & u128::from(u32::MAX)) as u32;
+            let rendered = scheduler::render_template(&spec.payload, seq, now_ms, random);
+            let params = match scheduler::encode_payload(&spec.format, &rendered) {
+                Ok(bytes) => ConsolePublishParams {
+                    topic: spec.topic.clone(),
+                    payload_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    qos: spec.qos,
+                    retain: spec.retain,
+                    properties: spec.properties.clone(),
+                },
+                Err(e) => {
+                    self.scheduler.fail(&spec.id, &e);
+                    self.emit_schedule_event(&app, &spec.id).await;
+                    return;
+                }
+            };
+            let outcome = self.publish_console(app.clone(), params).await;
+            match outcome {
+                Ok(()) => match self.scheduler.record_fire(&spec.id, now_ms) {
+                    RunStatus::Completed | RunStatus::Failed | RunStatus::Stopped => {
+                        self.emit_schedule_event(&app, &spec.id).await;
+                        return;
+                    }
+                    RunStatus::Running => {}
+                },
+                Err(e) => {
+                    let streak = self.scheduler.record_error(&spec.id, &e);
+                    if streak >= scheduler::MAX_CONSECUTIVE_ERRORS {
+                        self.emit_schedule_event(&app, &spec.id).await;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn schedule_list(&self) -> Vec<scheduler::RunInfo> {
+        self.scheduler.snapshot()
+    }
+
+    pub async fn schedule_stop(&self, app: &AppHandle, id: &str) -> Result<(), String> {
+        if !self.scheduler.stop(id) {
+            return Err(format!("no schedule named '{id}' in this session"));
+        }
+        self.emit_schedule_event(app, id).await;
+        Ok(())
+    }
+
+    pub fn schedule_clear_finished(&self) -> usize {
+        self.scheduler.clear_finished()
+    }
+
+    /// Terminal-state notification. Progress is polled by the UI instead, so this
+    /// stays quiet even for a run that fires many times a second.
+    async fn emit_schedule_event(&self, app: &AppHandle, id: &str) {
+        if let Some(info) = self.scheduler.info(id) {
+            let _ = app.emit("schedule-event", info);
+        }
     }
 
     // ------------------------------------------------------------------

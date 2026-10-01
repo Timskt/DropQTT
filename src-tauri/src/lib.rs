@@ -3,6 +3,7 @@ pub mod diagnostics;
 pub mod history;
 pub mod mqtt_manager;
 pub mod protocol;
+pub mod scheduler;
 pub mod silence;
 pub mod transport;
 pub mod topic;
@@ -258,6 +259,37 @@ async fn publish_console(
     state.mqtt.publish_console(app, params).await
 }
 
+/// Start a backend-scheduled publish (see `scheduler.rs` for the state machine).
+#[tauri::command]
+async fn schedule_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    spec: scheduler::ScheduleSpec,
+) -> Result<(), String> {
+    state.mqtt.clone().schedule_start(app, spec).await
+}
+
+#[tauri::command]
+async fn schedule_stop(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    state.mqtt.schedule_stop(&app, &id).await
+}
+
+#[tauri::command]
+async fn schedule_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<scheduler::RunInfo>, String> {
+    Ok(state.mqtt.schedule_list())
+}
+
+#[tauri::command]
+async fn schedule_clear_finished(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(state.mqtt.schedule_clear_finished())
+}
+
 #[tauri::command]
 async fn approve_transfer(
     app: AppHandle,
@@ -445,6 +477,10 @@ pub fn run() {
             get_topic_stats_cap,
             start_bench,
             publish_console,
+            schedule_start,
+            schedule_stop,
+            schedule_list,
+            schedule_clear_finished,
             approve_transfer,
             reject_transfer,
             set_auto_receive,

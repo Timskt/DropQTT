@@ -123,18 +123,36 @@
 - 历史行整行可点、带展开指示箭头；悬停态统一。
 - 桥接面板在展开表单时隐藏重复的 "Add Rule" 按钮（此前同一视图存在两个同名按钮，语义不同）。
 
+### 3.6 定时发布后端化（第四轮，2026-10-01）
+
+**问题**：原来的"自动发布"是 `MessagePublisher.tsx` 里的一个 `setInterval`。它有四道硬伤：切工作区/关面板即死、每次回调都要等一轮 IPC 才重新起表、同时只能跑一条、断线后语义不明。对"拿它做长稳测试/模拟设备心跳"这个用途，第一条就足以否决。
+
+**新的分工**（`src-tauri/src/scheduler.rs` + `mqtt_manager.rs::run_schedule`）：
+- **纯状态机进 `scheduler.rs`，可脱离 Tauri 单测**：`ScheduleSpec` 校验、`${...}` 模板渲染、载荷编码、注册表（运行/完成/失败/停止四态、计数、错误连击、快照排序）。发布循环留在 `mqtt_manager`，因为它要拿 client 和 feed。
+- **复用 `publish_console` 整条链路**，不另开一条发送路径：所以定时消息一样进控制台、一样落 SQLite、一样带 v5 properties。
+- **绝对截止时刻网格**：`sleep_until(next)` + `next += period`，落后超过一个周期才重锚（避免睡眠后被补发一串）。
+- **断连语义**：`disconnect()` 里 `stop_all()`，而 `connect()` 开头就调 `disconnect()`，所以换 broker 必然清空上一会话的任务；内部自动重连**不**影响任务（rumqttc 会把发布缓存在通道里）。
+- **失败语义**：连续 5 次发布失败才判 `failed`（单次抖动不算），编码类确定性错误直接 `failed` 并带上原因；错误串在面板上逐行显示。
+- **进度靠轮询，终态靠事件**：`schedule-event` 只在完成/失败/停止时发，高频任务不会把 IPC 打满。
+- **上限**：并发 32 条、周期 50 ms ~ 24 h，发布主题禁止通配符。
+- **CBOR 明确不支持定时**（后端没有 CBOR 编码器），界面直接禁用"开始"并说明原因，而不是静默发出错误字节。
+- 顺带修掉一个真 bug：编辑器对模板载荷的实时校验拿**未渲染**的文本去 `JSON.parse`，于是 `{"seq":${counter}}` 永远显示"⚠ invalid"，而两条发送路径其实都是先渲染再编码。现在按渲染后的探针结果判定。
+
+**边界（不夸大）**：任务本身是**会话级**的——重启应用不会恢复任务，重启窗口（`reload`）会。持久化的是节奏与次数默认值。"保存一组定时任务并在启动时自动恢复"另列为 C2b。
+
 ## 4. 验证矩阵（哪些真跑过）
 
 | 项目 | 命令 | 结果 | 说明 |
 | --- | --- | --- | --- |
 | 前端类型检查 | `npx tsc --noEmit` | ✅ 通过 | |
-| 前端单元测试 | `npx vitest run tests/unit` | ✅ 4/4 | 截断判定、导出保真、二进制 Hex、空桶填充 |
-| 浏览器 UI 测试 | `npx playwright test` | ✅ 4/4 | 见下方"验证边界" |
-| 界面目视核对 | Playwright 截图（Cyberpunk 1280 / Solaris 1020 / 850 窄窗） | ✅ 已逐张查看 | 浅色主题底色、模板卡片栅格、历史展开区均正常 |
-| **Rust 单元测试** | `cargo clippy/test`（gnu harness，见 §4.1） | ✅ **25/25 通过** | protocol 5 + history 4 + transform 7 + webhook 6 + 原有若干 |
+| 前端单元测试 | `npm test`（= `vitest run tests/unit`） | ✅ **20/20** | SenML 16 + 历史 4；注意裸跑 `npx vitest run` 会把 Playwright 用例也收进来而报"文件加载失败"，脚本已限定 `tests/unit` |
+| 浏览器 UI 测试 | `npx playwright test` | ✅ **18/18** | 5 个 spec 文件：workspaces 4 + scheduler 5 + codec 5 + silence 2 + subscribe-options 2；见下方"验证边界" |
+| 界面目视核对 | 真机截图（Cyberpunk 中文界面，定时发布进行中） | ✅ 已逐张查看 | `test-results/live-scheduler.png`：运行中/已完成/已停止三种状态、并行任务、模板渲染后的报文流 |
+| **Rust 单元测试** | `cargo clippy/test`（gnu harness，见 §4.1） | ✅ **60/60 通过** | 含本轮新增 `scheduler` 14 条 |
 | **Rust clippy** | `cargo clippy --all-targets` | ✅ 零告警 | CI 用 `-D warnings`，此处已提前把关 |
-| `bridge.rs` / `mqtt_manager.rs` / `lib.rs` | — | ⚠️ **gnu harness 覆盖不到**（依赖 `tauri::AppHandle`），但已通过下面的真机端到端验证 | 见 §4.3 |
+| `bridge.rs` / `mqtt_manager.rs` / `lib.rs` | — | ⚠️ **gnu harness 覆盖不到**（依赖 `tauri::AppHandle`），但已通过下面的真机端到端验证 | 见 §4.3、§4.7 |
 | **真机端到端：MQTT → 桥接 → Webhook** | 本地 aedes broker + 本地 HTTP sink + 真实 Tauri 应用 | ✅ **通过** | 见 §4.3，截图 `test-results/app-cdp.png` |
+| **真机端到端：后端定时发布精度** | 第二个 mosquitto 实例 + 真实窗口 + SQLite 时间戳 | ✅ **通过** | 见 §4.7，含一次"实测推翻自己注释"的修正 |
 
 ### 4.1 Rust 是怎么跑起来的
 
@@ -185,17 +203,6 @@ aedes broker (127.0.0.1:18830)
 
 **仍未覆盖**：MQTT 文件传输工作区的分块收发、TLS/mTLS 连接、`$SYS` 监控、SQLite 历史在真实高吞吐下的表现。
 
-### 4.6 静默看门狗真机时序验证
-
-用第二个 mosquitto 实例（127.0.0.1:18831）+ 本地 HTTP sink，规则 `devices/+/hb`，阈值 8 秒：
-
-| 观察 | 证据 |
-| --- | --- |
-| 阈值精确性 | 最后一次心跳 `lastSeen=02:42:24`，首条告警 `generatedAt=02:42:32`、`silentForSec: 8` |
-| 持续离线按冷却复告 | 冷却 15 秒时 `silentForSec` 依次 8 → 23 → 38 → 53 → 68 → 83（严格 +15） |
-| **恢复清除抑制** | 冷却设为 60 秒：恢复前告警约在 `02:45:22`，设备在 `02:45:26` 重新上报后，下一次告警约在 `02:45:34` —— **间隔仅 12 秒，远小于 60 秒冷却**，证明恢复会清零计时与抑制 |
-| 告警文档机器可读 | `{"type":"dropqtt.silence","ruleId","topicFilter","timeoutSec","silentForSec","lastSeen"(RFC3339),"generatedAt"}`，`content-type: application/json`（即使规则存为 raw） |
-| 不阻塞 MQTT | 告警期间心跳与流量统计持续正常更新 |
 
 ### 4.4 验证边界（务必区分）
 
@@ -222,9 +229,40 @@ Playwright 用例通过 `window.__TAURI_INTERNALS__` 桩替换了 IPC，它证�
 
 **仍未验证**：A3 的错误分支在真机上未主动触发（逻辑由 `storage_failure_is_not_reported_as_empty_results` 单测覆盖）；`ErrorBoundary` 的回退界面只有代码路径审查，没有 Playwright 用例。
 
-Playwright 用例通过 `window.__TAURI_INTERNALS__` 桩替换了 IPC，它证明的是"React 组件在给定数据下的渲染与交互正确"，**不是**后端行为——后端行为由 §4.2（单元测试）与 §4.3（真机）负责。
+### 4.6 静默看门狗真机时序验证
+
+用第二个 mosquitto 实例（127.0.0.1:18831）+ 本地 HTTP sink，规则 `devices/+/hb`，阈值 8 秒：
+
+| 观察 | 证据 |
+| --- | --- |
+| 阈值精确性 | 最后一次心跳 `lastSeen=02:42:24`，首条告警 `generatedAt=02:42:32`、`silentForSec: 8` |
+| 持续离线按冷却复告 | 冷却 15 秒时 `silentForSec` 依次 8 → 23 → 38 → 53 → 68 → 83（严格 +15） |
+| **恢复清除抑制** | 冷却设为 60 秒：恢复前告警约在 `02:45:22`，设备在 `02:45:26` 重新上报后，下一次告警约在 `02:45:34` —— **间隔仅 12 秒，远小于 60 秒冷却**，证明恢复会清零计时与抑制 |
+| 告警文档机器可读 | `{"type":"dropqtt.silence","ruleId","topicFilter","timeoutSec","silentForSec","lastSeen"(RFC3339),"generatedAt"}`，`content-type: application/json`（即使规则存为 raw） |
+| 不阻塞 MQTT | 告警期间心跳与流量统计持续正常更新 |
+
+
 
 ---
+
+### 4.7 定时发布真机精度验证
+
+环境：第二个 mosquitto 实例（127.0.0.1:18831，临时配置，用完即关；**全程未触碰用户自己跑在 1883 的服务**），真实 `dropqtt.exe` 窗口经 WebView2 CDP 驱动。
+**度量口径**：任务发布 → 经真实 broker → 由本客户端订阅回环 → 落 SQLite 的**入站**行；间隔用行上的 `timestamp_ms` 算，**不采信调度器自己的计数**。
+
+| 观察 | 证据 |
+| --- | --- |
+| **生命周期（本功能的立身之本）** | 用真实 UI 点击"开始"起两条任务，随后 `page.reload()` 把整棵 React 树（连同任何前端计时器）销毁：两条任务的 `sent` 仍从 56 → 100、7 → 19 → 20 继续跑到 `completed`，任务 `id` 不变 |
+| 绝对网格精度 | 100 × 50 ms → 首末跨 **4949 ms**（理想 4950）；20 × 250 ms → 跨 **4758 ms**（理想 4750） |
+| 并行互不干扰 | 两条同时运行，各自 p50 = **47 ms / 250 ms**；单条到达间隔有抖动（fast min 1 / p95 66 / max 104 ms），但总跨度锁死在理想值，说明抖动来自回环接收路径而非发送调度 |
+| 模板渲染 | 入站报文 `seq` 为 **1..100 / 1..20 严格递增**；`${iso}` 渲染出真实 RFC3339；截图里可见 14:04:27.149 → .293 → .396 → .503（≈120 ms） |
+| 双份留痕 | 每条定时发布都留下 `out` 行（100/100、20/20），回环 `in` 行同样齐全 |
+| 断连语义 | 无限任务在 `disconnect_broker` 后 `running → stopped`；已完成任务保持 `completed` 不被改写 |
+| **老实现对照** | 同样 100 × 50 ms，用前端 `setInterval` + `await invoke` 跑：跨 **6191.8 ms**（理想 4950，**+25%、多花 1.24 秒**） |
+
+**这一条是量出来的，不是推出来的**：第一版我用 `tokio::time::interval` + `MissedTickBehavior::Delay`，实测 60 × 100 ms 跨了 **6549 ms**（p50 110 ms）——Delay 从"这一 tick 被观察到的时刻"重新起表，于是每次发布的耗时都被加进周期，正是我自己在注释里断言"不会累加"的那件事。改成显式绝对截止时刻后才拿到上表的数字。教训：**速率类断言必须实测，注释里的推理不算证据。**
+
+**未覆盖**：睡眠/唤醒后的重锚行为（需要真等挂起，未做）；32 条并发上限只由单测与 `preflight` 保证，真机最多同时跑过 3 条。
 
 ## 5. 已知限制（必须如实告知）
 
@@ -275,16 +313,17 @@ error: linking with `link.exe` failed
 
 按性价比排序：
 
-1. **C2 后端定时发布**：把调度从前端 `setInterval`（漂移、不持久、卸载即停、只能一条）挪进 Rust。
-2. **D1 压测台补齐**：QoS/retain 可选、停止按钮、多主题、P50/P95/P99 与发送/确认差值。
-3. **B2 协议字段补全**：Payload Format Indicator / Topic Alias / Session-Expiry / v5 Will properties。
-4. **RPC 一等公民**：带 `responseTopic` 自动临时订阅应答主题、按 `correlationData` 配对、显示往返延迟与超时。
-5. **多连接**：单 client 槽 → `HashMap<connId, Connection>`。建议单独一轮，需先定"历史与流量榜按连接归属"的语义。
-6. **Webhook 可选可靠性**：失败落盘重投（N 次 / M 秒退避），明确它是本地文件队列而非消息中间件。
-7. **系统代理开关**：按需启用 `reqwest/system-proxy`。
-8. **把 gnu 路线固化成本地开发方式**：加 `pnpm tauri:dev:gnu`（设 `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu`），让没有 Windows SDK 的机器也能一键联调。
-9. **补 `bridge.rs` 的自动化测试**：它只被真机端到端覆盖过一次，没有可重复回归。可把 `resync_subs` 的期望集合计算抽成不依赖 Tauri 的纯函数。
-10. **给 `ErrorBoundary` 补用例**：目前只有代码路径审查，没有 Playwright 覆盖。
+1. **D1 压测台补齐**：QoS/retain 可选、停止按钮、多主题、P50/P95/P99 与发送/确认差值。
+2. **B2 协议字段补全**：Payload Format Indicator / Topic Alias / Session-Expiry / v5 Will properties。
+3. **RPC 一等公民**：带 `responseTopic` 自动临时订阅应答主题、按 `correlationData` 配对、显示往返延迟与超时。
+4. **多连接**：单 client 槽 → `HashMap<connId, Connection>`。建议单独一轮，需先定"历史与流量榜按连接归属"的语义。
+5. **C2b 保存的定时任务**：把任务定义（不只是节奏默认值）持久化，支持"启动时自动恢复"。当前任务只在会话内活着。
+6. **C2c 定时任务的 CBOR 编码**：需要一个 Rust CBOR 编码器；在那之前界面明确拒绝，不做静默降级。
+7. **Webhook 可选可靠性**：失败落盘重投（N 次 / M 秒退避），明确它是本地文件队列而非消息中间件。
+8. **系统代理开关**：按需启用 `reqwest/system-proxy`。
+9. **把 gnu 路线固化成本地开发方式**：加 `pnpm tauri:dev:gnu`（设 `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu`），让没有 Windows SDK 的机器也能一键联调。顺带记录：`cargo test --lib` 在本机 gnu 下能编译但测试进程加载 Tauri/WebView2 依赖会 `STATUS_ENTRYPOINT_NOT_FOUND`，所以 Rust 门只能走 §4.1 的 harness。
+10. **补 `bridge.rs` 的自动化测试**：它只被真机端到端覆盖过一次，没有可重复回归。可把 `resync_subs` 的期望集合计算抽成不依赖 Tauri 的纯函数。
+11. **给 `ErrorBoundary` 补用例**：目前只有代码路径审查，没有 Playwright 覆盖。
 
 ---
 

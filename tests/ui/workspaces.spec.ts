@@ -25,6 +25,7 @@ test.beforeEach(async ({ page }) => {
         if (cmd === 'query_history') return rows.filter((r) => r.topic.includes(args.search));
         if (cmd === 'history_series') return [{ bucket: Math.floor((now - 1000) / args.bucketMs) * args.bucketMs, count: 3 }];
         if (cmd === 'bridge_status') return [];
+        if (cmd === 'schedule_list') return [];
         if (cmd === 'get_topic_stats_cap') return 5000;
         if (cmd === 'plugin:dialog|save') return 'D:/exports/capture.json';
         if (cmd === 'test_broker_connection') return 10;

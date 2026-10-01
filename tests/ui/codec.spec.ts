@@ -50,6 +50,7 @@ const boot = async (page: any) => {
         if (cmd === 'get_topic_stats_cap') return 5000;
         if (cmd === 'get_topic_stats' || cmd === 'get_broker_sys') return [];
         if (cmd === 'get_subscription_stats') return {};
+        if (cmd === 'schedule_list') return [];
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];
         if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
         if (cmd === 'bridge_test_transform') {

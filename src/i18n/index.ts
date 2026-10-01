@@ -457,6 +457,15 @@ export interface Translations {
   clearAllRetained: string;
   clearingRetained: string;
   retainClearNote: string;
+  schedulesTitle: string;
+  scheduleNote: string;
+  scheduleUnsupported: string;
+  scheduleEmpty: string;
+  scheduleStopAll: string;
+  scheduleRunNow: string;
+  scheduleRunDone: string;
+  scheduleRunFailed: string;
+  scheduleRunStopped: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -491,7 +500,7 @@ export const translations: Record<Language, Translations> = {
     clientKey: '客户端私钥',
     clear: '清除',
     autoPublish: '自动发布',
-    publishInterval: '间隔 (秒)',
+    publishInterval: '间隔 (毫秒)',
     publishCount: '次数',
     publishCountHint: '0 = 无限循环直到手动停止',
     startPublish: '开始',
@@ -917,6 +926,15 @@ export const translations: Record<Language, Translations> = {
     clearAllRetained: '清除 {count} 个主题的保留消息',
     clearingRetained: '清除中…',
     retainClearNote: '向每个主题发布空载荷（retain=1）以清除 broker 保留状态',
+    schedulesTitle: '定时发布',
+    scheduleNote: '由后端调度：切换工作区、关闭面板或界面刷新都不会中断，断连时自动停止。',
+    scheduleUnsupported: 'CBOR 载荷无法定时发布，请手动发送。',
+    scheduleEmpty: '暂无定时任务',
+    scheduleStopAll: '全部停止',
+    scheduleRunNow: '运行中',
+    scheduleRunDone: '已完成',
+    scheduleRunFailed: '已失败',
+    scheduleRunStopped: '已停止',
   },
   'en': {
     appName: 'DropQTT',
@@ -949,7 +967,7 @@ export const translations: Record<Language, Translations> = {
     clientKey: 'Client Key',
     clear: 'Clear',
     autoPublish: 'Auto Publish',
-    publishInterval: 'Interval (s)',
+    publishInterval: 'Interval (ms)',
     publishCount: 'Count',
     publishCountHint: '0 = loop until stopped',
     startPublish: 'Start',
@@ -1375,6 +1393,15 @@ export const translations: Record<Language, Translations> = {
     clearAllRetained: 'Clear retained on {count} topics',
     clearingRetained: 'Clearing…',
     retainClearNote: 'Publishes an empty payload (retain=1) per topic to wipe broker retain state',
+    schedulesTitle: 'Scheduled Runs',
+    scheduleNote: 'Scheduled in the backend: switching workspaces, closing this panel or reloading the window keeps them running; a disconnect stops them.',
+    scheduleUnsupported: 'CBOR payloads cannot be scheduled — publish them manually.',
+    scheduleEmpty: 'No scheduled runs',
+    scheduleStopAll: 'Stop All',
+    scheduleRunNow: 'Running',
+    scheduleRunDone: 'Done',
+    scheduleRunFailed: 'Failed',
+    scheduleRunStopped: 'Stopped',
   },
   'zh-TW': {
     appName: 'DropQTT',
@@ -1407,7 +1434,7 @@ export const translations: Record<Language, Translations> = {
     clientKey: '客戶端私鑰',
     clear: '清除',
     autoPublish: '自動發布',
-    publishInterval: '間隔 (秒)',
+    publishInterval: '間隔 (毫秒)',
     publishCount: '次數',
     publishCountHint: '0 = 無限循環直到手動停止',
     startPublish: '開始',
@@ -1833,6 +1860,15 @@ export const translations: Record<Language, Translations> = {
     clearAllRetained: '清除 {count} 個主題的保留訊息',
     clearingRetained: '清除中…',
     retainClearNote: '向每個主題發布空載荷（retain=1）以清除 broker 保留狀態',
+    schedulesTitle: '定時發布',
+    scheduleNote: '由後端排程：切換工作區、關閉面板或重新整理介面都不會中斷，斷線時自動停止。',
+    scheduleUnsupported: 'CBOR 載荷無法定時發布，請手動發送。',
+    scheduleEmpty: '暫無定時任務',
+    scheduleStopAll: '全部停止',
+    scheduleRunNow: '執行中',
+    scheduleRunDone: '已完成',
+    scheduleRunFailed: '已失敗',
+    scheduleRunStopped: '已停止',
   },
   'ja': {
     appName: 'DropQTT',
@@ -1865,7 +1901,7 @@ export const translations: Record<Language, Translations> = {
     clientKey: 'クライアント秘密鍵',
     clear: 'クリア',
     autoPublish: '自動発行',
-    publishInterval: '間隔 (秒)',
+    publishInterval: '間隔 (ミリ秒)',
     publishCount: '回数',
     publishCountHint: '0 = 手動停止までループ',
     startPublish: '開始',
@@ -2291,5 +2327,14 @@ export const translations: Record<Language, Translations> = {
     clearAllRetained: '{count} トピックの保持を削除',
     clearingRetained: '削除中…',
     retainClearNote: '各トピックに空ペイロード（retain=1）を発行し、ブローカーの保持状態を解除します',
+    schedulesTitle: '定期 Publish',
+    scheduleNote: 'バックエンドでスケジュール：ワークスペース切替・パネルを閉じる・ウィンドウ更新でも継続し、切断時は停止します。',
+    scheduleUnsupported: 'CBOR ペイロードは定期発行できません。手動で発行してください。',
+    scheduleEmpty: '定期タスクはありません',
+    scheduleStopAll: 'すべて停止',
+    scheduleRunNow: '実行中',
+    scheduleRunDone: '完了',
+    scheduleRunFailed: '失敗',
+    scheduleRunStopped: '停止',
   },
 };

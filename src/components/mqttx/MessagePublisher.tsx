@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Send, Trash2, Sparkles, Code2, CheckCircle2, Sliders, Eye, Columns2, Eraser, Timer, Square, Play } from 'lucide-react';
-import { ConsolePublishParams, PubProperties } from '../../types';
+import { ConsolePublishParams, PubProperties, RunStatus } from '../../types';
 import { Translations } from '../../i18n';
 import { PAYLOAD_FORMATS, PayloadError, PayloadFormat, payloadToBytes } from '../../utils/payload';
 import { renderTemplate, TEMPLATE_TOKENS } from '../../utils/template';
 import { uint8ToBase64 } from '../../utils/cbor';
 import { usePersistentState } from '../../hooks/usePersistentState';
+import { useSchedules } from '../../hooks/useSchedules';
 import { useObservedTopics } from '../../utils/topicStore';
 import { HtmlPreview, MarkdownView } from './RichText';
 
@@ -66,6 +67,20 @@ interface PublisherDraft {
 
 const formatBytes = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(2)} KB`);
 
+const RUN_STATUS_COLOR: Record<RunStatus, string> = {
+  running: 'var(--success)',
+  completed: 'var(--accent)',
+  failed: 'var(--danger)',
+  stopped: 'var(--text-muted)',
+};
+
+const RUN_STATUS_LABEL: Record<RunStatus, (t: Translations) => string> = {
+  running: (t) => t.scheduleRunNow,
+  completed: (t) => t.scheduleRunDone,
+  failed: (t) => t.scheduleRunFailed,
+  stopped: (t) => t.scheduleRunStopped,
+};
+
 export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   onPublishMessage,
   connected,
@@ -110,12 +125,27 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   const [responseTopic, setResponseTopic] = useState('');
   const [correlationData, setCorrelationData] = useState('');
 
-  // Auto-publish (scheduled / loop) + template counter
+  // Scheduled publishing is driven by the backend; these are just the parameters
+  // for the next run the user starts.
   const [showLoop, setShowLoop] = useState(false);
-  const [loopOn, setLoopOn] = useState(false);
-  const [loopIntervalSec, setLoopIntervalSec] = useState<number>(2);
-  const [loopCount, setLoopCount] = useState<number>(0); // 0 = infinite
-  const [loopSent, setLoopSent] = useState<number>(0);
+  const [schedIntervalMs, setSchedIntervalMs] = usePersistentState<number>(
+    'dropqtt_console_schedule_interval',
+    2000,
+  );
+  const [schedCount, setSchedCount] = usePersistentState<number>(
+    'dropqtt_console_schedule_count',
+    0, // 0 = until stopped
+  );
+  const {
+    runs,
+    lastError: scheduleError,
+    start: startRun,
+    stop: stopRun,
+    stopAll: stopAllRuns,
+    clearFinished: clearFinishedRuns,
+  } = useSchedules(true);
+  const runningCount = runs.filter((r) => r.status === 'running').length;
+  // Manual sends count up locally; each scheduled run counts in the backend.
   const counterRef = useRef(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -139,10 +169,12 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
     return () => clearTimeout(timer);
   }, [topic, format, payloadByFormat, qos, retain, setDraft]);
 
-  // Live byte count of the encoded payload
+  // Live byte count of the encoded payload. Rendered with a probe first because
+  // both send paths substitute `${...}` before encoding — checking the raw
+  // template text flagged every templated JSON payload as invalid.
   const byteLen = useMemo(() => {
     try {
-      return payloadToBytes(format as PayloadFormat, payload).length;
+      return payloadToBytes(format as PayloadFormat, renderTemplate(payload, 1)).length;
     } catch {
       return -1;
     }
@@ -150,6 +182,20 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
 
   const previewKind = format === 'markdown' ? 'md' : format === 'html' ? 'html' : format === 'json' ? 'json' : null;
   const canPreview = previewKind !== null;
+
+  // The v5 property set the current editor state describes. Shared by the manual
+  // send and by a new scheduled run so both publish identically.
+  const buildProps = useCallback(
+    (): PubProperties => ({
+      contentType:
+        contentType.trim() || PAYLOAD_FORMATS.find((f) => f.id === format)?.contentType,
+      userProperties: userProps.filter(([k]) => k.trim().length > 0),
+      messageExpiry: messageExpiry.trim() ? Number(messageExpiry) : undefined,
+      responseTopic: responseTopic.trim() || undefined,
+      correlationData: correlationData.trim() || undefined,
+    }),
+    [contentType, format, messageExpiry, responseTopic, correlationData, userProps],
+  );
 
   // Core send: renders ${...} template tokens against the running counter.
   // Returns true on success so both manual and loop callers can react.
@@ -159,13 +205,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
     try {
       const rendered = renderTemplate(payload, counterRef.current);
       const bytes = payloadToBytes(format as PayloadFormat, rendered);
-      const props: PubProperties = {
-        contentType: contentType.trim() || PAYLOAD_FORMATS.find((f) => f.id === format)?.contentType,
-        userProperties: userProps.filter(([k]) => k.trim().length > 0),
-        messageExpiry: messageExpiry.trim() ? Number(messageExpiry) : undefined,
-        responseTopic: responseTopic.trim() || undefined,
-        correlationData: correlationData.trim() || undefined,
-      };
+      const props = buildProps();
       await onPublishMessage({
         topic: topic.trim(),
         payloadBase64: uint8ToBase64(bytes),
@@ -177,11 +217,10 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
       return true;
     } catch (err) {
       setErrorText(err instanceof PayloadError ? err.message : String(err));
-      setLoopOn(false);
       return false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic, connected, payload, format, contentType, userProps, messageExpiry, responseTopic, correlationData, qos, retain]);
+  }, [topic, connected, payload, format, buildProps, qos, retain]);
 
   const doPublish = async () => {
     if (!topic.trim() || !connected || isPublishing) return;
@@ -195,37 +234,30 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
     setIsPublishing(false);
   };
 
-  // Loop timer: fires publishNow(true) every interval while enabled.
-  useEffect(() => {
-    if (!loopOn) return;
-    if (!connected) {
-      setLoopOn(false);
-      return;
-    }
-    const ms = Math.max(200, loopIntervalSec * 1000);
-    const iv = setInterval(async () => {
-      const ok = await publishNow(true);
-      if (ok) {
-        setLoopSent((n) => {
-          const next = n + 1;
-          if (loopCount > 0 && next >= loopCount) setLoopOn(false);
-          return next;
-        });
-      }
-    }, ms);
-    return () => clearInterval(iv);
-  }, [loopOn, connected, loopIntervalSec, loopCount, publishNow]);
+  // The backend refuses cadences outside its window; mirroring the floor here
+  // keeps a typed value from bouncing back as an error.
+  const MIN_SCHEDULE_MS = 50;
+  const scheduleUnsupported = format === 'cbor';
 
-  // Stop looping if the panel unmounts or connection drops mid-run.
-  useEffect(() => {
-    if (!connected) setLoopOn(false);
-  }, [connected]);
-
-  const startLoop = () => {
-    counterRef.current = 0;
-    setLoopSent(0);
+  const startLoop = async () => {
+    if (!topic.trim() || !connected || scheduleUnsupported) return;
     setErrorText(null);
-    setLoopOn(true);
+    try {
+      await startRun({
+        id: `sch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        topic: topic.trim(),
+        payload,
+        format,
+        intervalMs: Math.max(MIN_SCHEDULE_MS, Math.round(schedIntervalMs) || MIN_SCHEDULE_MS),
+        count: Math.max(0, Math.round(schedCount) || 0),
+        qos,
+        retain,
+        properties: buildProps(),
+      });
+      setShowLoop(true);
+    } catch (err) {
+      setErrorText(err instanceof PayloadError ? err.message : String(err));
+    }
   };
 
   // Insert a template token at the textarea cursor.
@@ -285,12 +317,13 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
             type="button"
             onClick={() => setShowLoop((v) => !v)}
             className={`flex items-center space-x-1 px-2 py-0.5 rounded border text-[10px] transition ${showLoop ? 'font-semibold' : 'opacity-70'}`}
-            style={{ borderColor: loopOn ? 'var(--success)' : 'var(--border-panel)', color: loopOn ? 'var(--success)' : 'var(--accent)' }}
+            style={{ borderColor: runningCount > 0 ? 'var(--success)' : 'var(--border-panel)', color: runningCount > 0 ? 'var(--success)' : 'var(--accent)' }}
             title={t.autoPublish}
           >
             <Timer className="w-3 h-3" />
             <span>{t.autoPublish}</span>
-            {loopOn && <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--success)' }} />}
+            {runningCount > 0 && <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--success)' }} />}
+            {runningCount > 1 && <span className="font-mono">{runningCount}</span>}
           </button>
           {isV5 && (
             <button
@@ -377,45 +410,119 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
           </label>
         </div>
 
-        {/* Auto-publish (scheduled / loop) control */}
+        {/* Scheduled publish: parameters for the next backend run + live registry */}
         {showLoop && (
-          <div className="inset-box p-3 animate-fade-in">
+          <div className="inset-box p-3 space-y-2.5 animate-fade-in">
             <div className="flex flex-wrap items-end gap-3 text-[11px]">
               <div>
-                <label className="block mb-1" style={{ color: 'var(--text-secondary)' }}>{t.publishInterval}</label>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number" min={0.2} step={0.1} value={loopIntervalSec}
-                    disabled={loopOn}
-                    onChange={(e) => setLoopIntervalSec(Math.max(0.2, Number(e.target.value) || 1))}
-                    className="field-input w-20"
-                  />
-                  <span style={{ color: 'var(--text-muted)' }}>s</span>
-                </div>
+                <label htmlFor="dropqtt-schedule-interval" className="block mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  {t.publishInterval}
+                </label>
+                <input
+                  id="dropqtt-schedule-interval"
+                  type="number" min={MIN_SCHEDULE_MS} step={50} value={schedIntervalMs}
+                  onChange={(e) => setSchedIntervalMs(Math.max(MIN_SCHEDULE_MS, Number(e.target.value) || MIN_SCHEDULE_MS))}
+                  className="field-input w-24"
+                />
               </div>
               <div>
-                <label className="block mb-1" style={{ color: 'var(--text-secondary)' }}>{t.publishCount}</label>
+                <label htmlFor="dropqtt-schedule-count" className="block mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  {t.publishCount}
+                </label>
                 <input
-                  type="number" min={0} step={1} value={loopCount}
-                  disabled={loopOn}
-                  onChange={(e) => setLoopCount(Math.max(0, parseInt(e.target.value) || 0))}
+                  id="dropqtt-schedule-count"
+                  type="number" min={0} step={1} value={schedCount}
+                  onChange={(e) => setSchedCount(Math.max(0, parseInt(e.target.value) || 0))}
                   className="field-input w-20"
                   title={t.publishCountHint}
                 />
               </div>
-              {loopOn ? (
-                <button type="button" onClick={() => setLoopOn(false)} className="btn-ghost flex items-center gap-1.5 !py-1.5" style={{ color: 'var(--danger)' }}>
-                  <Square className="w-3 h-3" /><span>{t.stopPublish}</span>
-                </button>
-              ) : (
-                <button type="button" onClick={startLoop} disabled={!connected || !topic.trim()} className="btn-accent flex items-center gap-1.5 !py-1.5">
-                  <Play className="w-3 h-3" /><span>{t.startPublish}</span>
+              <button
+                type="button"
+                onClick={startLoop}
+                disabled={!connected || !topic.trim() || scheduleUnsupported}
+                className="btn-accent flex items-center gap-1.5 !py-1.5"
+                title={scheduleUnsupported ? t.scheduleUnsupported : undefined}
+              >
+                <Play className="w-3 h-3" /><span>{t.startPublish}</span>
+              </button>
+              {runningCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void stopAllRuns()}
+                  className="btn-ghost flex items-center gap-1.5 !py-1.5"
+                  style={{ color: 'var(--danger)' }}
+                >
+                  <Square className="w-3 h-3" /><span>{t.scheduleStopAll}</span>
                 </button>
               )}
-              <div className="ml-auto text-right" style={{ color: 'var(--text-muted)' }}>
-                <div>{t.published}: <span className="font-mono" style={{ color: 'var(--success)' }}>{loopSent}</span>{loopCount > 0 && ` / ${loopCount}`}</div>
-                <div className="text-[10px]">{t.templateTokens}</div>
+              <div className="ml-auto text-right text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                <div>{t.templateTokens}: {'${counter} ${timestamp} ${uuid} ${random}'}</div>
               </div>
+            </div>
+
+            <div className="text-[10px] leading-relaxed" style={{ color: scheduleUnsupported ? 'var(--warning)' : 'var(--text-muted)' }}>
+              {scheduleUnsupported ? t.scheduleUnsupported : t.scheduleNote}
+            </div>
+
+            <div className="space-y-1">
+              {runs.length === 0 && (
+                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{t.scheduleEmpty}</div>
+              )}
+              {runs.map((r) => (
+                <div key={r.id} className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-[10px]">
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{ background: RUN_STATUS_COLOR[r.status] }}
+                    />
+                    <span className="font-mono truncate" style={{ color: 'var(--text-primary)' }} title={r.topic}>
+                      {r.topic}
+                    </span>
+                    <span className="shrink-0" style={{ color: 'var(--text-muted)' }}>
+                      {r.intervalMs} ms · QoS {r.qos}
+                      {r.retain ? ' · retain' : ''} · {r.format}
+                    </span>
+                    <span className="ml-auto font-mono shrink-0" style={{ color: 'var(--text-secondary)' }}>
+                      {t.published} {r.sent}
+                      {r.count > 0 ? ` / ${r.count}` : ''}
+                    </span>
+                    <span className="shrink-0" style={{ color: RUN_STATUS_COLOR[r.status] }}>
+                      {RUN_STATUS_LABEL[r.status](t)}
+                    </span>
+                    {r.status === 'running' && (
+                      <button
+                        type="button"
+                        onClick={() => void stopRun(r.id)}
+                        className="shrink-0 opacity-70 hover:opacity-100"
+                        title={t.stopPublish}
+                      >
+                        <Square className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                  {r.lastError && (
+                    <div className="pl-3.5 text-[10px] break-all" style={{ color: 'var(--danger)' }}>
+                      {r.lastError}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {runs.some((r) => r.status !== 'running') && (
+                <button
+                  type="button"
+                  onClick={() => void clearFinishedRuns()}
+                  className="text-[10px] underline opacity-60 hover:opacity-100"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {t.clear}
+                </button>
+              )}
+              {scheduleError && (
+                <div role="alert" className="text-[10px]" style={{ color: 'var(--danger)' }}>
+                  {scheduleError}
+                </div>
+              )}
             </div>
           </div>
         )}
