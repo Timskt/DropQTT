@@ -1,5 +1,22 @@
 use serde::{Deserialize, Serialize};
 
+/// Floor for how long a sender waits for the peer's COMPLETED receipt.
+pub const CONFIRM_GRACE_BASE_SECS: u64 = 30;
+/// Ceiling, so a huge file cannot hold a transfer row open indefinitely.
+pub const CONFIRM_GRACE_MAX_SECS: u64 = 900;
+
+/// Deadline for the peer's lifecycle receipt after the last chunk went out.
+/// The receiver has to hash the whole file before it can confirm, so the window
+/// scales with size; without a deadline a transfer whose peer vanished stays in
+/// "awaiting peer confirmation" forever.
+pub fn confirm_grace_secs(file_size: u64) -> u64 {
+    // ~1 s per MiB is deliberately generous: it covers a slow disk plus the
+    // receipt's own trip back, not just the hashing throughput.
+    CONFIRM_GRACE_BASE_SECS
+        .saturating_add(file_size / (1024 * 1024))
+        .min(CONFIRM_GRACE_MAX_SECS)
+}
+
 fn default_protocol_version() -> u8 {
     3
 }
@@ -303,14 +320,26 @@ mod tests {
     }
 
     #[test]
-    fn test_broker_config_default() {
-        let cfg = BrokerConfig::default();
+    fn test_broker_config_default() {        let cfg = BrokerConfig::default();
         assert_eq!(cfg.host, "broker.emqx.io");
         assert_eq!(cfg.port, 1883);
         assert!(!cfg.use_tls);
         assert!(cfg.client_id.starts_with("DropQTT_"));
         assert_eq!(cfg.protocol_version, 3);
         assert!(!cfg.is_v5());
+    }
+
+    #[test]
+    fn confirmation_window_scales_with_the_file() {
+        assert_eq!(confirm_grace_secs(0), CONFIRM_GRACE_BASE_SECS);
+        assert_eq!(confirm_grace_secs(8 * 1024 * 1024), 38);
+        assert_eq!(confirm_grace_secs(60 * 1024 * 1024), 90);
+        // A gigabyte-class send still has to end sometime.
+        assert_eq!(confirm_grace_secs(1024 * 1024 * 1024), CONFIRM_GRACE_MAX_SECS);
+        assert!(
+            confirm_grace_secs(u64::MAX) == CONFIRM_GRACE_MAX_SECS,
+            "no overflow, no infinite wait"
+        );
     }
 
     #[test]

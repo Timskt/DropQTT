@@ -65,6 +65,8 @@ const statusVar = (status: TransferStatus, isSend: boolean): string => {
       return 'var(--fuchsia)';
     case 'sent':
       return 'var(--sky)';
+    case 'confirm_timeout':
+      return 'var(--warn)';
     case 'failed':
       return 'var(--bad)';
     case 'cancelled':
@@ -108,7 +110,9 @@ const TransferRow = React.memo(function TransferRow({
       ? Math.min(100, Math.round((item.bytesTransferred / item.totalBytes) * 100))
       : item.status === 'completed' || item.status === 'delivered' || item.status === 'sent'
         ? 100
-        : 0;
+        : item.status === 'confirm_timeout'
+          ? 100
+          : 0;
   const isSend = item.direction === 'send';
   const active = item.status === 'transferring' || item.status === 'paused';
   const fill = statusVar(item.status, isSend);
@@ -130,6 +134,8 @@ const TransferRow = React.memo(function TransferRow({
         return t.cancelled;
       case 'sent':
         return t.sent;
+      case 'confirm_timeout':
+        return t.confirmTimeout;
       default:
         return `${percent}%`;
     }

@@ -50,6 +50,8 @@ export type TransferStatus =
   | 'verifying'
   | 'awaiting_approval'
   | 'sent'
+  /** Every chunk left the sender, but the peer never sent its receipt. */
+  | 'confirm_timeout'
   | 'delivered'
   | 'completed'
   | 'cancelled'

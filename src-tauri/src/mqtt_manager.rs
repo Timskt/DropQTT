@@ -2015,6 +2015,7 @@ impl MqttManager {
         let app_handle = app.clone();
         let tid = transfer_id.clone();
         let prefix_for_chunks = topic_prefix.clone();
+        let manager = self.clone();
 
         tokio::spawn(async move {
             let mut file = match File::open(&path).await {
@@ -2121,6 +2122,35 @@ impl MqttManager {
                         if is_last { "sent" } else { "transferring" },
                         None, &sha256_hash, Some(file_path_str.clone()),
                     );
+                    if is_last {
+                        // The peer has to hash the whole file before it can
+                        // confirm. If that receipt never arrives the row would sit
+                        // in "awaiting peer confirmation" until the app restarts,
+                        // indistinguishable from a slow but live transfer, so give
+                        // it a size-scaled deadline and a terminal state of its own.
+                        let this = manager.clone();
+                        let app_t = app_handle.clone();
+                        let tid_t = tid.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                crate::protocol::confirm_grace_secs(file_size),
+                            ))
+                            .await;
+                            // A COMPLETED or ERROR receipt already removed it.
+                            let unconfirmed = this.outgoing_transfers.lock().await.remove(&tid_t);
+                            if let Some(active) = unconfirmed {
+                                let ctx = active.ctx;
+                                emit_progress(
+                                    &app_t, &ctx.transfer_id, &ctx.topic_prefix, &ctx.file_name,
+                                    "send", ctx.file_size, ctx.file_size, ctx.total_chunks,
+                                    ctx.total_chunks, 0.0, "confirm_timeout",
+                                    Some("peer never confirmed the transfer".to_string()),
+                                    &ctx.sha256,
+                                    Some(ctx.path.to_string_lossy().to_string()),
+                                );
+                            }
+                        });
+                    }
                 }
 
                 // Pacing to avoid choking the loop buffer on large files

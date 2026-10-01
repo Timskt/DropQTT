@@ -429,6 +429,7 @@ export interface Translations {
   approve: string;
   reject: string;
   sent: string;
+  confirmTimeout: string;
   delivered: string;
   clearFinished: string;
   cancelBatch: string;
@@ -914,6 +915,7 @@ export const translations: Record<Language, Translations> = {
     approve: '接收保存',
     reject: '拒绝',
     sent: '已发送·待对端确认',
+    confirmTimeout: '已发送·对端未确认',
     delivered: '对端已确认接收',
     clearFinished: '清除已结束',
     cancelBatch: '终止批次',
@@ -1397,6 +1399,7 @@ export const translations: Record<Language, Translations> = {
     approve: 'Accept & Save',
     reject: 'Reject',
     sent: 'Sent · Awaiting Receipt',
+    confirmTimeout: 'Sent · peer never confirmed',
     delivered: 'Delivered (peer confirmed)',
     clearFinished: 'Clear Finished',
     cancelBatch: 'Cancel Batch',
@@ -1880,6 +1883,7 @@ export const translations: Record<Language, Translations> = {
     approve: '接收儲存',
     reject: '拒絕',
     sent: '已發送·待對端確認',
+    confirmTimeout: '已發送·對端未確認',
     delivered: '對端已確認接收',
     clearFinished: '清除已結束',
     cancelBatch: '終止批次',
@@ -2363,6 +2367,7 @@ export const translations: Record<Language, Translations> = {
     approve: '受領して保存',
     reject: '拒否',
     sent: '送信完了·相手確認待ち',
+    confirmTimeout: '送信完了·相手確認なし',
     delivered: '相手が受領確認',
     clearFinished: '完了分を消去',
     cancelBatch: 'バッチ中止',
