@@ -130,11 +130,24 @@ fn build_checks(mqtt: &MqttDiagnostics, bridge: &BridgeDiagnostics) -> Vec<Diagn
     });
 
     checks.push(if mqtt.history_available {
-        check(
-            "history_store",
-            "ok",
-            format!("{} rows available for search", mqtt.history.rows),
-        )
+        if mqtt.history.lost_rows > 0 {
+            // Retention is what the history workspace promises, so a best-effort
+            // write that lost rows has to be visible, not just loggable.
+            check(
+                "history_store",
+                "warn",
+                format!(
+                    "{} rows available for search; {} row(s) could not be written this session",
+                    mqtt.history.rows, mqtt.history.lost_rows
+                ),
+            )
+        } else {
+            check(
+                "history_store",
+                "ok",
+                format!("{} rows available for search", mqtt.history.rows),
+            )
+        }
     } else {
         check(
             "history_store",
@@ -330,6 +343,7 @@ mod tests {
                 outbound: 4,
                 oldest_ts: Some(1),
                 newest_ts: Some(2),
+                lost_rows: 0,
             },
             download_dir: std::env::temp_dir().to_string_lossy().to_string(),
             download_dir_writable: true,
@@ -355,6 +369,16 @@ mod tests {
             .unwrap();
         assert_eq!(check.level, "warn");
         assert!(check.detail.contains('7'));
+    }
+
+    #[test]
+    fn history_rows_that_could_not_be_written_are_reported() {
+        let mut input = mqtt();
+        input.history.lost_rows = 3;
+        let snapshot = build_snapshot(input, BridgeDiagnostics::default());
+        let check = snapshot.checks.iter().find(|c| c.id == "history_store").unwrap();
+        assert_eq!(check.level, "warn");
+        assert!(check.detail.contains('3'), "{}", check.detail);
     }
 
     #[test]

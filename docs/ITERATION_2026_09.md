@@ -162,6 +162,17 @@
 - **桥接的转发策略**：`content-type`/`user-properties`/`response-topic`/`correlation-data`/`payload-format` 跨跳转发；**主题别名故意不转发** —— 别名只在单条连接内有意义，链到另一条连接上就是错的。
 - 遗嘱属性、Session-Expiry 在 v3.1.1 连接上不渲染（界面按 `protocolVersion === 5` 收敛）。
 
+### 3.9 审计复核与"不再撒谎"的三条控制路径（第五轮，2026-10-02）
+
+拿一份独立只读审计（工作区里的 `PROJECT_ANALYSIS_v0.9.md`，**未**纳入版本库，留给我自己判断）逐条**先复核再动手**，因为审计报告本身也有不准的条目：
+
+- **P0-1 桥接静默丢包**：规则的目标连接不在时，代码 `continue` —— 既不计数也不告诉界面。现在这条路会 `bump(rule.id, false)` 并发一条带原因（`target connection 'x' is not connected`）的 `bridge-event`，规则行的失败计数与浮层都能看到。**丢包必须留下账，哪怕没人来看。**
+- **P0-2 历史写失败被当成"查无此记录"**：`history.rs` 新增 `lost_rows` 累计器 —— 拿不到锁 = 整批、COMMIT 失败 = 整批、单行失败 = 逐条；进 `MqttDiagnostics`，`history_store` 健康检查在丢失 > 0 时转 `warn`。
+- **P0-3 控制命令对未知 id 撒谎**：`pause_transfer` / `resume_transfer` / `cancel_transfer` 原来返回 `()`，找不到目标时什么都发生不了、界面还显示"已操作"。现在统一 `Result<(), String>`，错误串直接指出是哪一个方向、哪一个 id 找不到。
+  - 审计这条**部分不准**：它说 `approve/reject` 也一样撒谎，实际上那两个早已返回 `Result`。
+  - 审计**漏了一条更重的**：`cancel_transfer` 只对发送方向有效，接收中的传输点"取消"是彻底空操作 —— 现在接收方向走 `reject_transfer`，会删临时文件并回一条 ERROR 控制消息。
+- **验证过程中我自己发现的新缺陷（审计没有，正向用例也没有覆盖到）**：接收端的 finalize 任务与"取消"抢跑 —— 取消已经把条目摘掉、临时文件删掉，finalize 仍在跑 SHA 校验，跑完**无条件**广播 `awaiting_approval`（或自动接收的 `completed`），于是队列里冒出一行指向已不存在文件的"待确认接收"，点它只会得到一个"No such file"。修法是把**"取消即失去所有权"做成不变量**：三条终态分支（校验失败 / 自动接收 / 待确认）各自在锁内 claim 条目，claim 失败就彻底闭嘴 —— 不广播，也不给发送端发伪造的"SHA 校验失败"。
+
 ## 4. 验证矩阵（哪些真跑过）
 
 | 项目 | 命令 | 结果 | 说明 |
@@ -387,6 +398,28 @@ Playwright 用例通过 `window.__TAURI_INTERNALS__` 桩替换了 IPC，它证�
 
 界面侧新增 2 条 Playwright 用例（重发按钮 → `start_send_file` 参数正确；超时行可清除），全套 32/32。
 
+### 4.13 审计修复的真机取证（第五轮，2026-10-02）
+
+两个实例 + 一次性 lab broker（`127.0.0.1:18831`），CDP 分别用独立 WebView2 profile 与 9223/9224 端口 —— 共享 profile 时第二个窗口不一定挂到同一个调试端口上，这点已经踩过两次。
+
+| 场景 | 实测 |
+| --- | --- |
+| 桥接规则指向不存在的连接，外部 `mosquitto_pub` 打一条 `audit/x` | `bridge_stats` → `{errors: 1}` ✓ 不再静默丢弃 |
+| `cancel_transfer('no-such-id')` | 拒绝：`no active transfer 'no-such-id' to cancel` ✓ |
+| `pause_transfer('no-such-id')` | 拒绝：`no outgoing transfer 'no-such-id' to pause` ✓ |
+| 30 MB 传输**流式接收中**取消（自动接收开） | 返回 Ok，接收目录 `[]`（临时文件已删），行停在 `已取消` ✓ |
+| 同上，自动接收关 | 返回 Ok，目录 `[]`，行停在 `已取消` ✓ **不再复活成"待确认接收"** |
+| 发送端视角 | 行变 `传输失败 · Receiver rejected the transfer`（0 B / 30 MB）✓ 对端真的收到了终止原因 |
+| 正向回归：自动接收 20 MB | 行 `校验通过`，落盘 `big5.bin`，sha256 与源 **MATCH** ✓ |
+| 正向回归：人工批准 | 出现 `待确认接收` → 点"接收保存" → 行 `校验通过`，落盘 `big5_1.bin`，hash **MATCH** ✓ |
+| 运维面板 | `定时发布运行中 0 / 压测运行中 0 / 对端未确认的发送 0 / 未能写入历史 0 / FEED 丢失（含历史）0` 全部渲染 ✓ |
+
+**这轮最该记下来的是我自己的回归**：所有权判据第一版写成 `finalize_state == Streaming`，但状态在最后一个分片时就已翻到 `Verifying`；同时 `approve_transfer` 会**先把条目摘掉**再调 `deliver_incoming`，我却把"remove 返回 None"当成失活信号塞进了那个函数。结果真机跑出来：自动接收永久停在"计算哈希校验"、临时文件不再改名、**批准按钮彻底失效**。取消专项测试全绿（因为所有 finalize 都提前返回了），是正向用例把它抓出来的。教训写进方法论：**改"所有权/失活判定"时，取消路径和完成路径必须同批验证，只测取消会掩盖破坏。**
+
+门：`cargo clippy --all-targets` 干净、`cargo build` 通过、Rust harness **77/77**、`npx tsc --noEmit` 通过、`npm test` **20/20**、`npx playwright test` **32/32**。
+
+P0-2 的计数**只有单元测试证明**（`storage_failure_is_not_reported_as_empty_results` 断言 `lost_rows == 2`）；真机上只验证了面板把"未能写入历史"渲染出来且读数为 0 —— 制造一次真实 DB 写失败需要锁库或换只读目录，这轮没做。
+
 ## 5. 已知限制（必须如实告知）
 
 ### 5.1 环境：本机 MSVC 不可用，但 gnu 可以完整跑起应用
@@ -454,7 +487,7 @@ error: linking with `link.exe` failed
 
 按性价比排序：
 
-> **已完成的插入项**：文件传输"对端确认"超时与独立终态（§4.11）。剩下的同类问题是**要不要提供人工重发/断点续传**，那需要先定协议扩展（重发是复用同一 transferId 还是新开一笔）。
+> **已完成的插入项**：文件传输"对端确认"超时与独立终态（§4.11）；重新发送入口与批次诚实化（§4.12）；审计报告 P0-1/P0-2/P0-3 的复核修复 + 取消/finalize 竞态（§3.9、§4.13）。剩下的同类问题是**断点续传**（重发是复用同一 transferId 还是新开一笔已定为新开），以及**给所有权判定补可回归的纯函数测试**。
 
 1. **RPC 一等公民**：带 `responseTopic` 自动临时订阅应答主题、按 `correlationData` 配对、显示往返延迟与超时。
 2. **压测吞吐开关**：允许压测运行不镜像到 feed/历史，把 §5.5 的实测 ~315 msg/s 提到通道上限；同时才有资格谈"高压下"的 P50/P95/P99。
@@ -467,6 +500,8 @@ error: linking with `link.exe` failed
 9. **把 gnu 路线固化成本地开发方式**：加 `pnpm tauri:dev:gnu`（设 `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu`），让没有 Windows SDK 的机器也能一键联调。顺带记录：`cargo test --lib` 在本机 gnu 下能编译但测试进程加载 Tauri/WebView2 依赖会 `STATUS_ENTRYPOINT_NOT_FOUND`，所以 Rust 门只能走 §4.1 的 harness。
 10. **补 `bridge.rs` 的自动化测试**：它只被真机端到端覆盖过一次，没有可重复回归。可把 `resync_subs` 的期望集合计算抽成不依赖 Tauri 的纯函数。
 11. **给 `ErrorBoundary` 补用例**：目前只有代码路径审查，没有 Playwright 覆盖。
+12. **把接收端"所有权判定"抽成纯函数并加 harness 回归**：§4.13 那类竞态（取消 vs finalize）现在只有真机双实例证明，本机 `cargo test --lib` 起不来（§5.1、§4.1），所以自动化门抓不住它。把"条目能否被这次 finalize 广播"做成不依赖 `AppHandle` 的谓词，就能进 77 项 harness。
+13. **断点续传**：`confirm_timeout` 后只有"整笔重发"。协议要加"从第 N 片继续"的语义（以及接收端如何证明自己还留着半截临时文件），没定协议之前不做半成品实现。
 
 ---
 
@@ -478,3 +513,7 @@ error: linking with `link.exe` failed
 **第二轮修改**：`src-tauri/src/{transport,mqtt_manager,diagnostics,protocol,bridge,lib}.rs`、`src/components/mqttx/{MessageStream,SubscriptionsBar}.tsx`、`src/hooks/{useBroker,useMqttMessages}.ts`、`src/App.tsx`、`src/types.ts`、`src/i18n/index.ts`
 
 **修改**：`src-tauri/src/{bridge,history,lib,mqtt_manager,transform}.rs`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src/{App,types,main,index.css,i18n}`、`src/components/BrokerStatusBar.tsx`、`src/components/Sidebar.tsx`、`src/components/bridge/BridgePanel.tsx`、`src/components/history/HistoryPanel.tsx`、`src/hooks/useBridge.ts`、`src/utils/exportMessages.ts`、`index.html`、`package.json`、`pnpm-lock.yaml`、`.gitignore`、`.github/workflows/ci.yml`、`README.md`
+
+**第三轮新增**：`src-tauri/src/{topic,sysmonitor}.rs`、`src/components/ops/OpsPanel.tsx`（看门狗 / `$SYS` / 诊断）
+**第四轮新增**：`src-tauri/src/{scheduler,bench}.rs`、`src/hooks/{useSchedules,useBench}.ts`、`tests/ui/{scheduler,bench,v5-properties,transfer-confirm}.spec.ts`
+**第五轮修改**：`src-tauri/src/{bridge,history,diagnostics,mqtt_manager,lib}.rs`（P0-1/P0-2/P0-3 + 取消/finalize 所有权）、`src/components/ops/OpsPanel.tsx`、`src/types.ts`、`src/i18n/index.ts`

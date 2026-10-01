@@ -109,20 +109,21 @@ async fn start_send_file(
 
 #[tauri::command]
 async fn pause_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
-    state.mqtt.pause_transfer(&transfer_id).await;
-    Ok(())
+    state.mqtt.pause_transfer(&transfer_id).await
 }
 
 #[tauri::command]
 async fn resume_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
-    state.mqtt.resume_transfer(&transfer_id).await;
-    Ok(())
+    state.mqtt.resume_transfer(&transfer_id).await
 }
 
 #[tauri::command]
-async fn cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
-    state.mqtt.cancel_transfer(&transfer_id).await;
-    Ok(())
+async fn cancel_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    state.mqtt.cancel_transfer(app, transfer_id).await
 }
 
 #[tauri::command]

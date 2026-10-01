@@ -188,6 +188,7 @@ export interface Translations {
   opsScheduledRuns: string;
   opsBenchRuns: string;
   opsConfirmTimeouts: string;
+  opsHistoryLost: string;
   opsBridgeConnections: string;
   opsEnabledRules: string;
   opsVersion: string;
@@ -676,6 +677,7 @@ export const translations: Record<Language, Translations> = {
     opsScheduledRuns: '定时发布运行中',
     opsBenchRuns: '压测运行中',
     opsConfirmTimeouts: '对端未确认的发送',
+    opsHistoryLost: '未能写入历史',
     opsBridgeConnections: '桥接连接',
     opsEnabledRules: '启用规则',
     opsVersion: '版本',
@@ -1162,6 +1164,7 @@ export const translations: Record<Language, Translations> = {
     opsScheduledRuns: 'scheduled runs',
     opsBenchRuns: 'bench runs',
     opsConfirmTimeouts: 'unconfirmed sends',
+    opsHistoryLost: 'history rows lost',
     opsBridgeConnections: 'Bridge connections',
     opsEnabledRules: 'enabled rules',
     opsVersion: 'Version',
@@ -1648,6 +1651,7 @@ export const translations: Record<Language, Translations> = {
     opsScheduledRuns: '定時發布執行中',
     opsBenchRuns: '壓測執行中',
     opsConfirmTimeouts: '對端未確認的發送',
+    opsHistoryLost: '未能寫入歷史',
     opsBridgeConnections: '橋接連線',
     opsEnabledRules: '啟用規則',
     opsVersion: '版本',
@@ -2134,6 +2138,7 @@ export const translations: Record<Language, Translations> = {
     opsScheduledRuns: '定期発行の実行中',
     opsBenchRuns: 'ベンチの実行中',
     opsConfirmTimeouts: '未確認の送信',
+    opsHistoryLost: '履歴書き込み失敗',
     opsBridgeConnections: 'ブリッジ接続',
     opsEnabledRules: '有効ルール',
     opsVersion: 'バージョン',

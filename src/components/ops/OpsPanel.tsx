@@ -247,6 +247,13 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
               <div className="ops-metric-grid">
                 <Metric label={t.opsHistoryRows} value={snapshot.mqtt.history.rows.toLocaleString()} color="var(--sky)" />
                 <Metric label={t.opsHistoryStore} value={snapshot.mqtt.historyAvailable ? t.opsAvailable : t.opsUnavailable} color={snapshot.mqtt.historyAvailable ? 'var(--ok)' : 'var(--warn)'} />
+                {/* The write path is deliberately best-effort; the only way to
+                    know it lost something is for the count to be on screen. */}
+                <Metric
+                  label={t.opsHistoryLost}
+                  value={(snapshot.mqtt.history.lostRows ?? 0).toLocaleString()}
+                  color={snapshot.mqtt.history.lostRows ? 'var(--warn)' : 'var(--text-primary)'}
+                />
                 <Metric label={t.opsDownloadDir} value={snapshot.mqtt.downloadDirWritable ? t.opsWritable : t.opsReadOnly} color={snapshot.mqtt.downloadDirWritable ? 'var(--ok)' : 'var(--bad)'} hint={snapshot.mqtt.downloadDir} />
                 <Metric label={t.inbound} value={snapshot.mqtt.history.inbound.toLocaleString()} />
                 <Metric label={t.outbound} value={snapshot.mqtt.history.outbound.toLocaleString()} />

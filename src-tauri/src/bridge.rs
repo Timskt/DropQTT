@@ -800,7 +800,32 @@ impl BridgeManager {
 
             let target = match conns.get(&rule.target_conn) {
                 Some(c) => c.client.clone(),
-                None => continue,
+                None => {
+                    // Every other exit in this loop accounts for what it did.
+                    // Silently skipping here is the worst failure mode a bridge
+                    // can have: the rule reads as enabled with a clean zero-error
+                    // stat while the data goes nowhere.
+                    self.bump(&rule.id, false, &publish.topic).await;
+                    let _ = app.emit(
+                        "bridge-event",
+                        BridgeEvent {
+                            rule_id: rule.id.clone(),
+                            rule_name: rule.name.clone(),
+                            from_topic: publish.topic.clone(),
+                            to_topic: target_topic.clone(),
+                            bytes: 0,
+                            qos,
+                            retain,
+                            ok: false,
+                            error: Some(format!(
+                                "target connection '{}' is not connected",
+                                rule.target_conn
+                            )),
+                            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        },
+                    );
+                    continue;
+                }
             };
             let result = target
                 .publish(&target_topic, qos, retain, payload_out, props.as_ref())

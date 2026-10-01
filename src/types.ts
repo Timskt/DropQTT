@@ -256,6 +256,8 @@ export interface HistoryStats {
   outbound: number;
   oldestTs?: number | null;
   newestTs?: number | null;
+  /** Rows the best-effort write path could not persist this session */
+  lostRows?: number;
 }
 
 // ---- Operations diagnostics ----

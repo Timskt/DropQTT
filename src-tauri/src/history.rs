@@ -6,6 +6,7 @@
 //! Writes happen inside a single transaction per batch to stay cheap even at
 //! thousands of messages per second. A row-count cap keeps the DB bounded.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use base64::Engine;
@@ -53,11 +54,17 @@ pub struct HistoryStats {
     pub outbound: i64,
     pub oldest_ts: Option<i64>,
     pub newest_ts: Option<i64>,
+    /// Rows dropped by the best-effort write path since this session opened
+    pub lost_rows: u64,
 }
 
 pub struct HistoryStore {
     conn: Mutex<Connection>,
     batches: Mutex<u64>,
+    /// Rows the write path could not persist. History stays best-effort on
+    /// purpose (a busy DB must never stall the live feed), but "best-effort"
+    /// without a counter is indistinguishable from "complete".
+    lost_rows: AtomicU64,
 }
 
 fn now_ms() -> i64 {
@@ -104,6 +111,7 @@ impl HistoryStore {
         Ok(Self {
             conn: Mutex::new(conn),
             batches: Mutex::new(0),
+            lost_rows: AtomicU64::new(0),
         })
     }
 
@@ -113,8 +121,12 @@ impl HistoryStore {
             return;
         }
         let fallback_ts = now_ms();
-        let Ok(conn) = self.conn.lock() else { return };
+        let Ok(conn) = self.conn.lock() else {
+            self.lost_rows.fetch_add(batch.len() as u64, Ordering::SeqCst);
+            return;
+        };
         // Best-effort: a failed history write must never break the live feed.
+        let mut inserted = 0u64;
         let _ = conn.execute("BEGIN IMMEDIATE", []);
         for m in batch {
             let ts = if m.timestamp_ms > 0 { m.timestamp_ms } else { fallback_ts };
@@ -128,7 +140,8 @@ impl HistoryStore {
                 payload_format: m.payload_format,
                 ..Default::default()
             };
-            let _ = conn.execute(
+            if conn
+                .execute(
                 "INSERT OR REPLACE INTO messages \
                  (id, topic, payload, payload_b64, payload_len, qos, retain, content_type, direction, ts, properties, truncated) \
                  VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
@@ -146,10 +159,22 @@ impl HistoryStore {
                     serde_json::to_string(&properties).unwrap_or_default(),
                     m.truncated
                 ],
-            );
+            )
+                .is_ok()
+            {
+                inserted += 1;
+            }
         }
-        let _ = conn.execute("COMMIT", []);
+        if conn.execute("COMMIT", []).is_err() {
+            // A failed commit rolled the whole batch back, so the per-row
+            // successes above never happened either.
+            inserted = 0;
+        }
         drop(conn);
+        let lost = batch.len() as u64 - inserted;
+        if lost > 0 {
+            self.lost_rows.fetch_add(lost, Ordering::SeqCst);
+        }
 
         // Periodic bounded trim (every N batches) keeps the DB capped cheaply.
         let count = self.batches.lock().map(|mut g| {
@@ -247,7 +272,14 @@ impl HistoryStore {
     }
 
     pub fn stats(&self) -> HistoryStats {
-        let empty = || HistoryStats { rows: 0, inbound: 0, outbound: 0, oldest_ts: None, newest_ts: None };
+        let empty = || HistoryStats {
+            rows: 0,
+            inbound: 0,
+            outbound: 0,
+            oldest_ts: None,
+            newest_ts: None,
+            lost_rows: self.lost_rows.load(Ordering::SeqCst),
+        };
         let Ok(conn) = self.conn.lock() else { return empty() };
         let rows: i64 = conn
             .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
@@ -264,7 +296,14 @@ impl HistoryStore {
         let newest: Option<i64> = conn
             .query_row("SELECT MAX(ts) FROM messages", [], |r| r.get(0))
             .unwrap_or(None);
-        HistoryStats { rows, inbound, outbound, oldest_ts: oldest, newest_ts: newest }
+        HistoryStats {
+            rows,
+            inbound,
+            outbound,
+            oldest_ts: oldest,
+            newest_ts: newest,
+            lost_rows: self.lost_rows.load(Ordering::SeqCst),
+        }
     }
 
     pub fn clear(&self) {
@@ -458,6 +497,15 @@ mod tests {
         }
         assert!(store.query("", "all", 100, 0, i64::MAX).is_err());
         assert!(store.series("", "all", 1000, 0, i64::MAX).is_err());
+
+        // The write path stays lenient, but it must not stay silent: the rows it
+        // could not persist have to be countable afterwards.
+        assert_eq!(store.stats().lost_rows, 0, "successful writes lose nothing");
+        store.append(&[
+            msg("2", "sensor/a", "x", "in"),
+            msg("3", "sensor/b", "y", "out"),
+        ]);
+        assert_eq!(store.stats().lost_rows, 2);
     }
 
     #[test]

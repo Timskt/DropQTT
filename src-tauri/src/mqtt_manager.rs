@@ -625,7 +625,14 @@ impl MqttManager {
             .await
             .as_ref()
             .map(|h| h.stats())
-            .unwrap_or(crate::history::HistoryStats { rows: 0, inbound: 0, outbound: 0, oldest_ts: None, newest_ts: None })
+            .unwrap_or(crate::history::HistoryStats {
+                rows: 0,
+                inbound: 0,
+                outbound: 0,
+                oldest_ts: None,
+                newest_ts: None,
+                lost_rows: 0,
+            })
     }
 
     pub async fn clear_history(&self) {
@@ -1430,6 +1437,18 @@ impl MqttManager {
         }
     }
 
+    /// Does the receiver still own an incoming transfer this finalize task was
+    /// spawned for? A cancel drops the entry, so a late finalize sees false and
+    /// must not announce a result for a transfer the user already killed.
+    async fn incoming_is_live(&self, transfer_id: &str) -> bool {
+        self.incoming_transfers.lock().await.get(transfer_id).is_some_and(|entry| {
+            matches!(
+                entry.finalize_state,
+                FinalizeState::Streaming | FinalizeState::Verifying
+            )
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn finalize_incoming(
         self: Arc<Self>,
@@ -1453,6 +1472,12 @@ impl MqttManager {
             }
         }
 
+        // A cancel removes the entry, so an in-flight finalize must stop here
+        // instead of publishing a result for a transfer the user already killed.
+        if !self.incoming_is_live(&transfer_id).await {
+            return;
+        }
+
         let verified = match verify_sha256(&temp_path, &expected_hash).await {
             Ok(v) => v,
             Err(e) => {
@@ -1462,6 +1487,13 @@ impl MqttManager {
         };
 
         if !verified {
+            // Claim the entry before complaining: a transfer the user cancelled has
+            // no business reporting an integrity failure to its sender.
+            let ours = self.incoming_transfers.lock().await.remove(&transfer_id).is_some();
+            if !ours {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return;
+            }
             self.publish_ctrl(
                 &topic_prefix,
                 &transfer_id,
@@ -1475,7 +1507,6 @@ impl MqttManager {
             )
             .await;
             let _ = tokio::fs::remove_file(&temp_path).await;
-            self.incoming_transfers.lock().await.remove(&transfer_id);
             emit_progress(
                 &app,
                 &transfer_id,
@@ -1497,13 +1528,34 @@ impl MqttManager {
 
         let auto = self.auto_receive.load(Ordering::SeqCst);
         if auto {
+            // The removal doubles as the liveness check: if a cancel took the entry
+            // while we were verifying, this finalize must stay silent.
+            let ours = self.incoming_transfers.lock().await.remove(&transfer_id).is_some();
+            if !ours {
+                return;
+            }
             self.deliver_incoming(&app, &transfer_id, &temp_path, &final_path, &topic_prefix, &expected_hash, &file_name, file_size, total_chunks)
                 .await;
         } else {
-            let mut incoming = self.incoming_transfers.lock().await;
-            if let Some(entry) = incoming.get_mut(&transfer_id) {
-                entry.verified = true;
-                entry.finalize_state = FinalizeState::AwaitingApproval;
+            let still_ours = {
+                let mut incoming = self.incoming_transfers.lock().await;
+                match incoming.get_mut(&transfer_id) {
+                    Some(entry)
+                        if matches!(
+                            entry.finalize_state,
+                            FinalizeState::Streaming | FinalizeState::Verifying
+                        ) =>
+                    {
+                        entry.verified = true;
+                        entry.finalize_state = FinalizeState::AwaitingApproval;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if !still_ours {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return;
             }
             emit_progress(
                 &app,
@@ -1537,8 +1589,8 @@ impl MqttManager {
         file_size: u64,
         total_chunks: usize,
     ) {
-        // Remove entry first so the File handle is closed before rename
-        self.incoming_transfers.lock().await.remove(transfer_id);
+        // Remove entry first so the File handle is closed before rename; the
+        // caller owns that decision (approve removes too), this must not re-check.
 
         let target = {
             let dir = self.download_dir.read().await.clone();
@@ -2170,7 +2222,7 @@ impl MqttManager {
 
     /// Lifecycle controls use the same per-transfer ctrl topic as
     /// NACK/COMPLETED/ERROR, so both peers can react without a second channel.
-    pub async fn pause_transfer(&self, transfer_id: &str) {
+    pub async fn pause_transfer(&self, transfer_id: &str) -> Result<(), String> {
         let prefix = {
             let outgoing = self.outgoing_transfers.lock().await;
             outgoing.get(transfer_id).map(|trans| {
@@ -2191,10 +2243,13 @@ impl MqttManager {
                 },
             )
             .await;
+            Ok(())
+        } else {
+            Err(format!("no outgoing transfer '{transfer_id}' to pause"))
         }
     }
 
-    pub async fn resume_transfer(&self, transfer_id: &str) {
+    pub async fn resume_transfer(&self, transfer_id: &str) -> Result<(), String> {
         let prefix = {
             let outgoing = self.outgoing_transfers.lock().await;
             outgoing.get(transfer_id).map(|trans| {
@@ -2215,13 +2270,22 @@ impl MqttManager {
                 },
             )
             .await;
+            Ok(())
+        } else {
+            Err(format!("no outgoing transfer '{transfer_id}' to resume"))
         }
     }
 
-    pub async fn cancel_transfer(&self, transfer_id: &str) {
+    /// Cancel either direction. The UI shows one cancel action on any live row,
+    /// so a receiver-side cancel has to be real too, not a silent no-op.
+    pub async fn cancel_transfer(
+        &self,
+        app: AppHandle,
+        transfer_id: String,
+    ) -> Result<(), String> {
         let prefix = {
             let outgoing = self.outgoing_transfers.lock().await;
-            outgoing.get(transfer_id).map(|trans| {
+            outgoing.get(&transfer_id).map(|trans| {
                 trans.cancelled.store(true, Ordering::SeqCst);
                 trans.paused.store(false, Ordering::SeqCst);
                 trans.ctx.topic_prefix.clone()
@@ -2230,17 +2294,22 @@ impl MqttManager {
         if let Some(prefix) = prefix {
             self.publish_ctrl(
                 &prefix,
-                transfer_id,
+                &transfer_id,
                 ControlMessage {
                     msg_type: "CANCEL".to_string(),
-                    transfer_id: transfer_id.to_string(),
+                    transfer_id: transfer_id.clone(),
                     chunk_index: None,
                     missing: None,
                     message: Some("Cancelled by sender".to_string()),
                 },
             )
             .await;
+            return Ok(());
         }
+        if self.incoming_transfers.lock().await.contains_key(&transfer_id) {
+            return self.reject_transfer(app, transfer_id).await;
+        }
+        Err(format!("no active transfer '{transfer_id}' to cancel"))
     }
 
     async fn publish_ctrl(&self, topic_prefix: &str, transfer_id: &str, ctrl: ControlMessage) {
