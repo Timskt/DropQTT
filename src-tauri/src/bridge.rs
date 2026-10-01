@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::diagnostics::BridgeDiagnostics;
-use crate::mqtt_manager::wildcard_match;
+use crate::topic::wildcard_match;
 use crate::protocol::{BrokerConfig, PubProperties, SubOptions};
 use crate::transform::{apply_transform, TransformOutcome, SCRIPT_SIZE_LIMIT};
 use crate::transport::{build_connection, MqttClient, NetEvent, NormalizedPublish};

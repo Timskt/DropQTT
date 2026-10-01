@@ -15,7 +15,10 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::protocol::*;
+use crate::topic::wildcard_match;
 use crate::transport::{build_connection, MqttClient, NetEvent};
+use crate::silence::{self, SilenceAlertEvent, SilenceWatchdog};
+use crate::webhook;
 
 /// Max emitted payload bytes in the console feed (base64 view)
 const CONSOLE_PAYLOAD_CAP: usize = 64 * 1024;
@@ -150,6 +153,8 @@ pub struct MqttManager {
     topic_stats: Mutex<HashMap<String, TopicTraffic>>,
     /// Broker `$SYS/*` metrics: topic -> (latest value, last-seen epoch secs)
     sys_metrics: Mutex<HashMap<String, (String, u64)>>,
+    /// Silence watchdog: alerts when a topic filter stops carrying traffic
+    pub silence_watchdog: Arc<SilenceWatchdog>,
     /// Optional persistent history store (attached at app setup)
     history: RwLock<Option<Arc<crate::history::HistoryStore>>>,
     /// Runtime-configurable tracking cap (LRU eviction when full)
@@ -186,6 +191,7 @@ impl MqttManager {
             subscription_hits: Mutex::new(HashMap::new()),
             topic_stats: Mutex::new(HashMap::new()),
             sys_metrics: Mutex::new(HashMap::new()),
+            silence_watchdog: Arc::new(SilenceWatchdog::default()),
             history: RwLock::new(None),
             topic_stats_cap: std::sync::atomic::AtomicUsize::new(DEFAULT_TOPIC_STATS_CAP),
             base_topic: RwLock::new("dropqtt".to_string()),
@@ -344,6 +350,10 @@ impl MqttManager {
             while !flag.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
                     NetEvent::Connected => {
+                        // Start every silence timer from now: a gap while we were
+                        // disconnected is our own outage, not the device's.
+                        this.silence_watchdog
+                            .set_connected(true, chrono::Utc::now().timestamp());
                         // (Re)apply every registered subscription after CONNACK,
                         // including automatic reconnects.
                         if let Some(client) = this.client.read().await.clone() {
@@ -400,12 +410,67 @@ impl MqttManager {
             }
         });
 
+        // Silence watchdog tick: evaluates thresholds once a second (last-seen
+        // has one-second resolution) and delivers alerts off the poll task so a
+        // slow endpoint can never stall MQTT processing.
+        let this_wd = self.clone();
+        let app_wd = app.clone();
+        let flag_wd = shutdown.clone();
+        tokio::spawn(async move {
+            let client = webhook::client();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if flag_wd.load(Ordering::SeqCst) {
+                    break;
+                }
+                if !this_wd.is_connected.load(Ordering::SeqCst) {
+                    continue;
+                }
+                let alerts = this_wd.silence_watchdog.evaluate(chrono::Utc::now().timestamp());
+                for alert in alerts {
+                    let Ok(client) = client.as_ref().cloned() else {
+                        let _ = app_wd.emit("silence-alert", SilenceAlertEvent {
+                            rule_id: alert.rule_id, rule_name: alert.rule_name,
+                            topic_filter: alert.topic_filter, silent_for_sec: alert.silent_for_sec,
+                            ok: false, error: Some("HTTP client unavailable".into()),
+                            target: String::new(),
+                            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                        });
+                        continue;
+                    };
+                    let config = silence::alert_webhook(&alert.webhook);
+                    let body = Bytes::from(silence::alert_body(&alert));
+                    let app = app_wd.clone();
+                    let event = SilenceAlertEvent {
+                        rule_id: alert.rule_id,
+                        rule_name: alert.rule_name,
+                        topic_filter: alert.topic_filter,
+                        silent_for_sec: alert.silent_for_sec,
+                        ok: true,
+                        error: None,
+                        target: config.display_target(),
+                        timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                    };
+                    tokio::spawn(async move {
+                        let outcome = match webhook::deliver(&client, &config, body).await {
+                            Ok(()) => event,
+                            Err(e) => SilenceAlertEvent { error: Some(e), ..event },
+                        };
+                        let _ = app.emit("silence-alert", outcome);
+                    });
+                }
+            }
+        });
+
         *self.loop_control.lock().await = Some((handle, shutdown));
         Ok(())
     }
 
     pub async fn disconnect(&self) {
         self.is_connected.store(false, Ordering::SeqCst);
+        // Disarm so the outage we are about to cause is not reported as the
+        // device having gone quiet.
+        self.silence_watchdog.set_connected(false, 0);
 
         let control = self.loop_control.lock().await.take();
         let client = self.client.write().await.take();
@@ -855,6 +920,10 @@ impl MqttManager {
 
     async fn route_message(self: &Arc<Self>, app: &AppHandle, publish: crate::transport::NormalizedPublish) {
         let topic = publish.topic;
+
+        // Silence watchdog needs every publish, including $SYS, to be able to
+        // watch broker-side topics too.
+        self.silence_watchdog.observe(&topic, chrono::Utc::now().timestamp());
 
         // Broker $SYS metrics: capture latest value, keep out of feed + traffic.
         if topic.starts_with("$SYS/") {
@@ -1978,33 +2047,6 @@ fn expected_chunk_len(file_size: u64, chunk_size: usize, total_chunks: usize, id
     }
 }
 
-/// MQTT topic filter matching (RFC 3.1.1 §4.7): '+' one level, '#' tail levels,
-/// and topics beginning with '$' are excluded from leading wildcards.
-pub(crate) fn wildcard_match(filter: &str, topic: &str) -> bool {
-    let f: Vec<&str> = filter.split('/').collect();
-    let t: Vec<&str> = topic.split('/').collect();
-    // System topics ($...) are only matched by filters that name them explicitly
-    if t[0].starts_with('$') && !f[0].starts_with('$') {
-        return false;
-    }
-    for (i, seg) in f.iter().enumerate() {
-        match *seg {
-            "#" => return i == f.len() - 1, // '#' must be last; matches remaining
-            "+" => {
-                if i >= t.len() {
-                    return false;
-                }
-            }
-            s => {
-                if i >= t.len() || s != t[i] {
-                    return false;
-                }
-            }
-        }
-    }
-    f.len() == t.len()
-}
-
 fn sanitize_file_name(name: &str) -> String {
     // Reduce to a single safe basename: strip every path component (both POSIX
     // and Windows separators), drop filesystem-hostile chars, and refuse the
@@ -2246,7 +2288,6 @@ async fn resend_chunks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::wildcard_match;
 
     #[tokio::test]
     async fn topic_traffic_counts_and_ranks_by_rate() {
@@ -2308,13 +2349,6 @@ mod tests {
     }
 
     #[test]
-    fn exact_match() {
-        assert!(wildcard_match("a/b", "a/b"));
-        assert!(!wildcard_match("a/b", "a/b/c"));
-        assert!(!wildcard_match("a/b/c", "a/b"));
-    }
-
-    #[test]
     fn sanitize_strips_traversal_and_absolute() {
         assert_eq!(sanitize_file_name("../../etc/passwd"), "passwd");
         assert_eq!(sanitize_file_name("/absolute/name.txt"), "name.txt");
@@ -2344,28 +2378,4 @@ mod tests {
         assert!(!is_safe_transfer_id(&"x".repeat(200)));
     }
 
-    #[test]
-    fn single_level_wildcard() {
-        assert!(wildcard_match("a/+/c", "a/b/c"));
-        assert!(wildcard_match("a/+/c", "a/x/c"));
-        assert!(!wildcard_match("a/+/c", "a/b"));
-        assert!(!wildcard_match("a/+/c", "a/b/c/d"));
-    }
-
-    #[test]
-    fn multi_level_wildcard() {
-        assert!(wildcard_match("a/#", "a/b"));
-        assert!(wildcard_match("a/#", "a/b/c/d"));
-        assert!(wildcard_match("a/b/#", "a/b")); // parents/# matches the parent
-        assert!(wildcard_match("#", "anything/at/all"));
-        assert!(!wildcard_match("a/#", "b/c"));
-    }
-
-    #[test]
-    fn system_topics() {
-        assert!(!wildcard_match("#", "$SYS/broker/uptime"));
-        assert!(!wildcard_match("a/+", "$SYS/a/b"));
-        assert!(wildcard_match("$SYS/#", "$SYS/broker/uptime"));
-        assert!(wildcard_match("$SYS/broker/uptime", "$SYS/broker/uptime"));
-    }
 }

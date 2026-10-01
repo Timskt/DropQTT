@@ -303,6 +303,21 @@ export interface Translations {
   codecFailed: string;
   codecPending: string;
   senmlView: string;
+  silenceTitle: string;
+  silenceAdd: string;
+  silenceHint: string;
+  silenceNeedsConnection: string;
+  silenceFilter: string;
+  silenceTimeout: string;
+  silenceCooldown: string;
+  silenceNoRules: string;
+  silenceAfter: string;
+  silenceEvery: string;
+  silenceLog: string;
+  silenceEmpty: string;
+  silenceNeedFields: string;
+  silenceMinTimeout: string;
+  silenceEnabled: string;
   actualTopicNote: string;
   trafficCap: string;
   benchLab: string;
@@ -748,6 +763,21 @@ export const translations: Record<Language, Translations> = {
     codecFailed: '编解码失败',
     codecPending: '解码中…',
     senmlView: 'SenML 读数表（RFC 8428）',
+    silenceTitle: '静默告警',
+    silenceAdd: '新建告警',
+    silenceHint: '当某个主题过滤器在设定秒数内没有任何消息时，向 Webhook POST 告警；同一次持续离线按冷却时间抑制重复告警，设备恢复上报后计时器自动清零。',
+    silenceNeedsConnection: '当前未连接：断开期间不会判为设备静默。',
+    silenceFilter: '主题过滤器',
+    silenceTimeout: '静默阈值（秒）',
+    silenceCooldown: '冷却时间（秒）',
+    silenceNoRules: '还没有静默告警规则。',
+    silenceAfter: '{n} 秒无消息',
+    silenceEvery: '每 {n} 秒最多一次',
+    silenceLog: '告警记录',
+    silenceEmpty: '暂无告警。',
+    silenceNeedFields: '名称与主题过滤器都不能为空。',
+    silenceMinTimeout: '静默阈值至少 {n} 秒（最后上报只有 1 秒精度）。',
+    silenceEnabled: '启用',
     actualTopicNote: '按实际到达主题统计，非通配符过滤器',
     trafficCap: '主题数已达 1000 上限，新主题不再统计',
     benchLab: '压测台',
@@ -1191,6 +1221,21 @@ export const translations: Record<Language, Translations> = {
     codecFailed: 'Codec failed',
     codecPending: 'Decoding…',
     senmlView: 'SenML readings table (RFC 8428)',
+    silenceTitle: 'Silence alerts',
+    silenceAdd: 'New alert',
+    silenceHint: 'POSTs an alert to a webhook when a topic filter carries no traffic for the configured number of seconds. Repeat alerts for one continuous outage are suppressed by the cooldown, and a device reporting again clears the timer.',
+    silenceNeedsConnection: 'Not connected: while disconnected, silence is never attributed to the device.',
+    silenceFilter: 'Topic filter',
+    silenceTimeout: 'Silence threshold (s)',
+    silenceCooldown: 'Cooldown (s)',
+    silenceNoRules: 'No silence alerts configured yet.',
+    silenceAfter: 'silent {n}s',
+    silenceEvery: 'max once per {n}s',
+    silenceLog: 'Alert log',
+    silenceEmpty: 'No alerts yet.',
+    silenceNeedFields: 'Name and topic filter are both required.',
+    silenceMinTimeout: 'Silence threshold must be at least {n} seconds (last-seen has 1s resolution).',
+    silenceEnabled: 'Enabled',
     actualTopicNote: 'Counted per actual arrived topic, not wildcard filter',
     trafficCap: 'Topic tracking hit the 1000 cap — new topics not counted',
     benchLab: 'Bench Lab',
@@ -1634,6 +1679,21 @@ export const translations: Record<Language, Translations> = {
     codecFailed: '編解碼失敗',
     codecPending: '解碼中…',
     senmlView: 'SenML 讀數表（RFC 8428）',
+    silenceTitle: '靜默告警',
+    silenceAdd: '新建告警',
+    silenceHint: '當某個主題過濾器在設定秒數內沒有任何訊息時，向 Webhook POST 告警；同一次持續離線依冷卻時間抑制重複告警，裝置恢復上報後計時器自動歸零。',
+    silenceNeedsConnection: '目前未連線：中斷期間不會判定為裝置靜默。',
+    silenceFilter: '主題過濾器',
+    silenceTimeout: '靜默閾值（秒）',
+    silenceCooldown: '冷卻時間（秒）',
+    silenceNoRules: '還沒有靜默告警規則。',
+    silenceAfter: '{n} 秒無訊息',
+    silenceEvery: '每 {n} 秒最多一次',
+    silenceLog: '告警記錄',
+    silenceEmpty: '暫無告警。',
+    silenceNeedFields: '名稱與主題過濾器皆不可為空。',
+    silenceMinTimeout: '靜默閾值至少 {n} 秒（最後上報僅有 1 秒精度）。',
+    silenceEnabled: '啟用',
     actualTopicNote: '按實際到達主題統計，非萬用字元過濾器',
     trafficCap: '主題數已達 1000 上限，新主題不再統計',
     benchLab: '壓測台',
@@ -2077,6 +2137,21 @@ export const translations: Record<Language, Translations> = {
     codecFailed: 'コーデック失敗',
     codecPending: '解読中…',
     senmlView: 'SenML 計測値テーブル（RFC 8428）',
+    silenceTitle: '無通信アラート',
+    silenceAdd: 'アラート作成',
+    silenceHint: 'トピックフィルタが設定秒間通信が無い場合、Webhook に POST でアラートします。同一障害中の重複はクールダウンで抑制され、端末が応答を再開するとタイマはリセットされます。',
+    silenceNeedsConnection: '未接続：切断中は端末の無通信とは判定されません。',
+    silenceFilter: 'トピックフィルタ',
+    silenceTimeout: '無通信閾値（秒）',
+    silenceCooldown: 'クールダウン（秒）',
+    silenceNoRules: '無通信アラートはまだありません。',
+    silenceAfter: '{n} 秒通信なし',
+    silenceEvery: '{n} 秒に最大 1 回',
+    silenceLog: 'アラート履歴',
+    silenceEmpty: 'アラートはまだありません。',
+    silenceNeedFields: '名前とトピックフィルタは必須です。',
+    silenceMinTimeout: '無通信閾値は最低 {n} 秒です（最終受信の精度は 1 秒）。',
+    silenceEnabled: '有効',
     actualTopicNote: '実際に届いたトピック単位で集計（ワイルドカードではない）',
     trafficCap: 'トピック追跡が 1000 上限に到達 — 新規は非集計',
     benchLab: 'ベンチ台',

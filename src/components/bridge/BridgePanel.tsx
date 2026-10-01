@@ -28,6 +28,8 @@ import {
 import { Translations } from '../../i18n';
 import { useBridge } from '../../hooks/useBridge';
 import { saveTextFile } from '../../utils/exportMessages';
+import { useSilence } from '../../hooks/useSilence';
+import { SilencePanel } from './SilencePanel';
 
 interface BridgePanelProps {
   /** Selectable broker configs (current session + saved profiles) */
@@ -35,6 +37,8 @@ interface BridgePanelProps {
   bridge: ReturnType<typeof useBridge>;
   /** Opens the global settings modal (where profiles are managed) */
   onOpenSettings: () => void;
+  /** The console's broker link: the silence watchdog rides that connection. */
+  connected: boolean;
   t: Translations;
 }
 
@@ -263,7 +267,8 @@ const BridgeConnCard: React.FC<{
   );
 };
 
-export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpenSettings, t }) => {
+export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpenSettings, connected, t }) => {
+  const silence = useSilence(true);
   const {
     conns, rules, stats, events, busy, lastError, totalSent, remember, autoReconnect, setAutoReconnect,
     connect, disconnect, addRule, updateRule, removeRule, toggleRule, importRules, resetStats, clearEvents,
@@ -464,6 +469,19 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
           </button>)}
         </div>
       </section>
+      <SilencePanel
+        rules={silence.rules}
+        alerts={silence.alerts}
+        lastError={silence.lastError}
+        onAdd={silence.addRule}
+        onUpdate={silence.updateRule}
+        onRemove={silence.removeRule}
+        onToggle={silence.toggleRule}
+        onClearAlerts={silence.clearAlerts}
+        connected={connected}
+        t={t}
+      />
+
       {/* Autostart preference */}
       <div className="flex items-center justify-end">
         <label className="flex items-center gap-2 text-[11px] font-mono cursor-pointer px-3 py-1.5 rounded border" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border-panel)', background: 'var(--bg-panel)' }}>

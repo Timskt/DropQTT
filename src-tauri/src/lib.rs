@@ -3,7 +3,9 @@ pub mod diagnostics;
 pub mod history;
 pub mod mqtt_manager;
 pub mod protocol;
+pub mod silence;
 pub mod transport;
+pub mod topic;
 pub mod transform;
 pub mod webhook;
 
@@ -316,6 +318,17 @@ async fn bridge_sync_rules(
     state.bridge.clone().sync_rules(app, rules).await
 }
 
+/// Replace the silence-watchdog rule set. Same lifecycle as bridge rules: the
+/// frontend owns persistence and pushes the whole set on every change.
+#[tauri::command]
+async fn silence_sync_rules(
+    state: State<'_, AppState>,
+    rules: Vec<silence::SilenceRule>,
+) -> Result<(), String> {
+    state.mqtt.silence_watchdog
+        .sync_rules(rules, chrono::Utc::now().timestamp())
+}
+
 #[tauri::command]
 async fn bridge_stats(
     state: State<'_, AppState>,
@@ -440,6 +453,7 @@ pub fn run() {
             bridge_disconnect,
             bridge_status,
             bridge_sync_rules,
+            silence_sync_rules,
             bridge_stats,
             bridge_reset_stats,
             bridge_test_transform

@@ -5,7 +5,7 @@ use reqwest::{header::{HeaderMap, HeaderName, HeaderValue}, Client, Url};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebhookConfig {
     pub url: String,

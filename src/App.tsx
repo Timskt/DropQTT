@@ -269,7 +269,7 @@ export function App() {
             />
           ) : activeMode === 'bridge' ? (
             /* Mode 3: Broker-to-Broker Data Bridge */
-            <BridgePanel options={bridgeOptions} bridge={bridge} onOpenSettings={() => setIsSettingsOpen(true)} t={t} />
+            <BridgePanel options={bridgeOptions} bridge={bridge} onOpenSettings={() => setIsSettingsOpen(true)} connected={broker.isConnected} t={t} />
           ) : activeMode === 'transfer' ? (
             /* Mode 1: File Transfer Hub */
             <div className="space-y-4 max-w-6xl mx-auto">

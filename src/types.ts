@@ -302,6 +302,38 @@ export interface BridgeRule {
   enabled: boolean;
 }
 
+/** A silence-watchdog rule: alert when a topic filter stops carrying traffic. */
+export interface SilenceRule {
+  id: string;
+  name: string;
+  topicFilter: string;
+  /** Seconds of quiet before alerting; backend floor is 5. */
+  timeoutSec: number;
+  /** Minimum gap between alerts for one continuous outage. */
+  cooldownSec: number;
+  enabled: boolean;
+  webhook: { url: string; format: 'raw' | 'json'; headers: [string, string][] };
+}
+
+export const silenceRuleDefaults: Omit<SilenceRule, 'id' | 'name' | 'topicFilter'> = {
+  timeoutSec: 60,
+  cooldownSec: 300,
+  enabled: true,
+  webhook: { url: '', format: 'json', headers: [] },
+};
+
+/** Emitted by the backend after each alert attempt. */
+export interface SilenceAlertEvent {
+  ruleId: string;
+  ruleName: string;
+  topicFilter: string;
+  silentForSec: number;
+  ok: boolean;
+  error?: string | null;
+  target: string;
+  timestamp: string;
+}
+
 /** Default-filled view of a persisted rule (older saves lack new fields) */
 export const bridgeRuleDefaults: Pick<
   BridgeRule,
