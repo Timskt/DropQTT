@@ -302,6 +302,7 @@ export interface Translations {
   codecOff: string;
   codecFailed: string;
   codecPending: string;
+  senmlView: string;
   actualTopicNote: string;
   trafficCap: string;
   benchLab: string;
@@ -746,6 +747,7 @@ export const translations: Record<Language, Translations> = {
     codecOff: '编解码',
     codecFailed: '编解码失败',
     codecPending: '解码中…',
+    senmlView: 'SenML 读数表（RFC 8428）',
     actualTopicNote: '按实际到达主题统计，非通配符过滤器',
     trafficCap: '主题数已达 1000 上限，新主题不再统计',
     benchLab: '压测台',
@@ -1188,6 +1190,7 @@ export const translations: Record<Language, Translations> = {
     codecOff: 'Codec',
     codecFailed: 'Codec failed',
     codecPending: 'Decoding…',
+    senmlView: 'SenML readings table (RFC 8428)',
     actualTopicNote: 'Counted per actual arrived topic, not wildcard filter',
     trafficCap: 'Topic tracking hit the 1000 cap — new topics not counted',
     benchLab: 'Bench Lab',
@@ -1630,6 +1633,7 @@ export const translations: Record<Language, Translations> = {
     codecOff: '編解碼',
     codecFailed: '編解碼失敗',
     codecPending: '解碼中…',
+    senmlView: 'SenML 讀數表（RFC 8428）',
     actualTopicNote: '按實際到達主題統計，非萬用字元過濾器',
     trafficCap: '主題數已達 1000 上限，新主題不再統計',
     benchLab: '壓測台',
@@ -2072,6 +2076,7 @@ export const translations: Record<Language, Translations> = {
     codecOff: 'コーデック',
     codecFailed: 'コーデック失敗',
     codecPending: '解読中…',
+    senmlView: 'SenML 計測値テーブル（RFC 8428）',
     actualTopicNote: '実際に届いたトピック単位で集計（ワイルドカードではない）',
     trafficCap: 'トピック追跡が 1000 上限に到達 — 新規は非集計',
     benchLab: 'ベンチ台',

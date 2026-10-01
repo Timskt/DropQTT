@@ -15,6 +15,7 @@ import {
 import { ExportFormat, exportMessages } from '../../utils/exportMessages';
 import { copyToClipboard } from '../../utils/clipboard';
 import { HtmlPreview, MarkdownView } from './RichText';
+import { looksLikeSenml, parseSenmlPack, senmlFromDecoded, senmlToTable } from '../../utils/senml';
 import { JsonTree } from './JsonTree';
 
 interface MessageStreamProps {
@@ -35,11 +36,12 @@ interface MessageStreamProps {
   t: Translations;
 }
 
-type ViewMode = 'auto' | 'json' | 'text' | 'md' | 'html' | 'cbor' | 'base64' | 'hex';
+type ViewMode = 'auto' | 'senml' | 'json' | 'text' | 'md' | 'html' | 'cbor' | 'base64' | 'hex';
 type DirectionFilter = 'all' | 'in' | 'out';
 
 const VIEW_MODES: { id: ViewMode; label: string; titleKey?: keyof Translations; icon: React.ReactNode }[] = [
   { id: 'auto', label: 'Auto', icon: <Box className="w-3 h-3" /> },
+  { id: 'senml', label: 'SenML', titleKey: 'senmlView', icon: <Activity className="w-3 h-3" /> },
   { id: 'json', label: 'JSON', titleKey: 'formatJson', icon: <Braces className="w-3 h-3" /> },
   { id: 'text', label: 'Text', titleKey: 'formatRaw', icon: <AlignLeft className="w-3 h-3" /> },
   { id: 'md', label: 'MD', titleKey: 'mdView', icon: <FileText className="w-3 h-3" /> },
@@ -56,17 +58,36 @@ function resolveView(msg: MqttGenericMessage, mode: ViewMode): { effective: View
   let effective = mode;
   if (mode === 'auto') {
     const ct = (msg.contentType || '').toLowerCase();
-    if (ct.includes('cbor')) effective = 'cbor';
+    // RFC 8428 registers application/senml+json and application/senml+cbor;
+    // both contain "json"/"cbor", so they have to win over the generic branches.
+    if (ct.includes('senml')) effective = 'senml';
+    else if (ct.includes('cbor')) effective = 'cbor';
     else if (ct.includes('markdown')) effective = 'md';
     else if (ct.includes('html')) effective = 'html';
     else if (ct.includes('json')) effective = 'json';
     else if (ct.includes('octet-stream')) effective = 'hex';
-    else if (looksLikeJson(bytes)) effective = 'json';
+    else if (looksLikeJson(bytes)) {
+      // A device pack with recognisable labels is far more useful as a reading
+      // table than as raw JSON, so SenML outranks plain JSON here.
+      try { effective = looksLikeSenml(JSON.parse(uint8ToUtf8(bytes))) ? 'senml' : 'json'; }
+      catch { effective = 'json'; }
+    }
     else if (looksLikeText(bytes)) effective = 'text';
     else effective = 'hex';
   }
 
   switch (effective) {
+    case 'senml': {
+      try {
+        const ct = (msg.contentType || '').toLowerCase();
+        const decoded = ct.includes('cbor') ? senmlFromDecoded(decodeCbor(bytes))
+          : parseSenmlPack(JSON.parse(uint8ToUtf8(bytes)));
+        return { effective, display: senmlToTable(decoded) };
+      } catch (e) {
+        // Fall back to whatever generic rendering works rather than showing nothing.
+        return { effective: 'json', display: uint8ToUtf8(bytes) };
+      }
+    }
     case 'json': {
       const text = uint8ToUtf8(bytes);
       try {

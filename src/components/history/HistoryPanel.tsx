@@ -102,7 +102,11 @@ const StatTile: React.FC<{ icon: React.ReactNode; label: string; value: string; 
 );
 
 const PayloadViewer: React.FC<{ row: HistoryRow; t: Translations }> = ({ row, t }) => {
-  const [view, setView] = useState<HistoryView>(row.contentType?.includes('cbor') ? 'cbor' : row.contentType?.includes('json') ? 'json' : 'text');
+  const [view, setView] = useState<HistoryView>(
+    row.contentType?.includes('senml') ? 'senml'
+      : row.contentType?.includes('cbor') ? 'cbor'
+      : row.contentType?.includes('json') ? 'json' : 'text',
+  );
   let text = '';
   let error = '';
   try { text = historyPayload(row, view); } catch (e) { error = String(e); }
@@ -110,7 +114,7 @@ const PayloadViewer: React.FC<{ row: HistoryRow; t: Translations }> = ({ row, t 
     <div className="space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
         <div className="seg-box" aria-label={t.payloadFormat}>
-          {(['text', 'json', 'hex', 'base64', 'cbor'] as const).map((mode) => (
+          {(['text', 'json', 'senml', 'hex', 'base64', 'cbor'] as const).map((mode) => (
             <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)} className="px-2 py-1 rounded text-[10px]" style={{ color: view === mode ? 'var(--accent)' : 'var(--text-muted)', background: view === mode ? 'var(--hover)' : undefined }}>{mode.toUpperCase()}</button>
           ))}
         </div>

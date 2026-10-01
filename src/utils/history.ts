@@ -1,13 +1,19 @@
 import type { HistoryRow, HistorySeriesPoint, MqttGenericMessage } from '../types';
 import { base64ToUint8, cborToDisplayJson, decodeCbor, uint8ToHexDump, uint8ToUtf8 } from './cbor';
+import { parseSenmlPack, senmlFromDecoded, senmlToTable } from './senml';
 
-export type HistoryView = 'text' | 'json' | 'hex' | 'base64' | 'cbor';
+export type HistoryView = 'text' | 'json' | 'senml' | 'hex' | 'base64' | 'cbor';
 
 export function historyPayload(row: HistoryRow, view: HistoryView): string {
   if (view === 'base64') return row.payloadBase64;
   const bytes = base64ToUint8(row.payloadBase64);
   if (view === 'hex') return uint8ToHexDump(bytes);
   if (view === 'cbor') return cborToDisplayJson(decodeCbor(bytes));
+  if (view === 'senml') {
+    // The stored content type tells us which SenML encoding the device used.
+    const ct = (row.contentType ?? row.properties?.contentType ?? '').toLowerCase();
+    return senmlToTable(ct.includes('cbor') ? senmlFromDecoded(decodeCbor(bytes)) : parseSenmlPack(JSON.parse(uint8ToUtf8(bytes))));
+  }
   const text = uint8ToUtf8(bytes);
   if (view === 'json') return JSON.stringify(JSON.parse(text), null, 2);
   return text;

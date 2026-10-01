@@ -1,10 +1,12 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Console payload codec wiring. The QuickJS sandbox itself is covered by Rust
- * tests in transform.rs; what matters here is that the codec substitutes the
- * *displayed* text, flags failures without hiding the payload, and never
- * mutates what history/export/replay would send.
+ * Console payload rendering: the user codec and SenML (RFC 8428). The QuickJS
+ * sandbox itself is covered by Rust tests in transform.rs, and the SenML parser
+ * by tests/unit/senml.test.ts; what matters here is the wiring — that the codec
+ * substitutes *displayed* text, flags failures without hiding the payload, never
+ * mutates what history/export/replay would send, and that a device pack is
+ * auto-detected and rendered as a reading table.
  */
 const boot = async (page: any) => {
   await page.addInitScript(() => {
@@ -119,4 +121,26 @@ test('codec is display-only: replay still carries the original bytes', async ({ 
   const publish = await page.evaluate(() =>
     (window as any).calls.filter((c: any) => c.cmd === 'publish_console').at(-1));
   expect(Buffer.from(publish.args.params.payloadBase64, 'base64').toString('utf8')).toBe(original);
+});
+
+test('a SenML device pack auto-detects and renders as a reading table', async ({ page }) => {
+  await boot(page);
+  const senml = JSON.stringify([
+    { bn: 'urn:dev:ops:esp32-1/', bt: 1_700_000_000, bu: 'Cel', n: 'temp', v: 21.5 },
+    { n: 'humidity', u: '%RH', v: 43 },
+  ]);
+  await seed(page, { ...row('demo/senml', senml, 'm4'), contentType: 'application/senml+json' });
+
+  // Auto view must pick SenML over plain JSON, so units and base names line up.
+  await expect(page.getByText('urn:dev:ops:esp32-1/temp').first()).toBeVisible();
+  await expect(page.getByText('Cel').first()).toBeVisible();
+  await expect(page.getByText('urn:dev:ops:esp32-1/humidity').first()).toBeVisible();
+});
+
+test('ordinary JSON is not mistaken for SenML', async ({ page }) => {
+  await boot(page);
+  await seed(page, row('demo/plain', '{"temperature":21.5,"device":"edge-1"}', 'm5'));
+  // The JSON tree must render, not a SenML table.
+  await expect(page.getByText('temperature').first()).toBeVisible();
+  await expect(page.getByText(/urn:dev/)).toHaveCount(0);
 });
