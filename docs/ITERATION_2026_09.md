@@ -443,20 +443,20 @@ P0-2 的计数**只有单元测试证明**（`storage_failure_is_not_reported_as
 
 ### 4.16 请求/响应真机取证（第六轮，两个实例 + lab broker 18831）
 
-第三方独立订阅端 `mosquitto_sub -V mqttv5 -t 'lab/rpc/#' -F '%t|%p'` 在场。应答由第二个 DropQTT 实例发出 —— 它的 **publish 侧 v5 属性编码已在 §4.9 用独立 MQTT5 sink 做过字节级验证**，所以"对方带属性回答我"这一侧是可信的；本机没有可用的第三方 v5 客户端（mosquitto 2.0.15 的 `--property` 只支持 user property，仓库里也没有 mqtt.js/paho），这一点如实记在这里。
+**先更正一条我自己的错误结论**：我第一次跑这组验证时写下"本机没有可用的第三方 v5 客户端"（因为 mosquitto 2.0.15 的 `--property` 只支持 user property，仓库里也没有 mqtt.js）。这是**没找完就下的结论** —— `~/mqtt-lab/node_modules` 里就装着 **mqtt.js 5.16**（v5 properties 完整支持）。下面这组结果是**重新跑**的，应答方是独立的 mqtt.js 客户端，而不是 DropQTT 自己。
 
-| 场景 | 实测 |
+对端脚本：`~/mqtt-lab/rpc-peer.mjs`，四种模式 `echo | bare | wrong | deaf`，它 `subscribe('lab/rpc/#')`，把收到的请求的 `properties.responseTopic` 当作回信地址，并打印它从线上读到的 correlationData。
+
+| 场景（应答方 = mqtt.js 5.16） | 实测 |
 | --- | --- |
-| 请求发出、应答主题尚未被用户订阅 | `get_subscription_stats` 出现 `lab/rpc/reply` ✓ 自动订阅生效 |
-| 对端先回一条 `correlationData=nope-not-this-call` | 请求仍是 `pending` ✓ **不按主题乱配对** |
-| 对端再回正确的 `c-live-1` | `resolved`，`往返 1866 ms`（含我脚本自己的 900 ms 间隔），应答体 base64 解出 `pong` ✓ |
-| 精确匹配的行 | `pairedByPosition=false` ✓ 不夸大成"按顺序猜的" |
-| 解析完成后 | `get_subscription_stats` 里 `lab/rpc/reply` 消失 ✓ 引用释放即退订 |
-| 应答主题留空 | 自动生成 `dropqtt/rpc/afcad1dd`（取自 base topic）✓ |
-| 1500 ms 无人应答 | 行转 `timeout`，生成的订阅同步退订 ✓ |
-| 应答不带 correlationData | 按先后配对成功，行上标 `按先后配对（应答未带关联数据）` ✓ |
-| 独立订阅端旁观 | 抓到 `lab/rpc/witness\|visible-request` 与 `lab/rpc/wreply\|visible-reply` ✓ 报文真的上线 |
-| 运维快照 | `rpcTimeouts=2`、`rpcPending=0`，`rpc_activity` = warn，文案 `2 request(s) never answered, 0 still waiting (is a responder subscribed to the response topic?)` ✓ |
+| `echo`（原样带回 correlationData） | 对端日志 `peer saw request lab/rpc/req-echo corr=corr-echo resp=lab/rpc/rep-echo` ✓ **独立客户端确认我们把关联数据/应答主题写上了线**；本端 `resolved`，**往返 12 ms**，`pairedByPosition=false`，应答体解出 `{"answeredBy":"mqtt.js-5",...}` ✓ |
+| `wrong`（回信带别人的 correlationData） | 3 s 时仍是 `pending` ✓ 不按主题乱配对；到 6 s 期限转 `timeout` ✓ 不吞下错答 |
+| `bare`（回信**不带** correlationData） | `resolved` 且 `pairedByPosition=true` ✓ 弱配对被如实标注 |
+| `deaf`（听见但不回） | `timeout`；`rpcTimeouts=1 / rpcPending=0`；应答主题已从订阅表里消失（引用释放）✓ |
+
+> 第一次跑 `wrong` 时报过 `FAIL :: resolved` —— 不是应用的错，是**我的编排错了**：上一轮的 `bare` 对端进程（22 s 生命周期）还活着，它对这个新请求做了按顺序配对。隔离进程后重跑即通过。教训：**多进程共存的真机验证里，"上一条还在世"就是一种污染**，串行化或等它退出再测。
+
+同一批结果里，DropQTT↔DropQTT 的那轮（应答方为第二个实例，`mosquitto_sub -V mqttv5` 作旁观）同样全部通过：自动订阅出现 `lab/rpc/reply`、错误 correlationData 不配对、正确配对 `往返 1866 ms`（含我自己脚本的 900 ms 间隔，不是网络慢）、留空自动生成 `dropqtt/rpc/afcad1dd`、裸回信标 `按先后配对`、旁观端抓到 `lab/rpc/witness|visible-request` 与 `lab/rpc/wreply|visible-reply`。
 
 界面实拍：`test-results/demo-rpc-panel.png`（该目录被 .gitignore 忽略，只在本机看）。
 
