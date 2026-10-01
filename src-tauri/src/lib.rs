@@ -5,6 +5,7 @@ pub mod mqtt_manager;
 pub mod protocol;
 pub mod transport;
 pub mod transform;
+pub mod webhook;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -124,9 +125,16 @@ async fn cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> Res
 async fn subscribe_topic(
     state: State<'_, AppState>,
     topic: String,
-    qos: u8,
+    qos: Option<u8>,
+    options: Option<protocol::SubOptions>,
 ) -> Result<(), String> {
-    state.mqtt.subscribe_topic(topic, qos).await
+    // `options` supersedes the bare qos; keeping both lets older callers and the
+    // v3.1.1 UI path omit it entirely.
+    let opts = options.unwrap_or_else(|| protocol::SubOptions {
+        qos: qos.unwrap_or(1),
+        ..Default::default()
+    });
+    state.mqtt.subscribe_topic(topic, opts).await
 }
 
 #[tauri::command]
@@ -195,8 +203,10 @@ async fn query_history(
     search: String,
     direction: String,
     limit: i64,
+    since_ms: Option<i64>,
+    until_ms: Option<i64>,
 ) -> Result<Vec<history::HistoryRow>, String> {
-    Ok(state.mqtt.query_history(&search, &direction, limit).await)
+    state.mqtt.query_history(&search, &direction, limit, since_ms.unwrap_or(0), until_ms.unwrap_or(i64::MAX)).await
 }
 
 /// Per-bucket message counts for the history trend chart
@@ -204,10 +214,12 @@ async fn query_history(
 async fn history_series(
     state: State<'_, AppState>,
     topic: String,
+    direction: Option<String>,
     bucket_ms: i64,
     since_ms: i64,
+    until_ms: Option<i64>,
 ) -> Result<Vec<history::HistorySeriesPoint>, String> {
-    Ok(state.mqtt.history_series(&topic, bucket_ms, since_ms).await)
+    state.mqtt.history_series(&topic, direction.as_deref().unwrap_or("all"), bucket_ms, since_ms, until_ms.unwrap_or(i64::MAX)).await
 }
 
 #[tauri::command]

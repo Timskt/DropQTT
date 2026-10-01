@@ -62,6 +62,10 @@
     background-attachment: fixed;
     color: var(--text-primary);
   }
+
+  html { background: var(--bg-panel-solid); }
+  ::selection { background: var(--accent-strong); color: var(--accent-contrast); }
+  select option { background: var(--bg-panel-solid); color: var(--text-primary); }
 }
 
 /* Custom sleek scrollbar */
@@ -214,6 +218,14 @@
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
     gap: 1rem;
   }
+
+  .workspace-recipes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+    gap: 0.75rem;
+  }
+  .recipe-card:hover { border-color: var(--accent) !important; }
+  .history-row:hover { background: var(--hover); }
 
   .workspace-split {
     display: grid;

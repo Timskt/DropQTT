@@ -80,7 +80,7 @@ export function useBridge(visible: boolean) {
 
   // ---- Push rule set to the backend whenever it changes ----
   useEffect(() => {
-    invoke('bridge_sync_rules', { rules }).catch((e) => {
+    invoke('bridge_sync_rules', { rules }).then(() => setLastError(null)).catch((e) => {
       // Surface validation failures (empty filter, src===dst, …) in the UI
       setLastError(String(e));
     });

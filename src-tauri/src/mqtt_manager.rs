@@ -28,6 +28,9 @@ const FEED_BATCH_MAX: usize = 200;
 /// (200 x 64 KB base64 payloads would otherwise serialize ~12 MB per tick)
 const FEED_BATCH_BYTES: usize = 512 * 1024;
 const FEED_BUFFER_MAX: usize = 2000;
+/// Rows evicted from the *display* buffer are still owed to SQLite; this is the
+/// extra headroom kept for them before they are genuinely lost.
+const FEED_ARCHIVE_MAX: usize = 2000;
 /// Progress event throttle
 const PROGRESS_EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
 
@@ -140,7 +143,7 @@ pub struct MqttManager {
     loop_control: Mutex<Option<(JoinHandle<()>, Arc<AtomicBool>)>>,
     current_config: RwLock<Option<BrokerConfig>>,
     /// Topic filter -> QoS. Everything we want subscribed; re-applied on every CONNACK.
-    subscriptions: Mutex<HashMap<String, u8>>,
+    subscriptions: Mutex<HashMap<String, crate::protocol::SubOptions>>,
     /// Topic filter -> number of matched inbound publishes (resettable stats)
     subscription_hits: Mutex<HashMap<String, u64>>,
     /// Actual topic -> live traffic meter (resettable)
@@ -157,6 +160,10 @@ pub struct MqttManager {
     /// Console feed staging buffer, drained to the UI in batches
     feed_buffer: Arc<Mutex<std::collections::VecDeque<MqttGenericMessage>>>,
     feed_dropped: Arc<std::sync::atomic::AtomicU64>,
+    /// Evicted from `feed_buffer` but not yet mirrored to history
+    feed_archive_only: Arc<Mutex<Vec<MqttGenericMessage>>>,
+    /// Lost from history as well as the display (archive saturated)
+    feed_lost: Arc<std::sync::atomic::AtomicU64>,
     incoming_transfers: Mutex<HashMap<String, IncomingTransfer>>,
     outgoing_transfers: Mutex<HashMap<String, ActiveOutgoing>>,
     is_connected: AtomicBool,
@@ -186,6 +193,8 @@ impl MqttManager {
             auto_receive: AtomicBool::new(true),
             feed_buffer: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             feed_dropped: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            feed_archive_only: Arc::new(Mutex::new(Vec::new())),
+            feed_lost: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             incoming_transfers: Mutex::new(HashMap::new()),
             outgoing_transfers: Mutex::new(HashMap::new()),
             is_connected: AtomicBool::new(false),
@@ -267,6 +276,7 @@ impl MqttManager {
             feed_buffered,
             feed_buffer_capacity: FEED_BUFFER_MAX,
             feed_dropped: self.feed_dropped.load(Ordering::SeqCst),
+            feed_lost: self.feed_lost.load(Ordering::SeqCst),
             topic_stats_count,
             history_available,
             history,
@@ -285,7 +295,7 @@ impl MqttManager {
             .collect();
         test_cfg.client_id = cid;
 
-        let (client, mut eventloop) = build_connection(&test_cfg);
+        let (client, mut eventloop) = build_connection(&test_cfg)?;
         let start = Instant::now();
         let deadline = tokio::time::sleep(std::time::Duration::from_secs(6));
         tokio::pin!(deadline);
@@ -312,7 +322,7 @@ impl MqttManager {
     pub async fn connect(self: &Arc<Self>, app: AppHandle, config: BrokerConfig) -> Result<(), String> {
         self.disconnect().await;
 
-        let (client, mut eventloop) = build_connection(&config);
+        let (client, mut eventloop) = build_connection(&config)?;
 
         *self.client.write().await = Some(client.clone());
         *self.current_config.write().await = Some(config.clone());
@@ -337,14 +347,21 @@ impl MqttManager {
                         // (Re)apply every registered subscription after CONNACK,
                         // including automatic reconnects.
                         if let Some(client) = this.client.read().await.clone() {
-                            let subs: Vec<(String, u8)> =
-                                this.subscriptions.lock().await.iter().map(|(t, q)| (t.clone(), *q)).collect();
-                            for (topic, qos) in subs {
-                                let _ = client.subscribe(&topic, qos).await;
+                            let subs: Vec<(String, crate::protocol::SubOptions)> = this
+                                .subscriptions
+                                .lock()
+                                .await
+                                .iter()
+                                .map(|(t, o)| (t.clone(), *o))
+                                .collect();
+                            for (topic, opts) in subs {
+                                let _ = client.subscribe(&topic, &opts).await;
                             }
                             // Broker health metrics — subscribed out-of-band so
                             // $SYS never pollutes the console feed or traffic stats.
-                            let _ = client.subscribe("$SYS/#", 0).await;
+                            let _ = client
+                                .subscribe("$SYS/#", &crate::protocol::SubOptions { qos: 0, ..Default::default() })
+                                .await;
                         }
                         let first = !this.is_connected.swap(true, Ordering::SeqCst);
                         if first {
@@ -419,17 +436,17 @@ impl MqttManager {
         self.sys_metrics.lock().await.clear();
     }
 
-    pub async fn subscribe_topic(&self, topic: String, qos_val: u8) -> Result<(), String> {
+    pub async fn subscribe_topic(&self, topic: String, opts: crate::protocol::SubOptions) -> Result<(), String> {
         if topic.trim().is_empty() {
             return Err("Topic must not be empty".to_string());
         }
-        self.subscriptions.lock().await.insert(topic.clone(), qos_val);
+        self.subscriptions.lock().await.insert(topic.clone(), opts);
         self.subscription_hits.lock().await.entry(topic.clone()).or_insert(0);
         if let Some(client) = self.client.read().await.clone() {
             // Registration above still guarantees a retry on the next CONNACK,
             // but surface this attempt's failure so troubleshooters can react.
             client
-                .subscribe(&topic, qos_val)
+                .subscribe(&topic, &opts)
                 .await
                 .map_err(|e| format!("Subscribe failed for {topic}: {e}"))?;
         }
@@ -476,27 +493,35 @@ impl MqttManager {
         search: &str,
         direction: &str,
         limit: i64,
-    ) -> Vec<crate::history::HistoryRow> {
-        self.history
+        since_ms: i64,
+        until_ms: i64,
+    ) -> Result<Vec<crate::history::HistoryRow>, String> {
+        let store = self
+            .history
             .read()
             .await
             .as_ref()
-            .map(|h| h.query(search, direction, limit))
-            .unwrap_or_default()
+            .cloned()
+            .ok_or_else(|| "message history is not available".to_string())?;
+        store.query(search, direction, limit, since_ms, until_ms)
     }
 
     pub async fn history_series(
         &self,
         topic: &str,
+        direction: &str,
         bucket_ms: i64,
         since_ms: i64,
-    ) -> Vec<crate::history::HistorySeriesPoint> {
-        self.history
+        until_ms: i64,
+    ) -> Result<Vec<crate::history::HistorySeriesPoint>, String> {
+        let store = self
+            .history
             .read()
             .await
             .as_ref()
-            .map(|h| h.series(topic, bucket_ms, since_ms))
-            .unwrap_or_default()
+            .cloned()
+            .ok_or_else(|| "message history is not available".to_string())?;
+        store.series(topic, direction, bucket_ms, since_ms, until_ms)
     }
 
     pub async fn history_stats(&self) -> crate::history::HistoryStats {
@@ -517,14 +542,30 @@ impl MqttManager {
     /// Stage one console-feed message (never blocks the routing path; the
     /// UI receives 100 ms batches instead of one IPC event per message)
     async fn push_feed(&self, msg: MqttGenericMessage) {
-        let mut buf = self.feed_buffer.lock().await;
-        if buf.len() >= FEED_BUFFER_MAX {
-            // Sustained overload: drop the oldest staged rows, counted and
-            // surfaced in the UI. Traffic stats stay exact regardless.
-            buf.pop_front();
-            self.feed_dropped.fetch_add(1, Ordering::SeqCst);
+        let evicted = {
+            let mut buf = self.feed_buffer.lock().await;
+            let evicted = if buf.len() >= FEED_BUFFER_MAX {
+                // Sustained overload: the oldest row leaves the *display* path.
+                // It must still reach SQLite — dropping precisely the burst a
+                // user is trying to diagnose is the worst failure mode for a
+                // tool whose pitch is full traffic retention.
+                self.feed_dropped.fetch_add(1, Ordering::SeqCst);
+                buf.pop_front()
+            } else {
+                None
+            };
+            buf.push_back(msg);
+            evicted
+        };
+        if let Some(evicted) = evicted {
+            let mut archive = self.feed_archive_only.lock().await;
+            if archive.len() < FEED_ARCHIVE_MAX {
+                archive.push(evicted);
+            } else {
+                // Archive saturated: this one is genuinely gone.
+                self.feed_lost.fetch_add(1, Ordering::SeqCst);
+            }
         }
-        buf.push_back(msg);
     }
 
     /// Drain staged messages into batched `mqtt-messages` events, capped by
@@ -543,12 +584,23 @@ impl MqttManager {
             }
             batch
         };
-        if batch.is_empty() {
+        // Rows evicted from the display since the last tick still belong in history.
+        let archive: Vec<MqttGenericMessage> =
+            std::mem::take(&mut *self.feed_archive_only.lock().await);
+        if batch.is_empty() && archive.is_empty() {
             return;
         }
-        // Mirror the batch to SQLite before it is consumed by the emit.
+        // Mirror to SQLite before the batch is consumed by the emit.
         if let Some(h) = self.history.read().await.as_ref() {
-            h.append(&batch);
+            if !archive.is_empty() {
+                h.append(&archive);
+            }
+            if !batch.is_empty() {
+                h.append(&batch);
+            }
+        }
+        if batch.is_empty() {
+            return;
         }
         let dropped = self.feed_dropped.load(Ordering::SeqCst);
         let _ = app.emit(

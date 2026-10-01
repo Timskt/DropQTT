@@ -38,6 +38,9 @@ pub struct MqttDiagnostics {
     pub feed_buffered: usize,
     pub feed_buffer_capacity: usize,
     pub feed_dropped: u64,
+    /// Evicted from the display buffer *and* lost from history because the
+    /// archive queue was saturated. Non-zero means retention is incomplete.
+    pub feed_lost: u64,
     pub topic_stats_count: usize,
     pub history_available: bool,
     pub history: HistoryStats,
@@ -296,6 +299,7 @@ mod tests {
             feed_buffered: 0,
             feed_buffer_capacity: 2000,
             feed_dropped: 0,
+            feed_lost: 0,
             topic_stats_count: 4,
             history_available: true,
             history: HistoryStats {

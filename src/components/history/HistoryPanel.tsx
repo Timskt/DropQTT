@@ -2,22 +2,24 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core';
 import {
   Archive, RefreshCw, Search, Trash2, ArrowUpRight, ArrowDownRight, Clock,
-  Inbox, Send, Rss, Filter, Copy, Check, Zap, BarChart3,
+  Inbox, Send, Rss, Filter, Copy, Check, Zap, BarChart3, Download, ChevronRight,
 } from 'lucide-react';
 import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats } from '../../types';
 import { Translations } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
+import { canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView } from '../../utils/history';
+import { exportMessages, ExportFormat } from '../../utils/exportMessages';
 
 interface HistoryPanelProps {
   t: Translations;
   connected: boolean;
-  isV5: boolean;
   onPublish: (params: ConsolePublishParams) => Promise<void>;
   onSubscribe: (topic: string) => void;
 }
 
 const WINDOWS = [
+  { id: 'all', ms: 0, label: '' },
   { id: '5m', ms: 5 * 60_000, label: '5m' },
   { id: '15m', ms: 15 * 60_000, label: '15m' },
   { id: '1h', ms: 60 * 60_000, label: '1h' },
@@ -79,7 +81,7 @@ const TrendChart: React.FC<{ points: HistorySeriesPoint[]; color: string; t: Tra
       {n > 0 && (
         <div className="flex justify-between text-[10px] mt-1 font-mono" style={{ color: 'var(--text-muted)' }}>
           <span>{new Date(points[0].bucket).toLocaleTimeString()}</span>
-          <span style={{ color }}>{t.historyPeak}: {max.toLocaleString()}/桶</span>
+          <span style={{ color }}>{t.historyPeak}: {max.toLocaleString()} {t.historyPerBucket}</span>
           <span>{new Date(points[n - 1].bucket).toLocaleTimeString()}</span>
         </div>
       )}
@@ -99,12 +101,39 @@ const StatTile: React.FC<{ icon: React.ReactNode; label: string; value: string; 
   </div>
 );
 
-export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, onPublish, onSubscribe }) => {
+const PayloadViewer: React.FC<{ row: HistoryRow; t: Translations }> = ({ row, t }) => {
+  const [view, setView] = useState<HistoryView>(row.contentType?.includes('cbor') ? 'cbor' : row.contentType?.includes('json') ? 'json' : 'text');
+  let text = '';
+  let error = '';
+  try { text = historyPayload(row, view); } catch (e) { error = String(e); }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="seg-box" aria-label={t.payloadFormat}>
+          {(['text', 'json', 'hex', 'base64', 'cbor'] as const).map((mode) => (
+            <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)} className="px-2 py-1 rounded text-[10px]" style={{ color: view === mode ? 'var(--accent)' : 'var(--text-muted)', background: view === mode ? 'var(--hover)' : undefined }}>{mode.toUpperCase()}</button>
+          ))}
+        </div>
+        {!canReplayHistory(row) && <span className="chip chip-warn">{t.replayTruncated}</span>}
+      </div>
+      <pre className="select-text text-[11px] font-mono whitespace-pre-wrap break-all rounded-md border p-3 max-h-64 overflow-auto" style={{ background: 'var(--bg-code)', borderColor: 'var(--code-border)', color: error ? 'var(--bad)' : 'var(--code-text)' }}>{error || text || `(${t.historyEmptyPayload})`}</pre>
+      {(row.properties?.responseTopic || row.properties?.correlationData || row.properties?.userProperties?.length > 0) && (
+        <div className="flex flex-wrap gap-2 text-[10px] font-mono" style={{ color: 'var(--text-secondary)' }}>
+          {row.properties.responseTopic && <span>↩ {row.properties.responseTopic}</span>}
+          {row.properties.correlationData && <span>#{row.properties.correlationData}</span>}
+          {row.properties.userProperties?.map(([k, v], i) => <span key={i} className="chip chip-neutral">{k}: {v}</span>)}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPublish, onSubscribe }) => {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [direction, setDirection] = useState<'all' | 'in' | 'out'>('all');
   const [limit, setLimit] = useState<number>(200);
-  const [windowId, setWindowId] = useState('15m');
+  const [windowId, setWindowId] = useState('all');
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [series, setSeries] = useState<HistorySeriesPoint[]>([]);
   const [stats, setStats] = useState<HistoryStats>({ rows: 0, inbound: 0, outbound: 0 });
@@ -112,6 +141,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const requestRef = useRef(0);
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 350);
@@ -119,28 +151,37 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
   }, [search]);
 
   const load = useCallback(async () => {
+    const requestId = ++requestRef.current;
     setLoading(true);
     try {
-      const win = WINDOWS.find((w) => w.id === windowId) ?? WINDOWS[1];
-      const since = Date.now() - win.ms;
-      const bucket = Math.max(1000, Math.floor(win.ms / 60));
-      const [r, s, st] = await Promise.all([
-        invoke<HistoryRow[]>('query_history', { search: debouncedSearch, direction, limit }),
-        invoke<HistorySeriesPoint[]>('history_series', { topic: debouncedSearch, bucketMs: bucket, sinceMs: since }),
-        invoke<HistoryStats>('history_stats'),
+      const win = WINDOWS.find((w) => w.id === windowId) ?? WINDOWS[0];
+      const st = await invoke<HistoryStats>('history_stats');
+      if (requestId !== requestRef.current) return;
+      const until = Date.now();
+      const since = win.ms ? until - win.ms : Math.min(st.oldestTs ?? until, until);
+      const bucket = Math.max(1000, Math.ceil((until - since) / 60 / 1000) * 1000);
+      const [r, s] = await Promise.all([
+        invoke<HistoryRow[]>('query_history', { search: debouncedSearch, direction, limit, sinceMs: since, untilMs: until }),
+        invoke<HistorySeriesPoint[]>('history_series', { topic: debouncedSearch, direction, bucketMs: bucket, sinceMs: since, untilMs: until }),
       ]);
+      if (requestId !== requestRef.current) return;
       setRows(r);
-      setSeries(s);
+      setSeries(s.length ? fillHistorySeries(s, since, until, bucket) : []);
       setStats(st);
+      setError(null);
     } catch (e) {
-      console.error('history load:', e);
+      if (requestId !== requestRef.current) return;
+      setError(String(e));
+      setRows([]);
+      setSeries([]);
     } finally {
-      setLoading(false);
+      if (requestId === requestRef.current) setLoading(false);
     }
   }, [debouncedSearch, direction, limit, windowId]);
 
   useEffect(() => {
-    load();
+    void load();
+    return () => { requestRef.current += 1; };
   }, [load]);
 
   // Auto-refresh: keep the view live without hammering when off.
@@ -160,13 +201,14 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
   };
 
   const handleResend = async (r: HistoryRow) => {
+    if (!connected || !canReplayHistory(r)) return;
     try {
       await onPublish({
         topic: r.topic,
         payloadBase64: r.payloadBase64,
         qos: r.qos,
         retain: r.retain,
-        properties: { contentType: r.contentType ?? undefined, userProperties: [] },
+        properties: { ...r.properties, contentType: r.contentType ?? r.properties?.contentType, userProperties: r.properties?.userProperties ?? [] },
       });
       toast.success(`${t.historyResend}: ${r.topic}`);
     } catch (e) {
@@ -176,24 +218,33 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
 
   const clearAll = useCallback(async () => {
     if (!confirm(t.historyClearConfirm)) return;
-    await invoke('clear_history').catch(() => {});
-    load();
+    try { await invoke('clear_history'); await load(); } catch (e) { setError(String(e)); }
   }, [load, t.historyClearConfirm]);
 
   const totalInWindow = useMemo(() => series.reduce((a, p) => a + p.count, 0), [series]);
-  const win = WINDOWS.find((w) => w.id === windowId) ?? WINDOWS[1];
+  const win = WINDOWS.find((w) => w.id === windowId) ?? WINDOWS[0];
+  const runSearch = () => {
+    if (search !== debouncedSearch) setDebouncedSearch(search);
+    else void load();
+  };
+  const handleExport = async (format: ExportFormat) => {
+    setExporting(true);
+    try {
+      if (await exportMessages(rows.map(historyMessage), format)) toast.success(t.exportDone.replace('{count}', String(rows.length)));
+    } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
+  };
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto flex flex-col">
       {/* Header */}
       <div className="panel overflow-hidden">
-        <div className="panel-header">
+        <div className="panel-header flex-wrap gap-2">
           <div className="flex items-center space-x-2 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
             <Archive className="w-4 h-4" style={{ color: 'var(--sky)' }} />
             <span>{t.historyTitle}</span>
             <span className="chip chip-sky">{stats.rows.toLocaleString()} {t.historyRowsUnit}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setAutoRefresh((v) => !v)}
               title={t.historyAutoRefresh}
@@ -211,6 +262,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
             </button>
           </div>
         </div>
+        {error && <div role="alert" className="px-4 py-2 text-xs break-words" style={{ color: 'var(--bad)', background: 'var(--bad-soft)' }}>{error}</div>}
 
         {/* Stat tiles */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3" style={{ borderBottom: '1px solid var(--border-panel)' }}>
@@ -227,7 +279,8 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && load()}
+              onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+              aria-label={t.historySearchHint}
               placeholder={t.historySearchHint}
               className="field-input w-full pl-8"
             />
@@ -237,6 +290,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
               <button
                 key={d}
                 onClick={() => setDirection(d)}
+                aria-pressed={direction === d}
                 className="px-2.5 py-1 rounded text-[11px] transition"
                 style={
                   direction === d
@@ -251,22 +305,26 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
           <select value={limit} onChange={(e) => setLimit(Number(e.target.value))} className="field-input" title={t.historyStatTotal}>
             {[100, 200, 500, 1000, 2000].map((n) => (<option key={n} value={n}>{n}</option>))}
           </select>
-          <button onClick={load} className="btn-accent !py-1.5">{t.historyQuery}</button>
+          <button onClick={runSearch} className="btn-accent !py-1.5">{t.historyQuery}</button>
+          <div className="flex gap-1 ml-auto" aria-label={t.historyExportResults}>
+            {(['json', 'csv'] as const).map((format) => <button key={format} onClick={() => void handleExport(format)} disabled={!rows.length || loading || exporting || search !== debouncedSearch} className="btn-ghost !px-2 !py-1.5 flex items-center gap-1 disabled:opacity-40" title={t.historyExportResults}><Download className="w-3 h-3" />{format.toUpperCase()}</button>)}
+          </div>
         </div>
 
         {/* Trend chart */}
         <div className="p-3" style={{ borderBottom: '1px solid var(--border-panel)' }}>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
             <span className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
               <BarChart3 className="w-3.5 h-3.5" style={{ color: 'var(--sky)' }} />
-              {t.historyTrend} · {search ? search : t.historyAllTopics}
-              <span style={{ color: 'var(--text-muted)' }}>· {win.label}</span>
+              {t.historyTrend} · {debouncedSearch || t.historyAllTopics}
+              <span style={{ color: 'var(--text-muted)' }}>· {win.ms ? win.label : t.historyAllTime}</span>
             </span>
             <div className="flex items-center gap-1">
               {WINDOWS.map((w) => (
                 <button
                   key={w.id}
                   onClick={() => setWindowId(w.id)}
+                  aria-pressed={windowId === w.id}
                   className="px-2 py-0.5 rounded text-[10px] transition"
                   style={
                     windowId === w.id
@@ -274,7 +332,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
                       : { color: 'var(--text-muted)' }
                   }
                 >
-                  {w.label}
+                  {w.ms ? w.label : t.historyAllTime}
                 </button>
               ))}
             </div>
@@ -311,10 +369,11 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
                   <button
                     type="button"
                     aria-expanded={expanded}
-                    className="px-3 py-2 text-[11px] flex items-center gap-2 cursor-pointer transition hover:brightness-110"
+                    className="history-row w-full min-w-0 text-left px-3 py-2.5 text-[11px] flex items-center gap-2 cursor-pointer transition"
                     style={expanded ? { background: 'var(--hover)' } : undefined}
                     onClick={() => setExpandedId(expanded ? null : r.id)}
                   >
+                    <ChevronRight className={`w-3 h-3 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} style={{ color: 'var(--text-muted)' }} />
                     <span className={`chip ${r.direction === 'out' ? 'chip-info' : 'chip-ok'} shrink-0`}>
                       {r.direction === 'out' ? <ArrowUpRight className="w-2.5 h-2.5" /> : <ArrowDownRight className="w-2.5 h-2.5" />}
                     </span>
@@ -341,15 +400,12 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, isV5, 
                           <button onClick={() => onSubscribe(r.topic)} className="btn-ghost !px-2 !py-1 flex items-center gap-1 text-[10px]" title={t.historySubscribeTopic} style={{ color: 'var(--ok)' }}>
                             <Rss className="w-3 h-3" /> {t.historySubscribeTopic}
                           </button>
-                          <button onClick={() => handleResend(r)} disabled={!connected || !r.payloadBase64} className="btn-accent !px-2 !py-1 flex items-center gap-1 text-[10px] disabled:opacity-40" title={t.historyResend}>
+                          <button onClick={() => handleResend(r)} disabled={!connected || !canReplayHistory(r)} className="btn-accent !px-2 !py-1 flex items-center gap-1 text-[10px] disabled:opacity-40" title={canReplayHistory(r) ? t.historyResend : t.replayTruncated}>
                             <Send className="w-3 h-3" /> {t.historyResend}
                           </button>
                         </div>
                       </div>
-                      <pre className="select-text w-full text-[11px] font-mono whitespace-pre-wrap break-all rounded-md border p-2.5 max-h-56 overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'var(--code-border)', color: 'var(--code-text)' }}>
-                        {r.payload || `(base64 ${r.payloadLen}B)`}
-                      </pre>
-                      {isV5 && <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>MQTT 5</div>}
+                      <PayloadViewer row={r} t={t} />
                     </div>
                   )}
                 </div>

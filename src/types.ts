@@ -102,11 +102,29 @@ export interface ConsolePublishParams {
   properties: PubProperties;
 }
 
+/** MQTT v5 subscription options; ignored by the backend on v3.1.1 links. */
+export interface SubOptions {
+  qos: number;
+  noLocal: boolean;
+  retainAsPublished: boolean;
+  /** 0 = send retained on every subscribe, 1 = only on new subscription, 2 = never */
+  retainHandling: number;
+}
+
+export const subOptionsDefaults = (qos = 1): SubOptions => ({
+  qos,
+  noLocal: false,
+  retainAsPublished: false,
+  retainHandling: 0,
+});
+
 export interface TopicSubscription {
   topic: string;
   qos: number;
   color?: string;
   createdAt?: string;
+  /** Absent on subscriptions saved before v5 options existed. */
+  options?: SubOptions;
 }
 
 /** One broker $SYS health metric line */
@@ -127,6 +145,8 @@ export interface HistoryRow {
   qos: number;
   retain: boolean;
   contentType?: string | null;
+  properties: PubProperties;
+  truncated: boolean;
   direction: string;
   /** Epoch milliseconds */
   ts: number;
@@ -169,6 +189,8 @@ export interface MqttDiagnostics {
   feedBuffered: number;
   feedBufferCapacity: number;
   feedDropped: number;
+  /** Non-zero when overload also escaped SQLite retention. */
+  feedLost: number;
   topicStatsCount: number;
   historyAvailable: boolean;
   history: HistoryStats;
@@ -249,6 +271,8 @@ export interface BridgeRule {
   sourceFilter: string;
   sourceQos: number;
   targetConn: string;
+  targetKind: 'mqtt' | 'http';
+  webhook: { url: string; format: 'raw' | 'json'; headers: [string, string][] };
   topicMode: BridgeTopicMode;
   prefixFrom: string;
   prefixTo: string;
@@ -281,6 +305,8 @@ export interface BridgeRule {
 /** Default-filled view of a persisted rule (older saves lack new fields) */
 export const bridgeRuleDefaults: Pick<
   BridgeRule,
+  | 'targetKind'
+  | 'webhook'
   | 'fixedTopic'
   | 'regexPattern'
   | 'regexReplacement'
@@ -292,6 +318,8 @@ export const bridgeRuleDefaults: Pick<
   | 'wrapJson'
   | 'rateLimit'
 > = {
+  targetKind: 'mqtt',
+  webhook: { url: '', format: 'json', headers: [] },
   fixedTopic: '',
   regexPattern: '',
   regexReplacement: '',

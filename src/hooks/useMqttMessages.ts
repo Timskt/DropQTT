@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ConsolePublishParams, FeedBatch, MqttGenericMessage, TopicSubscription } from '../types';
+import { ConsolePublishParams, FeedBatch, MqttGenericMessage, SubOptions, TopicSubscription } from '../types';
 import { usePersistentState } from './usePersistentState';
 import { toast } from '../utils/toast';
 import { observeTopic } from '../utils/topicStore';
@@ -88,16 +88,16 @@ export function useMqttMessages(isConnected: boolean) {
   subscriptionsRef.current = subscriptions;
 
   const addSubscription = useCallback(
-    async (topic: string, qos: number, color?: string) => {
+    async (topic: string, qos: number, color?: string, options?: SubOptions) => {
       const trimmed = topic.trim();
       if (!trimmed || subscriptionsRef.current.some((s) => s.topic === trimmed)) return;
       setSubscriptions((prev) =>
         prev.some((s) => s.topic === trimmed)
           ? prev
-          : [...prev, { topic: trimmed, qos, color, createdAt: new Date().toLocaleTimeString() }],
+          : [...prev, { topic: trimmed, qos, color, options, createdAt: new Date().toLocaleTimeString() }],
       );
       if (connectedRef.current) {
-        await invoke('subscribe_topic', { topic: trimmed, qos }).catch((e) => {
+        await invoke('subscribe_topic', { topic: trimmed, qos, options }).catch((e) => {
           toast.error(`订阅失败 ${trimmed}: ${e instanceof Error ? e.message : String(e)}`);
         });
       }
@@ -125,7 +125,7 @@ export function useMqttMessages(isConnected: boolean) {
   const clearMessages = useCallback(() => setMessages([]), []);
 
   const getTopicsToRegister = useCallback(
-    () => subscriptionsRef.current.map((s) => ({ topic: s.topic, qos: s.qos })),
+    () => subscriptionsRef.current.map((s) => ({ topic: s.topic, qos: s.qos, options: s.options })),
     [],
   );
 

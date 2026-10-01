@@ -186,7 +186,7 @@ export const themes: Record<Theme, ThemeDefinition> = {
       '--border-inset': 'rgba(120, 113, 108, 0.17)',
       '--text-primary': '#292524',
       '--text-secondary': '#57534e',
-      '--text-muted': '#a8a29e',
+      '--text-muted': '#78716c',
       '--accent': '#2563eb',
       '--accent-strong': '#1d4ed8',
       '--accent-contrast': '#ffffff',

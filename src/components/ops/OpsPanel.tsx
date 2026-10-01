@@ -218,6 +218,8 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                 <Metric label={t.opsOutgoing} value={snapshot.mqtt.outgoingActive} color="var(--info)" />
                 <Metric label={t.opsBuffered} value={`${snapshot.mqtt.feedBuffered}/${snapshot.mqtt.feedBufferCapacity}`} />
                 <Metric label={t.opsDropped} value={snapshot.mqtt.feedDropped} color={snapshot.mqtt.feedDropped ? 'var(--warn)' : 'var(--text-primary)'} />
+                {/* Non-zero here means retention itself failed, not just display. */}
+                <Metric label={t.opsFeedLost} value={snapshot.mqtt.feedLost} color={snapshot.mqtt.feedLost ? 'var(--bad)' : 'var(--text-primary)'} />
               </div>
               <div className="flex gap-2 mt-3">
                 <button type="button" onClick={onOpenConsole} className="btn-ghost !px-2.5 !py-1.5 text-[10px]"><Terminal className="inline w-3 h-3 mr-1" />{t.opsOpenConsole}</button>

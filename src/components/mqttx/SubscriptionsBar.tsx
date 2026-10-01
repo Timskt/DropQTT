@@ -1,17 +1,19 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Radio, X, RotateCcw } from 'lucide-react';
-import { TopicSubscription } from '../../types';
+import { Plus, Radio, X, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { SubOptions, TopicSubscription, subOptionsDefaults } from '../../types';
 import { Translations } from '../../i18n';
 import { useObservedTopics } from '../../utils/topicStore';
 
 interface SubscriptionsBarProps {
   subscriptions: TopicSubscription[];
-  onAddSubscription: (topic: string, qos: number, color?: string) => void;
+  onAddSubscription: (topic: string, qos: number, color?: string, options?: SubOptions) => void;
   onRemoveSubscription: (topic: string) => void;
   /** Topic filter -> inbound publish hit count (backend-maintained) */
   hitStats: Record<string, number>;
   onResetStats: () => void;
   connected: boolean;
+  /** v5 subscription options have no v3.1.1 wire equivalent. */
+  isV5: boolean;
   t: Translations;
 }
 
@@ -24,10 +26,13 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   hitStats,
   onResetStats,
   connected,
+  isV5,
   t,
 }) => {
   const [topicInput, setTopicInput] = useState('');
   const [qos, setQos] = useState<number>(0);
+  const [opts, setOpts] = useState<SubOptions>(subOptionsDefaults(0));
+  const [showOptions, setShowOptions] = useState(false);
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
   const observedTopics = useObservedTopics();
   // Suggest live topics not already subscribed (drop trailing segment into a filter later)
@@ -44,12 +49,15 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!topicInput.trim()) return;
-    onAddSubscription(topicInput.trim(), qos, selectedColor);
+    onAddSubscription(topicInput.trim(), qos, selectedColor, isV5 ? { ...opts, qos } : undefined);
     setTopicInput('');
     // Cycle to next color
     const nextIdx = (COLOR_PALETTE.indexOf(selectedColor) + 1) % COLOR_PALETTE.length;
     setSelectedColor(COLOR_PALETTE[nextIdx]);
   };
+
+  const activeFlags = (o?: SubOptions) =>
+    o ? [o.noLocal && 'noLocal', o.retainAsPublished && 'retainAsPublished', o.retainHandling !== 0 && `retainHandling=${o.retainHandling}`].filter(Boolean) : [];
 
   return (
     <div className="panel p-4 space-y-3.5 font-mono">
@@ -105,6 +113,23 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           <option value={2}>QoS 2</option>
         </select>
 
+        {isV5 && (
+          <button
+            type="button"
+            onClick={() => setShowOptions((v) => !v)}
+            aria-expanded={showOptions}
+            title={t.subV5Options}
+            className="btn-ghost !px-2 flex items-center gap-1 text-[11px]"
+            style={{ color: showOptions || activeFlags({ ...opts, qos }).length ? 'var(--accent)' : undefined }}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>v5</span>
+            {activeFlags({ ...opts, qos }).length > 0 && (
+              <span className="text-[10px]">({activeFlags({ ...opts, qos }).length})</span>
+            )}
+          </button>
+        )}
+
         {/* Color picker pills */}
         <div className="flex items-center space-x-1 px-1.5 inset-box py-1.5">
           {COLOR_PALETTE.map((color) => (
@@ -133,6 +158,33 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
         </button>
       </form>
 
+      {isV5 && showOptions && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-md border text-[11px]" style={{ borderColor: 'var(--border-panel)', background: 'var(--bg-inset)' }}>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={opts.noLocal} onChange={(e) => setOpts((o) => ({ ...o, noLocal: e.target.checked }))} />
+            <span style={{ color: 'var(--text-secondary)' }}>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>No Local</span>
+              <span className="block" style={{ color: 'var(--text-muted)' }}>{t.subNoLocalHint}</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={opts.retainAsPublished} onChange={(e) => setOpts((o) => ({ ...o, retainAsPublished: e.target.checked }))} />
+            <span style={{ color: 'var(--text-secondary)' }}>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>Retain As Published</span>
+              <span className="block" style={{ color: 'var(--text-muted)' }}>{t.subRetainAsPublishedHint}</span>
+            </span>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{t.subRetainHandling}</span>
+            <select className="field-input w-full !py-1" value={opts.retainHandling} onChange={(e) => setOpts((o) => ({ ...o, retainHandling: Number(e.target.value) }))}>
+              <option value={0}>{t.subRetainHandling0}</option>
+              <option value={1}>{t.subRetainHandling1}</option>
+              <option value={2}>{t.subRetainHandling2}</option>
+            </select>
+          </label>
+        </div>
+      )}
+
       {/* Active Subscriptions Chips */}
       <div className="flex flex-wrap gap-2 pt-1 min-h-[36px] items-center">
         {subscriptions.length === 0 ? (
@@ -154,6 +206,14 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
               <span className="text-[11px] px-1 py-0.5 inset-box font-mono" style={{ color: 'var(--text-muted)' }}>
                 QoS {sub.qos}
               </span>
+              {activeFlags(sub.options).length > 0 && (
+                <span
+                  className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
+                  title={activeFlags(sub.options).join(', ')}
+                >
+                  {activeFlags(sub.options).join(' · ')}
+                </span>
+              )}
               <span
                 className={`chip ${
                   (hitStats[sub.topic] ?? 0) > 0 ? 'chip-ok' : 'chip-neutral'

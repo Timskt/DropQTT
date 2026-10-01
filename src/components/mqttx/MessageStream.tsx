@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Trash2, Copy, Check, ArrowDownRight, ArrowUpRight,
   Code2, AlignLeft, Binary, Braces, Box, Lock, FileText, Globe,
-  Pause, Play, Download, Eraser, Pin, RotateCcw, Activity,
+  Pause, Play, Download, Eraser, Pin, RotateCcw, Activity, AlertCircle,
 } from 'lucide-react';
 import { MqttGenericMessage } from '../../types';
+import { usePersistentString } from '../../hooks/usePersistentState';
 import { Translations } from '../../i18n';
+import { useCodec } from '../../hooks/useCodec';
 import {
   base64ToUint8, cborToDisplayJson, decodeCbor,
   uint8ToBase64, uint8ToHexDump, uint8ToUtf8,
@@ -114,6 +116,8 @@ interface MessageRowProps {
   copied: boolean;
   replayed: boolean;
   connected: boolean;
+  /** Display-only payload codec; empty/absent disables it. */
+  codecScript?: string;
   onCopy: (id: string, text: string) => void;
   onReplay: (msg: MqttGenericMessage) => void;
   onQuickSubscribe: (topic: string) => void;
@@ -121,12 +125,17 @@ interface MessageRowProps {
 }
 
 const MessageRow = React.memo(function MessageRow({
-  msg, viewMode, copied, replayed, connected, onCopy, onReplay, onQuickSubscribe, t,
+  msg, viewMode, copied, replayed, connected, codecScript, onCopy, onReplay, onQuickSubscribe, t,
 }: MessageRowProps) {
   const [expanded, setExpanded] = useState(false);
   const isOut = msg.direction === 'out';
 
-  const { effective, display } = useMemo(() => resolveView(msg, viewMode), [msg, viewMode]);
+  const base = useMemo(() => resolveView(msg, viewMode), [msg, viewMode]);
+  const codec = useCodec(codecScript, msg.topic, msg.payloadBase64);
+  // A codec is a lens: on failure we keep the raw view and surface why.
+  const effective = codec.text !== null ? 'text' : base.effective;
+  const display = codec.text !== null ? codec.text : base.display;
+  const codecFailed = codec.error !== null;
   const rich = effective === 'md' || effective === 'html';
   const overflow = display.length > 600 || display.split('\n').length > 12;
 
@@ -202,6 +211,16 @@ const MessageRow = React.memo(function MessageRow({
         </div>
       )}
 
+      {codecFailed && (
+        <div className="flex items-start gap-1.5 text-[10px] font-mono mb-1.5" style={{ color: 'var(--bad)' }}>
+          <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+          <span className="break-words">{t.codecFailed}: {codec.error}</span>
+        </div>
+      )}
+      {codec.pending && !codecFailed && (
+        <div className="text-[10px] font-mono mb-1.5" style={{ color: 'var(--text-muted)' }}>{t.codecPending}</div>
+      )}
+
       {rich ? (
         <div className="rounded-md border p-3 max-h-[24rem] overflow-y-auto" style={{ background: 'var(--bg-code)', borderColor: 'var(--code-border)' }}>
           {effective === 'md' ? <MarkdownView text={display} /> : <HtmlPreview source={display} />}
@@ -240,7 +259,7 @@ const MessageRow = React.memo(function MessageRow({
   );
 }, (a, b) =>
   a.msg === b.msg && a.viewMode === b.viewMode && a.copied === b.copied &&
-  a.replayed === b.replayed && a.connected === b.connected);
+  a.replayed === b.replayed && a.connected === b.connected && a.codecScript === b.codecScript);
 
 export const MessageStream: React.FC<MessageStreamProps> = ({
   messages,
@@ -255,6 +274,9 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   onTogglePaused,
   t,
 }) => {
+  // Display-only payload codec, persisted so a device format survives restarts.
+  const [codecScript, setCodecScript] = usePersistentString('dropqtt_console_codec', '');
+  const [codecOpen, setCodecOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('auto');
@@ -423,6 +445,23 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
             ))}
           </div>
 
+          {/* Payload codec (display-only) */}
+          <button
+            type="button"
+            onClick={() => setCodecOpen((v) => !v)}
+            aria-expanded={codecOpen}
+            title={t.codecHint}
+            className="px-2 py-1 rounded text-[11px] flex items-center gap-1 transition inset-box"
+            style={
+              codecScript?.trim()
+                ? { color: 'var(--accent)', borderColor: 'var(--accent)' }
+                : { color: 'var(--text-secondary)' }
+            }
+          >
+            <Code2 className="w-3 h-3" />
+            <span>{codecScript?.trim() ? t.codecOn : t.codecOff}</span>
+          </button>
+
           {/* Export JSON / CSV */}
           <div className="seg-box">
             <button
@@ -508,6 +547,28 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
         </div>
       </div>
 
+      {codecOpen && (
+        <div className="px-3 py-2.5 space-y-2" style={{ background: 'var(--bg-inset)', borderBottom: '1px solid var(--border-panel)' }}>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>{t.codecTitle}</span>
+            {codecScript.trim() && (
+              <button type="button" onClick={() => setCodecScript('')} className="text-[10px] underline opacity-70 hover:opacity-100" style={{ color: 'var(--danger)' }}>
+                {t.codecClear}
+              </button>
+            )}
+          </div>
+          <textarea
+            value={codecScript}
+            onChange={(e) => setCodecScript(e.target.value)}
+            spellCheck={false}
+            aria-label={t.codecTitle}
+            placeholder={'function transform(topic, payload) {\n  return JSON.parse(atob(payload)).reading;\n}'}
+            className="field-input w-full h-24 font-mono text-[11px]"
+          />
+          <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>{t.codecHint}</p>
+        </div>
+      )}
+
       {/* Export feedback note */}
       {exportNote && (
         <div className="px-3 py-1 text-[10px] animate-fade-in" style={{ background: 'var(--info-soft)', borderBottom: '1px solid var(--info-border)', color: 'var(--info)' }}>
@@ -550,6 +611,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
               copied={copiedId === msg.id}
               replayed={replayedId === msg.id}
               connected={connected}
+              codecScript={codecScript}
               onCopy={handleCopy}
               onReplay={handleReplay}
               onQuickSubscribe={onQuickSubscribe}

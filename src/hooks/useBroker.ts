@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { BrokerConfig, BrokerProfile, ConnectionStatus, DEFAULT_BROKER_CONFIG } from '../types';
+import { BrokerConfig, BrokerProfile, ConnectionStatus, DEFAULT_BROKER_CONFIG, SubOptions } from '../types';
 import { usePersistentState } from './usePersistentState';
 
 const DEFAULT_PROFILES: BrokerProfile[] = [
@@ -19,7 +19,7 @@ const DEFAULT_PROFILES: BrokerProfile[] = [
 
 interface UseBrokerOptions {
   /** Topic registrations to (re-)apply whenever we connect */
-  getTopicsToRegister: () => { topic: string; qos: number }[];
+  getTopicsToRegister: () => { topic: string; qos: number; options?: SubOptions }[];
 }
 
 /**
@@ -102,9 +102,9 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
 
         // Register all desired topics (backend re-applies them on every CONNACK,
         // including auto-reconnects — no manual re-subscribe loop needed).
-        for (const { topic, qos } of topicsRef.current()) {
+        for (const { topic, qos, options } of topicsRef.current()) {
           if (!topic.trim()) continue;
-          await invoke('subscribe_topic', { topic: topic.trim(), qos }).catch(() => {});
+          await invoke('subscribe_topic', { topic: topic.trim(), qos, options }).catch(() => {});
         }
 
         testLatency(cfg);

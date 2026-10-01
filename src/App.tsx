@@ -10,6 +10,7 @@ import { BatchSender } from './components/file-transfer/BatchSender';
 import { ReceiverConfig } from './components/file-transfer/ReceiverConfig';
 import { TransferQueue } from './components/file-transfer/TransferQueue';
 import { SubscriptionsBar } from './components/mqttx/SubscriptionsBar';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { MessageStream } from './components/mqttx/MessageStream';
 import { MessagePublisher } from './components/mqttx/MessagePublisher';
 import { TopicTrafficPanel } from './components/mqttx/TopicTrafficPanel';
@@ -21,7 +22,7 @@ import { ToastHost } from './components/ToastHost';
 import { OpsPanel } from './components/ops/OpsPanel';
 
 import { BrokerConfig } from './types';
-import { Language, translations } from './i18n';
+import { Language, Translations, translations } from './i18n';
 import { applyTheme, Theme } from './themes';
 import { usePersistentString } from './hooks/usePersistentState';
 import { useBroker } from './hooks/useBroker';
@@ -33,6 +34,14 @@ import { useBrokerSys } from './hooks/useBrokerSys';
 import { useHistoryCount } from './hooks/useHistoryCount';
 import { useTransfers } from './hooks/useTransfers';
 import { useBatchSender } from './hooks/useBatchSender';
+
+const MODE_TITLES: Record<WorkspaceMode, (t: Translations) => string> = {
+  transfer: (t) => t.modeFileTransfer,
+  mqttx: (t) => t.modeMqttClient,
+  bridge: (t) => t.modeBridge,
+  history: (t) => t.modeHistory,
+  ops: (t) => t.modeOps,
+};
 
 export function App() {
   // ---- Workspace preferences (raw-string localStorage keys, back-compat) ----
@@ -235,6 +244,8 @@ export function App() {
         )}
 
         <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto p-4 space-y-4 outline-none">
+          {/* Keyed by mode so switching workspaces clears a prior failure. */}
+          <ErrorBoundary area={MODE_TITLES[activeMode](t)} t={t}>
           {activeMode === 'ops' ? (
             <OpsPanel
               t={t}
@@ -251,7 +262,6 @@ export function App() {
             <HistoryPanel
               t={t}
               connected={broker.isConnected}
-              isV5={isV5}
               onPublish={(params) => mqtt.publish(params)}
               onSubscribe={(topic) => {
                 mqtt.addSubscription(topic, 1).catch((e) => console.error('subscribe:', e));
@@ -314,6 +324,7 @@ export function App() {
                 hitStats={subStats.stats}
                 onResetStats={subStats.resetStats}
                 connected={broker.isConnected}
+                isV5={isV5}
                 t={t}
               />
 
@@ -347,6 +358,10 @@ export function App() {
                     properties: {
                       contentType: m.contentType,
                       userProperties: m.userProperties ?? [],
+                      // Without these an MQTT5 RPC replay loses its reply
+                      // address and the responder's correlation never matches.
+                      responseTopic: m.responseTopic,
+                      correlationData: m.correlationData,
                     },
                   })
                 }
@@ -376,6 +391,7 @@ export function App() {
               )}
             </div>
           )}
+        </ErrorBoundary>
         </main>
       </div>
 

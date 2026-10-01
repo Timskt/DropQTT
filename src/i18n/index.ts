@@ -198,6 +198,7 @@ export interface Translations {
   opsOutgoing: string;
   opsBuffered: string;
   opsDropped: string;
+  opsFeedLost: string;
   opsHistoryRows: string;
   opsHistoryStore: string;
   opsAvailable: string;
@@ -222,6 +223,25 @@ export interface Translations {
   currentConfig: string;
   lastUsed: string;
   bridgeAutoReconnect: string;
+  historyAllTime: string;
+  historyPerBucket: string;
+  historyExportResults: string;
+  integrationRecipes: string;
+  recipeTelemetry: string;
+  recipeTelemetryHint: string;
+  recipeAlert: string;
+  recipeAlertHint: string;
+  recipeBroker: string;
+  recipeBrokerHint: string;
+  integrationTarget: string;
+  webhookUrl: string;
+  webhookBody: string;
+  webhookEnvelope: string;
+  webhookRaw: string;
+  webhookHeaders: string;
+  webhookHint: string;
+  webhookInvalid: string;
+  webhookExportHint: string;
   customEndpoint: string;
   hostPlaceholder: string;
   portPlaceholder: string;
@@ -272,6 +292,16 @@ export interface Translations {
   lastActive: string;
   trafficMore: string;
   feedDroppedNotice: string;
+  uiCrashedTitle: string;
+  uiCrashedHint: string;
+  uiCrashedRetry: string;
+  codecTitle: string;
+  codecHint: string;
+  codecClear: string;
+  codecOn: string;
+  codecOff: string;
+  codecFailed: string;
+  codecPending: string;
   actualTopicNote: string;
   trafficCap: string;
   benchLab: string;
@@ -340,6 +370,13 @@ export interface Translations {
   subscribe: string;
   unsubscribe: string;
   noSubscriptions: string;
+  subV5Options: string;
+  subNoLocalHint: string;
+  subRetainAsPublishedHint: string;
+  subRetainHandling: string;
+  subRetainHandling0: string;
+  subRetainHandling1: string;
+  subRetainHandling2: string;
   messageStream: string;
   clearMessages: string;
   filterTopic: string;
@@ -605,6 +642,7 @@ export const translations: Record<Language, Translations> = {
     opsOutgoing: '发送活动',
     opsBuffered: 'Feed 缓冲',
     opsDropped: 'Feed 丢弃',
+    opsFeedLost: 'Feed 丢失（含历史）',
     opsHistoryRows: '历史记录',
     opsHistoryStore: '历史数据库',
     opsAvailable: '可用',
@@ -629,6 +667,25 @@ export const translations: Record<Language, Translations> = {
     currentConfig: '当前会话配置',
     lastUsed: '上次连接',
     bridgeAutoReconnect: '启动时自动重连',
+    historyAllTime: "全部时间",
+    historyPerBucket: "/ 时间段",
+    historyExportResults: "导出当前筛选结果",
+    integrationRecipes: "集成场景模板",
+    recipeTelemetry: "遥测接入业务 API",
+    recipeTelemetryHint: "将设备遥测转成带主题与时间的 JSON 请求。",
+    recipeAlert: "温度阈值告警",
+    recipeAlertHint: "过滤低于 40°C 的消息，将告警转成 Webhook 请求。",
+    recipeBroker: "边缘站点汇聚",
+    recipeBrokerHint: "为上行主题添加站点前缀，汇聚到另一台 Broker。",
+    integrationTarget: "转发目标",
+    webhookUrl: "Webhook 地址",
+    webhookBody: "请求体格式",
+    webhookEnvelope: "JSON 信封（主题、时间、载荷）",
+    webhookRaw: "原始载荷（适配自定义 API）",
+    webhookHeaders: "请求头（每行 名称: 值）",
+    webhookHint: "仅需连接来源 Broker。最多 4 个 HTTP 请求同时进行，10 秒超时；忙碌或超过 2 MB 的请求计入丢弃，不自动重试。请求头仅保存在本机。",
+    webhookInvalid: "请填写有效的 HTTP(S) 地址和请求头；认证请使用请求头。",
+    webhookExportHint: "导出 HTTP 规则时会移除地址和请求头，并停用规则；导入后请重新配置。",
     customEndpoint: '手动指定 Broker…',
     hostPlaceholder: '主机 (IP / 域名)',
     portPlaceholder: '端口',
@@ -679,6 +736,16 @@ export const translations: Record<Language, Translations> = {
     lastActive: '最后活跃',
     trafficMore: '另有 {n} 个低频主题未显示',
     feedDroppedNotice: '高吞吐：报文展示已丢弃 {n} 条旧消息（流量统计仍精确）',
+    uiCrashedTitle: '{area} 渲染失败',
+    uiCrashedHint: '该工作区已停止渲染，其余功能与连接不受影响。可重试，或到「运维与诊断」导出诊断报告。',
+    uiCrashedRetry: '重试该视图',
+    codecTitle: '载荷编解码脚本（仅影响显示）',
+    codecHint: 'function transform(topic, payload, qos, retain) 返回要显示的文本。原始报文与历史、导出、重发完全不受影响；抛错的行会保留原文并标红。',
+    codecClear: '清除脚本',
+    codecOn: '编解码已启用',
+    codecOff: '编解码',
+    codecFailed: '编解码失败',
+    codecPending: '解码中…',
     actualTopicNote: '按实际到达主题统计，非通配符过滤器',
     trafficCap: '主题数已达 1000 上限，新主题不再统计',
     benchLab: '压测台',
@@ -747,6 +814,13 @@ export const translations: Record<Language, Translations> = {
     subscribe: '订阅',
     unsubscribe: '退订',
     noSubscriptions: '暂无活动订阅主题，请在上方输入主题表达式添加',
+    subV5Options: 'MQTT5 订阅选项',
+    subNoLocalHint: '不接收自己发布的回环',
+    subRetainAsPublishedHint: '转发时保留 RETAIN 标志',
+    subRetainHandling: 'Retain Handling',
+    subRetainHandling0: '0 · 每次订阅都下发保留消息',
+    subRetainHandling1: '1 · 仅新订阅时下发',
+    subRetainHandling2: '2 · 从不下发保留消息',
     messageStream: '实时报文监测流',
     clearMessages: '清空报文',
     filterTopic: '按主题或报文正文筛选...',
@@ -1010,6 +1084,7 @@ export const translations: Record<Language, Translations> = {
     opsOutgoing: 'Outbound active',
     opsBuffered: 'Feed buffered',
     opsDropped: 'Feed dropped',
+    opsFeedLost: 'Feed lost (incl. history)',
     opsHistoryRows: 'History rows',
     opsHistoryStore: 'History store',
     opsAvailable: 'Available',
@@ -1034,6 +1109,25 @@ export const translations: Record<Language, Translations> = {
     currentConfig: 'Current session',
     lastUsed: 'Last used',
     bridgeAutoReconnect: 'Auto-reconnect on startup',
+    historyAllTime: "All time",
+    historyPerBucket: "/ bucket",
+    historyExportResults: "Export current filtered results",
+    integrationRecipes: "Integration recipes",
+    recipeTelemetry: "Telemetry to business API",
+    recipeTelemetryHint: "Send device telemetry as JSON with its topic and timestamp.",
+    recipeAlert: "Temperature alerts",
+    recipeAlertHint: "Filter readings below 40°C and send alerts to a webhook.",
+    recipeBroker: "Edge site aggregation",
+    recipeBrokerHint: "Add a site prefix and forward to an upstream broker.",
+    integrationTarget: "Forwarding target",
+    webhookUrl: "Webhook URL",
+    webhookBody: "Request body",
+    webhookEnvelope: "JSON envelope (topic, time, payload)",
+    webhookRaw: "Raw payload (custom APIs)",
+    webhookHeaders: "Headers (one Name: value per line)",
+    webhookHint: "Connect the source broker only. Up to 4 HTTP requests run concurrently with a 10-second timeout. Busy or over-2-MB requests count as dropped; no automatic retries. Headers are stored locally.",
+    webhookInvalid: "Enter a valid HTTP(S) URL and headers; use headers for authentication.",
+    webhookExportHint: "HTTP rule exports omit URLs and headers and disable the rules. Configure them again after importing.",
     customEndpoint: 'Custom broker endpoint…',
     hostPlaceholder: 'Host (IP / domain)',
     portPlaceholder: 'Port',
@@ -1084,6 +1178,16 @@ export const translations: Record<Language, Translations> = {
     lastActive: 'Last active',
     trafficMore: '{n} more low-rate topics hidden',
     feedDroppedNotice: 'High throughput: {n} old messages dropped from feed display (traffic stats remain exact)',
+    uiCrashedTitle: '{area} failed to render',
+    uiCrashedHint: 'This workspace stopped rendering; your connection and other workspaces are unaffected. Retry, or export a diagnostics report from Ops.',
+    uiCrashedRetry: 'Retry this view',
+    codecTitle: 'Payload codec script (display only)',
+    codecHint: 'function transform(topic, payload, qos, retain) returns the text to display. Raw payloads, history, export and replay are untouched; a row whose script throws keeps the original and is flagged.',
+    codecClear: 'Clear script',
+    codecOn: 'Codec on',
+    codecOff: 'Codec',
+    codecFailed: 'Codec failed',
+    codecPending: 'Decoding…',
     actualTopicNote: 'Counted per actual arrived topic, not wildcard filter',
     trafficCap: 'Topic tracking hit the 1000 cap — new topics not counted',
     benchLab: 'Bench Lab',
@@ -1152,6 +1256,13 @@ export const translations: Record<Language, Translations> = {
     subscribe: 'Subscribe',
     unsubscribe: 'Unsubscribe',
     noSubscriptions: 'No active topic subscriptions. Add one above to inspect live traffic.',
+    subV5Options: 'MQTT5 subscription options',
+    subNoLocalHint: 'Do not receive my own publishes',
+    subRetainAsPublishedHint: 'Keep the RETAIN flag when forwarding',
+    subRetainHandling: 'Retain Handling',
+    subRetainHandling0: '0 · send retained on every subscribe',
+    subRetainHandling1: '1 · send only on a new subscription',
+    subRetainHandling2: '2 · never send retained',
     messageStream: 'Live Message Feed',
     clearMessages: 'Clear Messages',
     filterTopic: 'Search topic or payload content...',
@@ -1415,6 +1526,7 @@ export const translations: Record<Language, Translations> = {
     opsOutgoing: '發送活動',
     opsBuffered: 'Feed 緩衝',
     opsDropped: 'Feed 丟棄',
+    opsFeedLost: 'Feed 丟失（含歷史）',
     opsHistoryRows: '歷史記錄',
     opsHistoryStore: '歷史資料庫',
     opsAvailable: '可用',
@@ -1439,6 +1551,25 @@ export const translations: Record<Language, Translations> = {
     currentConfig: '目前工作階段設定',
     lastUsed: '上次連線',
     bridgeAutoReconnect: '啟動時自動重連',
+    historyAllTime: "全部時間",
+    historyPerBucket: "/ 時段",
+    historyExportResults: "匯出目前篩選結果",
+    integrationRecipes: "整合情境範本",
+    recipeTelemetry: "遙測接入業務 API",
+    recipeTelemetryHint: "將裝置遙測轉為包含主題與時間的 JSON 請求。",
+    recipeAlert: "溫度閾值告警",
+    recipeAlertHint: "過濾低於 40°C 的訊息，將告警轉成 Webhook 請求。",
+    recipeBroker: "邊緣站點彙整",
+    recipeBrokerHint: "為上行主題加入站點前綴，彙整到另一台 Broker。",
+    integrationTarget: "轉送目標",
+    webhookUrl: "Webhook 位址",
+    webhookBody: "請求內容格式",
+    webhookEnvelope: "JSON 封裝（主題、時間、內容）",
+    webhookRaw: "原始內容（自訂 API）",
+    webhookHeaders: "請求標頭（每行 名稱: 值）",
+    webhookHint: "僅需連線來源 Broker。最多同時執行 4 個 HTTP 請求，10 秒逾時；忙碌或超過 2 MB 的請求計入丟棄，不自動重試。標頭僅儲存在本機。",
+    webhookInvalid: "請輸入有效的 HTTP(S) 位址與標頭；驗證請使用標頭。",
+    webhookExportHint: "匯出 HTTP 規則時會移除位址與標頭並停用規則；匯入後請重新設定。",
     customEndpoint: '手動指定 Broker…',
     hostPlaceholder: '主機 (IP / 網域)',
     portPlaceholder: '埠號',
@@ -1489,6 +1620,16 @@ export const translations: Record<Language, Translations> = {
     lastActive: '最後活躍',
     trafficMore: '另有 {n} 個低頻主題未顯示',
     feedDroppedNotice: '高吞吐：報文展示已丟棄 {n} 條舊訊息（流量統計仍精確）',
+    uiCrashedTitle: '{area} 渲染失敗',
+    uiCrashedHint: '該工作區已停止渲染，連線與其他工作區不受影響。可重試，或到「維運與診斷」匯出診斷報告。',
+    uiCrashedRetry: '重試此檢視',
+    codecTitle: '載體編解碼腳本（僅影響顯示）',
+    codecHint: 'function transform(topic, payload, qos, retain) 回傳要顯示的文字。原始報文與歷史、匯出、重發完全不受影響；拋錯的行會保留原文並標示。',
+    codecClear: '清除腳本',
+    codecOn: '編解碼已啟用',
+    codecOff: '編解碼',
+    codecFailed: '編解碼失敗',
+    codecPending: '解碼中…',
     actualTopicNote: '按實際到達主題統計，非萬用字元過濾器',
     trafficCap: '主題數已達 1000 上限，新主題不再統計',
     benchLab: '壓測台',
@@ -1557,6 +1698,13 @@ export const translations: Record<Language, Translations> = {
     subscribe: '訂閱',
     unsubscribe: '退訂',
     noSubscriptions: '暫無活動訂閱主題，請在上方輸入主題表達式新增',
+    subV5Options: 'MQTT5 訂閱選項',
+    subNoLocalHint: '不接收自己發布的回環',
+    subRetainAsPublishedHint: '轉發時保留 RETAIN 旗標',
+    subRetainHandling: 'Retain Handling',
+    subRetainHandling0: '0 · 每次訂閱都下發保留訊息',
+    subRetainHandling1: '1 · 僅新訂閱時下發',
+    subRetainHandling2: '2 · 從不下發保留訊息',
     messageStream: '即時封包監測流',
     clearMessages: '清空封包',
     filterTopic: '按主題或本文篩選...',
@@ -1820,6 +1968,7 @@ export const translations: Record<Language, Translations> = {
     opsOutgoing: '送信アクティブ',
     opsBuffered: 'Feed バッファ',
     opsDropped: 'Feed 破棄',
+    opsFeedLost: 'Feed 消失（履歴含む）',
     opsHistoryRows: '履歴件数',
     opsHistoryStore: '履歴 DB',
     opsAvailable: '利用可能',
@@ -1844,6 +1993,25 @@ export const translations: Record<Language, Translations> = {
     currentConfig: '現在のセッション設定',
     lastUsed: '前回接続',
     bridgeAutoReconnect: '起動時に自動再接続',
+    historyAllTime: "全期間",
+    historyPerBucket: "/ 区間",
+    historyExportResults: "現在の検索結果をエクスポート",
+    integrationRecipes: "連携テンプレート",
+    recipeTelemetry: "テレメトリーを API へ",
+    recipeTelemetryHint: "トピックと時刻を含む JSON として測定値を送信します。",
+    recipeAlert: "温度アラート",
+    recipeAlertHint: "40°C 未満を除外し、Webhook にアラートを送信します。",
+    recipeBroker: "拠点データの集約",
+    recipeBrokerHint: "拠点の接頭辞を付けて上位 Broker に転送します。",
+    integrationTarget: "転送先",
+    webhookUrl: "Webhook URL",
+    webhookBody: "リクエスト本文",
+    webhookEnvelope: "JSON（トピック・時刻・ペイロード）",
+    webhookRaw: "元のペイロード（独自 API）",
+    webhookHeaders: "ヘッダー（1 行に 名前: 値）",
+    webhookHint: "接続は送信元 Broker のみ必要です。HTTP は同時に最大 4 件、タイムアウトは 10 秒です。混雑時や 2 MB 超は破棄として集計し、自動再試行しません。ヘッダーはローカル保存です。",
+    webhookInvalid: "有効な HTTP(S) URL とヘッダーを入力してください。認証にはヘッダーを使います。",
+    webhookExportHint: "HTTP ルールの出力では URL とヘッダーを除外して無効にします。読み込み後に再設定してください。",
     customEndpoint: 'ブローカーを手動指定…',
     hostPlaceholder: 'ホスト (IP / ドメイン)',
     portPlaceholder: 'ポート',
@@ -1894,6 +2062,16 @@ export const translations: Record<Language, Translations> = {
     lastActive: '最終アクティブ',
     trafficMore: '他 {n} 件の低頻度トピックは非表示',
     feedDroppedNotice: '高スループット：表示から {n} 件の旧メッセージを破棄（トラフィック統計は正確）',
+    uiCrashedTitle: '{area} の描画に失敗しました',
+    uiCrashedHint: 'このワークスペースの描画が停止しましたが、接続や他のワークスペースは影響を受けません。再試行するか、運用診断から診断レポートをエクスポートしてください。',
+    uiCrashedRetry: 'このビューを再試行',
+    codecTitle: 'ペイロードコーデック（表示のみ）',
+    codecHint: 'function transform(topic, payload, qos, retain) が表示するテキストを返します。生のペイロード・履歴・エクスポート・再送信は影響を受けません。',
+    codecClear: 'スクリプトを消去',
+    codecOn: 'コーデック ON',
+    codecOff: 'コーデック',
+    codecFailed: 'コーデック失敗',
+    codecPending: '解読中…',
     actualTopicNote: '実際に届いたトピック単位で集計（ワイルドカードではない）',
     trafficCap: 'トピック追跡が 1000 上限に到達 — 新規は非集計',
     benchLab: 'ベンチ台',
@@ -1962,6 +2140,13 @@ export const translations: Record<Language, Translations> = {
     subscribe: '購読',
     unsubscribe: '解除',
     noSubscriptions: 'アクティブな購読はありません。上の入力欄から追加してください。',
+    subV5Options: 'MQTT5 購読オプション',
+    subNoLocalHint: '自分が発行したメッセージは受け取らない',
+    subRetainAsPublishedHint: '転送時に RETAIN フラグを保持する',
+    subRetainHandling: 'Retain Handling',
+    subRetainHandling0: '0 · 購読ごとに保持メッセージを送る',
+    subRetainHandling1: '1 · 新規購読のときだけ送る',
+    subRetainHandling2: '2 · 保持メッセージを送らない',
     messageStream: 'リアルタイム メッセージログ',
     clearMessages: 'ログクリア',
     filterTopic: 'トピックまたは内容で検索...',

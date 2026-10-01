@@ -275,6 +275,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [excludeText, setExcludeText] = useState('');
   const [topicMapText, setTopicMapText] = useState('');
+  const [headerText, setHeaderText] = useState('');
   const [draft, setDraft] = useState<BridgeRule>(() => newRuleDraft('src', 'dst'));
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -308,7 +309,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     if (rules.length === 0) return;
     await saveTextFile(
       'dropqtt-bridge-rules.json',
-      JSON.stringify({ app: 'dropqtt-bridge', version: 1, rules }, null, 2),
+      JSON.stringify({ app: 'dropqtt-bridge', version: 2, rules: rules.map((r) => r.targetKind === 'http' ? { ...r, enabled: false, webhook: { ...r.webhook, url: '', headers: [] } } : r) }, null, 2),
     );
   };
 
@@ -346,6 +347,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     setDraft(full);
     setExcludeText((full.excludeFilters ?? []).join('\n'));
     setTopicMapText(formatTopicMap(full.topicMap ?? []));
+    setHeaderText(full.webhook.headers.map(([k, v]) => `${k}: ${v}`).join('\n'));
     setEditingId(r.id);
     setFormError(null);
     setShowAdvanced(
@@ -371,7 +373,8 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
         r.id !== editingId &&
         r.sourceConn === draft.sourceConn &&
         r.sourceFilter.trim() === draft.sourceFilter.trim() &&
-        r.targetConn === draft.targetConn,
+        (r.targetKind ?? 'mqtt') === draft.targetKind &&
+        (draft.targetKind === 'http' ? r.webhook?.url === draft.webhook.url : r.targetConn === draft.targetConn),
     );
     if (clash) {
       setFormError(t.ruleDuplicate.replace('{name}', clash.name));
@@ -386,6 +389,21 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       topicMap: draft.topicMode === 'map' ? parseTopicMap(topicMapText) : [],
       rateLimit: Math.max(0, Math.min(1_000_000, draft.rateLimit || 0)),
     };
+    if (draft.targetKind === 'http') {
+      try {
+        const url = new URL(draft.webhook.url.trim());
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error();
+        const headers: [string, string][] = headerText.split('\n').filter((line) => line.trim()).map((line) => {
+          const colon = line.indexOf(':');
+          if (colon < 1) throw new Error();
+          return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
+        });
+        finalRule.webhook = { ...draft.webhook, url: url.toString(), headers };
+      } catch {
+        setFormError(t.webhookInvalid);
+        return;
+      }
+    }
     if (finalRule.topicMode === 'map' && finalRule.topicMap.length === 0) {
       setFormError(t.topicMapEmpty);
       return;
@@ -398,6 +416,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     setDraft(newRuleDraft(draft.sourceConn, draft.targetConn));
     setExcludeText('');
     setTopicMapText('');
+    setHeaderText('');
     closeForm();
   };
 
@@ -415,10 +434,36 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
         return t.topicKeepSame;
     }
   };
-  const targetDescription = topicRewriteDescription;
+  const targetDescription = (r: BridgeRule) => r.targetKind === 'http' ? r.webhook?.url || t.webhookUrl : topicRewriteDescription(r);
+
+  const startRecipe = (kind: 'telemetry' | 'alert' | 'broker') => {
+    const next = newRuleDraft('src', 'dst');
+    next.name = kind === 'telemetry' ? t.recipeTelemetry : kind === 'alert' ? t.recipeAlert : t.recipeBroker;
+    next.sourceFilter = 'sensors/+/telemetry';
+    if (kind === 'broker') {
+      next.topicMode = 'prefix'; next.prefixFrom = 'sensors'; next.prefixTo = 'site-a/sensors';
+    } else {
+      next.targetKind = 'http';
+      next.webhook = { url: 'http://localhost:8080/events', format: kind === 'alert' ? 'raw' : 'json', headers: kind === 'alert' ? [['Content-Type', 'application/json']] : [] };
+      next.rateLimit = 10;
+      if (kind === 'alert') next.transformScript = 'function transform(topic, payload) {\n  const data = JSON.parse(payload);\n  if (typeof data.temperature !== "number" || data.temperature < 40) return null;\n  return { text: "High temperature: " + data.temperature, topic };\n}';
+    }
+    setDraft(next); setEditingId(null); setFormError(null); setExcludeText(''); setTopicMapText('');
+    setHeaderText(next.webhook.headers.map(([k, v]) => `${k}: ${v}`).join('\n'));
+    setShowAdvanced(kind === 'alert'); setShowForm(true);
+  };
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto flex flex-col">
+      <section className="panel p-4 space-y-3">
+        <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{t.integrationRecipes}</div>
+        <div className="workspace-recipes">
+          {(['telemetry', 'alert', 'broker'] as const).map((kind) => <button key={kind} type="button" onClick={() => startRecipe(kind)} className="recipe-card text-left p-3 rounded-md border" style={{ borderColor: 'var(--border-inset)', background: 'var(--bg-inset)' }}>
+            <div className="text-xs font-semibold" style={{ color: 'var(--accent)' }}>{kind === 'telemetry' ? t.recipeTelemetry : kind === 'alert' ? t.recipeAlert : t.recipeBroker}</div>
+            <div className="mt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{kind === 'telemetry' ? t.recipeTelemetryHint : kind === 'alert' ? t.recipeAlertHint : t.recipeBrokerHint}</div>
+          </button>)}
+        </div>
+      </section>
       {/* Autostart preference */}
       <div className="flex items-center justify-end">
         <label className="flex items-center gap-2 text-[11px] font-mono cursor-pointer px-3 py-1.5 rounded border" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border-panel)', background: 'var(--bg-panel)' }}>
@@ -489,7 +534,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
 
       {/* ---- Rules ---- */}
       <div className="panel">
-        <div className="panel-header">
+        <div className="panel-header flex-wrap gap-2">
           <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
             <Zap className="w-4 h-4" style={{ color: 'var(--accent)' }} />
             {t.bridgeRules}
@@ -528,12 +573,17 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <RefreshCw className="w-3 h-3" />
               {t.resetStats}
             </button>
-            <button onClick={() => setShowForm((v) => !v)} className="btn-accent !px-3 !py-1 flex items-center gap-1 text-[11px]">
-              <Plus className="w-3.5 h-3.5" />
-              {t.addRule}
-            </button>
+            {/* Hidden while the form is open: the form already has Cancel/Save,
+                and a second "Add Rule" button would be ambiguous for AT. */}
+            {!showForm && (
+              <button onClick={() => setShowForm(true)} className="btn-accent !px-3 !py-1 flex items-center gap-1 text-[11px]">
+                <Plus className="w-3.5 h-3.5" />
+                {t.addRule}
+              </button>
+            )}
           </div>
         </div>
+        {rules.some((r) => r.targetKind === 'http') && <div className="px-4 py-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>{t.webhookExportHint}</div>}
 
         {showForm && (
           <div className="px-4 py-4 border-b space-y-3" style={{ borderColor: 'var(--border-panel)', background: 'var(--bg-inset)' }}>
@@ -556,11 +606,19 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                 <option value="src">{t.bridgeSource} (src)</option>
                 <option value="dst">{t.bridgeTarget} (dst)</option>
               </select>
-              <select className="field-input" value={draft.targetConn} onChange={(e) => setDraft((d) => ({ ...d, targetConn: e.target.value, sourceConn: d.targetConn === e.target.value ? d.sourceConn : e.target.value === 'src' ? 'dst' : 'src' }))}>
+              <select aria-label={t.integrationTarget} className="field-input" value={draft.targetKind === 'http' ? 'http' : draft.targetConn} onChange={(e) => setDraft((d) => e.target.value === 'http' ? { ...d, targetKind: 'http' } : { ...d, targetKind: 'mqtt', targetConn: e.target.value, sourceConn: e.target.value === 'src' ? 'dst' : 'src' })}>
+                <option value="http">HTTP / Webhook</option>
                 <option value="dst">{t.bridgeTarget} (dst)</option>
                 <option value="src">{t.bridgeSource} (src)</option>
               </select>
             </div>
+
+            {draft.targetKind === 'http' && <div className="space-y-2 p-3 rounded-md border" style={{ borderColor: 'var(--info-border)', background: 'var(--info-soft)' }}>
+              <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}><span>{t.webhookUrl}</span><input aria-label={t.webhookUrl} className="field-input w-full" placeholder="http://localhost:8080/events" value={draft.webhook.url} onChange={(e) => set('webhook', { ...draft.webhook, url: e.target.value })} /></label>
+              <select aria-label={t.webhookBody} className="field-input w-full" value={draft.webhook.format} onChange={(e) => set('webhook', { ...draft.webhook, format: e.target.value as 'raw' | 'json' })}><option value="json">{t.webhookEnvelope}</option><option value="raw">{t.webhookRaw}</option></select>
+              <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}><span>{t.webhookHeaders}</span><textarea aria-label={t.webhookHeaders} className="field-input w-full h-16 font-mono" placeholder="Content-Type: application/json" spellCheck={false} value={headerText} onChange={(e) => setHeaderText(e.target.value)} /></label>
+              <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{t.webhookHint}</p>
+            </div>}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
@@ -804,7 +862,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     </span>
                     <ArrowRight className="w-3 h-3 shrink-0" style={{ color: 'var(--text-muted)' }} />
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded select-text" style={{ background: 'var(--bg-code)', color: 'var(--code-number)' }}>
-                      {r.targetConn}
+                      {r.targetKind === 'http' ? 'HTTP' : r.targetConn}
                       {r.topicMode === 'prefix' && r.prefixFrom ? ` → ${r.prefixTo}` : ''}
                     </span>
                   </div>

@@ -31,8 +31,34 @@ jobs:
       - name: Typecheck
         run: pnpm exec tsc --noEmit
 
+      - name: Unit tests
+        run: pnpm test
+
       - name: Build
         run: pnpm build
+
+  ui:
+    name: UI (Playwright + mocked Tauri IPC)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser tests
+        run: pnpm test:ui
 
   backend:
     name: Rust (check + clippy + test)

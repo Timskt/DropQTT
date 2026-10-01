@@ -6,16 +6,26 @@
 use std::time::Duration;
 
 use bytes::Bytes;
+use rumqttc::v5::mqttbytes::v5::{Filter, RetainForwardRule};
 use rumqttc::{MqttOptions, QoS, Transport as RumqttcTransport};
 
-use crate::protocol::{BrokerConfig, PubProperties};
+use crate::protocol::{BrokerConfig, PubProperties, SubOptions};
 
 /// Resolve the transport for a config across the four combinations:
 /// plain TCP, TLS (mTLS-capable), WebSocket, and WSS (TLS over WebSocket).
 /// Returns `None` for a plain TCP connection.
-fn build_transport(config: &BrokerConfig) -> Option<RumqttcTransport> {
+///
+/// Explicitly configured TLS material never degrades silently: falling back to
+/// system roots would let a user believe a private-CA or mTLS pin is enforced
+/// while the broker is in fact validated against the public trust store (or
+/// client auth is simply absent).
+fn read_tls_file(path: &str, kind: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("{} '{}' is unreadable: {}", kind, path, e))
+}
+
+fn build_transport(config: &BrokerConfig) -> Result<Option<RumqttcTransport>, String> {
     if !config.use_tls && !config.use_websocket {
-        return None;
+        return Ok(None);
     }
 
     // Optional custom CA + client cert/key (mutual TLS) material.
@@ -24,25 +34,22 @@ fn build_transport(config: &BrokerConfig) -> Option<RumqttcTransport> {
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .and_then(|p| match std::fs::read(p) {
-            Ok(ca) => Some(ca),
-            Err(e) => {
-                eprintln!("[dropqtt] CA file '{}' unreadable ({e}); using system roots", p);
-                None
-            }
-        });
+        .map(|p| read_tls_file(p, "TLS CA file"))
+        .transpose()?;
     let client_auth = match (
         config.tls_client_cert_path.as_deref().map(str::trim),
         config.tls_client_key_path.as_deref().map(str::trim),
     ) {
-        (Some(cert), Some(key)) if !cert.is_empty() && !key.is_empty() => {
-            match (std::fs::read(cert), std::fs::read(key)) {
-                (Ok(c), Ok(k)) => Some((c, k)),
-                _ => {
-                    eprintln!("[dropqtt] mTLS client cert/key unreadable; connecting without client auth");
-                    None
-                }
-            }
+        (Some(cert), Some(key)) if !cert.is_empty() && !key.is_empty() => Some((
+            read_tls_file(cert, "mTLS client certificate")?,
+            read_tls_file(key, "mTLS client key")?,
+        )),
+        // One half configured is a misconfiguration, not an opt-out.
+        (Some(cert), _) if !cert.is_empty() => {
+            return Err("mTLS client certificate set without a private key".into());
+        }
+        (_, Some(key)) if !key.is_empty() => {
+            return Err("mTLS private key set without a client certificate".into());
         }
         _ => None,
     };
@@ -50,21 +57,19 @@ fn build_transport(config: &BrokerConfig) -> Option<RumqttcTransport> {
     if config.use_websocket {
         // Plain WebSocket needs no TLS material.
         if !config.use_tls {
-            return Some(RumqttcTransport::Ws);
+            return Ok(Some(RumqttcTransport::Ws));
         }
-        let transport = match ca_bytes {
+        return Ok(Some(match ca_bytes {
             Some(ca) => RumqttcTransport::wss(ca, client_auth, None),
             None => RumqttcTransport::wss_with_default_config(),
-        };
-        return Some(transport);
+        }));
     }
 
     // TCP + TLS
-    let transport = match ca_bytes {
+    Ok(Some(match ca_bytes {
         Some(ca) => RumqttcTransport::tls(ca, client_auth, None),
         None => RumqttcTransport::tls_with_default_config(),
-    };
-    Some(transport)
+    }))
 }
 
 /// Whether a non-empty will topic is configured (WILL FLAG should be set).
@@ -151,7 +156,8 @@ fn qos_to_u8_v5(q: rumqttc::v5::mqttbytes::QoS) -> u8 {
 }
 
 /// Build a fresh client + eventloop pair for the given broker config.
-pub fn build_connection(config: &BrokerConfig) -> (MqttClient, MqttEventLoop) {
+pub fn build_connection(config: &BrokerConfig) -> Result<(MqttClient, MqttEventLoop), String> {
+    let transport = build_transport(config)?;
     if config.is_v5() {
         let mut opts = rumqttc::v5::MqttOptions::new(&config.client_id, &config.host, config.port);
         opts.set_keep_alive(Duration::from_secs(config.keep_alive_secs.max(5)));
@@ -172,12 +178,12 @@ pub fn build_connection(config: &BrokerConfig) -> (MqttClient, MqttEventLoop) {
                 None,
             ));
         }
-        if let Some(transport) = build_transport(config) {
+        if let Some(transport) = transport {
             opts.set_transport(transport);
         }
 
         let (client, eventloop) = rumqttc::v5::AsyncClient::new(opts, 100);
-        (MqttClient::V5(client), MqttEventLoop::V5(Box::new(eventloop)))
+        Ok((MqttClient::V5(client), MqttEventLoop::V5(Box::new(eventloop))))
     } else {
         let mut opts = MqttOptions::new(&config.client_id, &config.host, config.port);
         opts.set_keep_alive(Duration::from_secs(config.keep_alive_secs.max(5)));
@@ -197,12 +203,12 @@ pub fn build_connection(config: &BrokerConfig) -> (MqttClient, MqttEventLoop) {
                 config.will_retain,
             ));
         }
-        if let Some(transport) = build_transport(config) {
+        if let Some(transport) = transport {
             opts.set_transport(transport);
         }
 
         let (client, eventloop) = rumqttc::AsyncClient::new(opts, 100);
-        (MqttClient::V3(client), MqttEventLoop::V3(Box::new(eventloop)))
+        Ok((MqttClient::V3(client), MqttEventLoop::V3(Box::new(eventloop))))
     }
 }
 
@@ -258,16 +264,34 @@ impl MqttClient {
         }
     }
 
-    pub async fn subscribe(&self, topic: &str, qos: u8) -> Result<(), String> {
+    /// Subscribe with v5 options. On a v3.1.1 connection only QoS is meaningful;
+    /// the extra flags are silently inapplicable rather than rejected, because
+    /// the same subscription registry is replayed after a protocol downgrade.
+    pub async fn subscribe(&self, topic: &str, opts: &SubOptions) -> Result<(), String> {
         match self {
-            MqttClient::V3(client) => {
-                client.subscribe(topic, qos_from_u8(qos)).await.map_err(|e| format!("{:?}", e))
-            }
+            MqttClient::V3(client) => client
+                .subscribe(topic, qos_from_u8(opts.qos))
+                .await
+                .map_err(|e| format!("{:?}", e)),
             MqttClient::V5(client) => {
-                client
-                    .subscribe(topic, qos_from_u8_v5(qos))
-                    .await
-                    .map_err(|e| format!("{:?}", e))
+                if !opts.no_local && !opts.retain_as_published && opts.retain_handling == 0 {
+                    return client
+                        .subscribe(topic, qos_from_u8_v5(opts.qos))
+                        .await
+                        .map_err(|e| format!("{:?}", e));
+                }
+                let filter = Filter {
+                    path: topic.to_string(),
+                    qos: qos_from_u8_v5(opts.qos),
+                    nolocal: opts.no_local,
+                    preserve_retain: opts.retain_as_published,
+                    retain_forward_rule: match opts.retain_handling {
+                        1 => RetainForwardRule::OnNewSubscribe,
+                        2 => RetainForwardRule::Never,
+                        _ => RetainForwardRule::OnEverySubscribe,
+                    },
+                };
+                client.subscribe_many([filter]).await.map_err(|e| format!("{:?}", e))
             }
         }
     }
@@ -349,5 +373,79 @@ impl MqttEventLoop {
                 Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> BrokerConfig {
+        BrokerConfig {
+            host: "127.0.0.1".into(),
+            port: 8883,
+            ..Default::default()
+        }
+    }
+
+    /// `MqttClient`/`MqttEventLoop` are not `Debug`, so `expect_err` is unusable.
+    fn connect_err(c: &BrokerConfig) -> String {
+        match build_connection(c) {
+            Ok(_) => panic!("expected the connection build to fail"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn plain_tcp_and_default_tls_stay_valid() {
+        // No TLS at all, and TLS trusting the system store, are both intentional.
+        assert!(build_transport(&cfg()).unwrap().is_none());
+        let mut tls = cfg();
+        tls.use_tls = true;
+        assert!(build_transport(&tls).is_ok());
+        let mut ws = cfg();
+        ws.use_websocket = true;
+        assert!(matches!(
+            build_transport(&ws).unwrap(),
+            Some(RumqttcTransport::Ws)
+        ));
+    }
+
+    #[test]
+    fn unreadable_tls_material_fails_instead_of_degrading() {
+        let missing = "Z:/definitely/not/here.pem";
+
+        let mut c = cfg();
+        c.use_tls = true;
+        c.tls_ca_path = Some(missing.into());
+        let err = connect_err(&c);
+        assert!(err.contains("unreadable"), "{err}");
+        assert!(err.contains("definitely/not/here"), "{err}");
+
+        let mut c = cfg();
+        c.use_tls = true;
+        c.tls_client_cert_path = Some(missing.into());
+        c.tls_client_key_path = Some(missing.into());
+        assert!(connect_err(&c).contains("certificate"));
+
+        // WSS shares the same code path, so it must fail the same way.
+        let mut c = cfg();
+        c.use_tls = true;
+        c.use_websocket = true;
+        c.tls_ca_path = Some(missing.into());
+        assert!(build_connection(&c).is_err());
+    }
+
+    #[test]
+    fn half_configured_mtls_is_a_mistake_not_an_optout() {
+        let mut c = cfg();
+        c.use_tls = true;
+        c.tls_client_cert_path = Some("Z:/client.pem".into());
+        assert!(connect_err(&c).contains("without a private key"));
+
+        let mut c = cfg();
+        c.use_tls = true;
+        c.tls_client_key_path = Some("Z:/client.key".into());
+        assert!(connect_err(&c).contains("without a client certificate"));
     }
 }

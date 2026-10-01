@@ -24,12 +24,13 @@
 - 📡 **MQTTX-style Pub/Sub Console**: Live message feed with Auto/JSON/Text/Markdown/HTML/CBOR/Base64/Hex payload views (dependency-free RFC 8949 codec; collapsible syntax-colored JSON tree; DOMPurify-sanitized Markdown & fully-sandboxed HTML previews), a live-preview split editor with byte counters and draft persistence, feed pause/buffer, per-filter subscription hit statistics, JSON/CSV message export, one-click message replay (verbatim topic/payload/QoS/retain/v5 properties) and click-to-subscribe topic badges, a retained-message clearer, plus a subscription registry that is automatically re-applied on every reconnect.
 - 🔁 **Resilient Transfers**: NACK-driven missing-chunk retransmission, zombie-task watchdogs, and graceful CONNACK-driven subscription recovery.
 - 🧭 **Transfer Lifecycle Controls**: Sender-originated PAUSE / RESUME / CANCEL controls now propagate to the receiver, suspend watchdog timeouts while paused, and produce an immediate terminal state.
-- 🔀 **Broker-to-Broker Data Bridge**: Run two independent bridge connections and forward messages between any two brokers by topic rules. Multi-line source filters subscribe many topics with one rule; exclusions carve out sub-trees; topic rewrites support keep / prefix / fixed-aggregate / regex-capture / per-topic mapping tables; payloads pass verbatim or through prefix-suffix tags, JSON envelopes, and a sandboxed **embedded-JavaScript transform** (`function transform(topic, payload, qos, retain)` with 100 ms / 4 MB limits, null-to-drop semantics and an in-form dry-run tester). Per-rule rate limiting, forwarded/dropped counters, a live forward log, rules export/import as JSON, and auto-reconnect that restores remembered endpoints on startup.
+- 🔀 **Data Bridge (Broker → Broker and Broker → HTTP)**: Run two independent bridge connections and forward messages by topic rules. Multi-line source filters subscribe many topics with one rule; exclusions carve out sub-trees; topic rewrites support keep / prefix / fixed-aggregate / regex-capture / per-topic mapping tables; payloads pass verbatim or through prefix-suffix tags, JSON envelopes, and a sandboxed **embedded-JavaScript transform** (`function transform(topic, payload, qos, retain)` with 100 ms / 4 MB limits, null-to-drop semantics and an in-form dry-run tester). A rule can target an **HTTP/Webhook endpoint** instead of a broker — JSON envelope or raw body, custom headers, and three starter recipes (telemetry → business API, threshold alert, edge-site aggregation). Per-rule rate limiting, forwarded/dropped counters, a live forward log, rules export/import as JSON, and auto-reconnect that restores remembered endpoints and re-applies changed QoS on CONNACK.
 - ✅ **Receive Approval Mode**: Toggle auto-accept off to gate incoming files behind an explicit Approve/Reject review after SHA-256 verification.
 - 🎨 **Themeable UI**: Four design-token driven themes (Cyberpunk, OLED Obsidian, Nord, Solaris light) with CSS custom properties, plus 4-language i18n (简中/English/繁中/日本語).
 - 🚪 **Room / Channel Isolation**: Share files simply by agreeing on a channel code (e.g. `#my-secure-room`).
 - 🔥 **Live Topic Traffic & Bench Lab**: Per-actual-topic traffic ranking (msgs/sec, byte volume, peak rate, last-active) with second-accurate counters that stay exact under load, a hot-topic flame highlight, and a built-in publish stress lab (up to 20k msg/sec) that loops back through your own subscriptions to verify stat accuracy and UI responsiveness.
 - 🚦 **Overload-Proof Console Feed**: The backend batches the message feed at ~10 Hz (200 msgs/emit) with counted overflow drops — thousands of msgs/sec never flood the webview, and the UI shows a red notice when display rows were dropped while stats remain precise.
+- 🗂️ **Searchable Message History**: Every console-feed row is mirrored to SQLite (bounded at 100k rows) so traffic stays inspectable after the live feed scrolls away. Free-text search over topic *and* payload, direction filter, 5m/15m/1h/24h/**All time** windows, and a trend chart whose buckets use exactly the same predicates as the result list. Filtered results export to JSON/CSV, payloads inspect as Text/JSON/Hex/Base64/CBOR, and MQTT5 properties (response topic, correlation data, user properties) survive the round-trip to replay. Rows whose stored bytes are incomplete — including captures written by older versions — are detected and blocked from replay rather than silently re-published truncated.
 - 🩺 **Operations Diagnostics Center**: A dedicated Ops workspace reports runtime/platform metadata, broker connection state, transfer activity, feed pressure, SQLite history status and bridge health. Active checks cover download-directory writability, history availability, TLS posture, subscriptions and overload indicators; the sanitized report can be copied or exported without passwords, usernames or certificate paths.
 - ♿ **Keyboard & Responsive Polish**: Fluid container-driven layouts work at the default window size, dialogs trap and restore focus, key interactive surfaces are keyboard reachable, document language follows the selected locale, decorative motion respects `prefers-reduced-motion`, and code surfaces use theme tokens.
 - 🎨 **Pristine Modern UI & Brand Identity**: Designed with the `app-logo-design-engine` skill, featuring an origami vector mark rendered via native Swift + CoreGraphics producing true 32-bit RGBA (`ColorType 6`) icons without white squircle borders.
@@ -58,7 +59,7 @@ dropqtt/
 ### Prerequisites
 - Node.js >= 20, `pnpm`
 - Rust toolchain (stable)
-- macOS (Xcode Command Line Tools), Linux (WebKitGTK dev packages), or Windows (C++ Build Tools)
+- macOS (Xcode Command Line Tools), Linux (WebKitGTK dev packages), or Windows (C++ Build Tools **including the Windows 10/11 SDK** — `link.exe` alone is not enough; without the SDK's `ucrt.lib`/`kernel32.lib` no Rust binary can be linked)
 
 ### Run in Development
 ```bash
@@ -68,6 +69,14 @@ pnpm install
 # Start Tauri development mode
 pnpm tauri dev
 ```
+
+### Tests
+```bash
+pnpm test          # Vitest unit tests (history decode/replay/export/chart filling)
+pnpm test:ui       # Playwright browser tests (mocked Tauri IPC, real React UI)
+(cd src-tauri && cargo test)   # Rust: SQLite history, bridge rules, webhook, QuickJS sandbox
+```
+`pnpm test:ui` starts the Vite dev server on `127.0.0.1:1420` and drives the real components with a stubbed IPC layer, so it validates rendering and interaction — not live MQTT or HTTP networking.
 
 ### Build Locally
 ```bash

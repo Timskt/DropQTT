@@ -136,6 +136,35 @@ pub struct ConnectionStatus {
     pub client_id: String,
 }
 
+/// MQTT v5 subscription options. Ignored on v3.1.1 connections, which has no
+/// equivalent wire fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubOptions {
+    #[serde(default = "default_qos1")]
+    pub qos: u8,
+    /// Do not loop my own publishes back to me
+    #[serde(default)]
+    pub no_local: bool,
+    /// Keep the RETAIN flag of messages forwarded to this subscription
+    #[serde(default)]
+    pub retain_as_published: bool,
+    /// 0 = send retained on every subscribe, 1 = only on a new subscription,
+    /// 2 = never send retained
+    #[serde(default)]
+    pub retain_handling: u8,
+}
+
+impl Default for SubOptions {
+    fn default() -> Self {
+        Self { qos: default_qos1(), no_local: false, retain_as_published: false, retain_handling: 0 }
+    }
+}
+
+fn default_qos1() -> u8 {
+    1
+}
+
 /// MQTT v5 user-facing publish properties (ignored on v3.1.1 connections)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -257,6 +286,23 @@ mod tests {
         assert!(cfg.client_id.starts_with("DropQTT_"));
         assert_eq!(cfg.protocol_version, 3);
         assert!(!cfg.is_v5());
+    }
+
+    #[test]
+    fn test_sub_options_defaults_and_partial_json() {
+        // A v3.1.1-era caller sends only `{topic, qos}`, so every v5 flag must
+        // default to the wire-compatible "no options" behaviour.
+        let opts: SubOptions = serde_json::from_str("{}").expect("empty object parses");
+        assert_eq!(opts.qos, 1);
+        assert!(!opts.no_local);
+        assert!(!opts.retain_as_published);
+        assert_eq!(opts.retain_handling, 0);
+
+        let opts: SubOptions =
+            serde_json::from_str(r#"{"qos":2,"noLocal":true,"retainHandling":2}"#).unwrap();
+        assert_eq!(opts.qos, 2);
+        assert!(opts.no_local);
+        assert_eq!(opts.retain_handling, 2);
     }
 
     #[test]

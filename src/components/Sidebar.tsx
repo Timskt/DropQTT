@@ -160,7 +160,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => setActiveMode('bridge')}
             icon={<GitBranch className="w-4 h-4" />}
             title={t.modeBridge}
-            subtitle="Broker ↔ Broker"
+            subtitle="Broker ↔ Broker / HTTP"
             accentVar="var(--warn)"
             chipClass="chip-warn"
             count={activeBridgeRulesCount}

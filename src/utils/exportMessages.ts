@@ -20,12 +20,15 @@ function payloadToText(msg: MqttGenericMessage): string {
 export function messagesToJson(messages: MqttGenericMessage[]): string {
   const rows = [...messages].reverse().map((m) => ({
     timestamp: m.timestamp,
+    timestampMs: m.timestampMs ?? null,
     direction: m.direction,
     topic: m.topic,
     qos: m.qos,
     retain: m.retain,
     contentType: m.contentType ?? null,
-    userProperties: m.userProperties ?? {},
+    userProperties: m.userProperties ?? [],
+    responseTopic: m.responseTopic ?? null,
+    correlationData: m.correlationData ?? null,
     payloadLen: m.payloadLen,
     truncated: m.truncated,
     payload: payloadToText(m),
