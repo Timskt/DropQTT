@@ -182,6 +182,12 @@ const MessageRow = React.memo(function MessageRow({
           <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>QoS {msg.qos}</span>
           {msg.retain && <span className="chip chip-warn shrink-0">RETAIN</span>}
           {msg.contentType && <span className="chip chip-violet shrink-0 hidden lg:inline">{msg.contentType}</span>}
+          {/* Only what the publisher declared, not what we guessed from the bytes */}
+          {msg.payloadFormat !== undefined && (
+            <span className="chip chip-neutral shrink-0 hidden lg:inline" title={t.payloadFormatHint}>
+              {msg.payloadFormat === 1 ? 'UTF-8' : 'BYTES'}
+            </span>
+          )}
           {msg.responseTopic && <span className="chip chip-sky shrink-0 hidden xl:inline" title={t.responseTopicLabel}>↩ {msg.responseTopic}</span>}
           {msg.correlationData && <span className="chip chip-neutral shrink-0 hidden xl:inline font-mono" title={t.correlationDataLabel}>#{msg.correlationData}</span>}
           {viewMode === 'auto' && (

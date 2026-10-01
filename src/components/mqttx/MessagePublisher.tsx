@@ -124,6 +124,9 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   const [userProps, setUserProps] = useState<[string, string][]>([]);
   const [responseTopic, setResponseTopic] = useState('');
   const [correlationData, setCorrelationData] = useState('');
+  // '' leaves the Payload Format Indicator off the wire entirely
+  const [payloadFormat, setPayloadFormat] = useState<'' | '0' | '1'>('');
+  const [topicAlias, setTopicAlias] = useState('');
 
   // Scheduled publishing is driven by the backend; these are just the parameters
   // for the next run the user starts.
@@ -193,8 +196,10 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
       messageExpiry: messageExpiry.trim() ? Number(messageExpiry) : undefined,
       responseTopic: responseTopic.trim() || undefined,
       correlationData: correlationData.trim() || undefined,
+      payloadFormat: payloadFormat === '' ? undefined : Number(payloadFormat),
+      topicAlias: topicAlias.trim() ? Number(topicAlias) : undefined,
     }),
-    [contentType, format, messageExpiry, responseTopic, correlationData, userProps],
+    [contentType, format, messageExpiry, responseTopic, correlationData, userProps, payloadFormat, topicAlias],
   );
 
   // Core send: renders ${...} template tokens against the running counter.
@@ -552,6 +557,29 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               />
             </div>
             {/* Request/Response (RPC) properties */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <select
+                value={payloadFormat}
+                onChange={(e) => setPayloadFormat(e.target.value as '' | '0' | '1')}
+                className="field-input text-[11px]"
+                title={t.payloadFormatHint}
+                style={{ color: payloadFormat ? 'var(--text-primary)' : 'var(--text-muted)' }}
+              >
+                <option value="">{t.payloadFormatUnset}</option>
+                <option value="1">PFI · UTF-8</option>
+                <option value="0">PFI · Bytes</option>
+              </select>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={topicAlias}
+                onChange={(e) => setTopicAlias(e.target.value)}
+                placeholder={t.topicAliasLabel}
+                className="field-input text-[11px]"
+                title={t.topicAliasHint}
+              />
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <input
                 type="text"

@@ -46,13 +46,13 @@ MQTTX 是 EMQX 团队产品，有桌面版 + **Web 版** + **CLI** + 云同步 +
 | 一处渲染异常白屏整个应用 | 实测由 null 载荷触发 | ✅ 工作区级 `ErrorBoundary` |
 | 定时发布是前端 `setInterval` | 漂移、卸载即停、只能一条 | ✅ **后端调度器**（`scheduler.rs` + `run_schedule`）：绝对网格 100×50 ms 实测跨 4949/4950 ms，前端同参数跨 6191 ms；`reload` 销毁整个 webview 后任务照跑；支持并行与断连停止 |
 | 压测台过弱 | QoS0/retain 写死、无停止、单主题、只报发送数 | ✅ **`bench.rs` 重写**：多主题轮询、QoS0/1/2 + retain、可停止、回环 p50/p95/p99、PUBACK/PUBCOMP 与 sent 差值 |
+| 缺 Payload Format Indicator / Topic Alias / Session-Expiry / v5 Will | `transport.rs:172,239` | ✅ **已补齐并线上取证**：PFI(0/1/不设)、别名（受 CONNACK 上限前置校验）、Session-Expiry、Will Delay + 遗嘱 Content-Type；控制台显示发布方声明的格式 |
 
 ### 2.3 仍然落后的（待办）
 
 | 项 | 证据 | 影响 |
 | --- | --- | --- |
 | **控制台只能一条连接** | `lib.rs:18-21` 单 client 槽 | 结构差距最大的一项；桥接那套（任意 conn id）可作范本 |
-| 缺 Payload Format Indicator / Topic Alias / Session-Expiry / v5 Will | `transport.rs:172,239` | 协议完整度 |
 | RPC 无自动关联 | `MessagePublisher.tsx:446-464` | 有 responseTopic 却不自动订阅应答、无配对表、无超时 |
 | 保留消息只从当前 500 行流里捞 | `MessageStream.tsx:270-274` | 无法查 broker 保留树 |
 | 无系统代理 | 全仓无匹配 | 企业网络 |
@@ -64,15 +64,16 @@ MQTTX 是 EMQX 团队产品，有桌面版 + **Web 版** + **CLI** + 云同步 +
 ## 3. 路线图
 
 ### 已完成（A/B/C/D 组）
-- A1 mTLS 硬失败 · A2 过载归档 · A3 历史错误可见 · B1 v5 订阅选项 · C1 控制台编解码 · **C2 后端定时发布** · **D1 压测台（多主题/QoS/停止/分位数/确认差值）** · ErrorBoundary
+- A1 mTLS 硬失败 · A2 过载归档 · A3 历史错误可见 · B1 v5 订阅选项 · **B2 PFI / Topic Alias / Session-Expiry / v5 Will 属性** · C1 控制台编解码 · **C2 后端定时发布** · **D1 压测台（多主题/QoS/停止/分位数/确认差值）** · ErrorBoundary
 - IoT 侧另加：SenML(RFC 8428) 读数、静默看门狗（见 `ITERATION_2026_09.md` §3.4）
 
 ### 下一轮（建议顺序）
 
-1. **B2 协议字段补全** — PFI / Topic Alias / Session-Expiry / v5 Will properties。机械但面广。
-2. **RPC 一等公民** — 带 `responseTopic` 就自动临时订阅、按 `correlationData` 配对、显示往返延迟与超时。历史层字段已就绪。
-3. **多连接** — 单 client 槽 → `HashMap<connId, Connection>`。**建议单独一轮**：它会改所有控制台命令签名，且要先解决"历史与流量榜按连接归属"的语义问题，否则观测层会变糊。
+1. **RPC 一等公民** — 带 `responseTopic` 就自动临时订阅、按 `correlationData` 配对、显示往返延迟与超时。历史层字段已就绪。
+2. **多连接** — 单 client 槽 → `HashMap<connId, Connection>`。**建议单独一轮**：它会改所有控制台命令签名，且要先解决"历史与流量榜按连接归属"的语义问题，否则观测层会变糊。
+3. **B2 的收尾** — 入站主题别名的线上取证（目前依据是 rumqttc 源码，见 §4.9）；桥接 user-property 的字节级复核。
 4. **C2 的收尾** — C2b 保存的定时任务（当前任务只在会话内活着，重启不恢复）；C2c 定时任务的 CBOR 编码（缺 Rust 编码器，现在明确拒绝而非静默降级）。
+5. **压测吞吐开关** — 允许压测不镜像 feed/历史；否则"高压"下实测只有 ~315 msg/s（见 §5.5）。
 
 ### 明确不做
 Web 版、CLI、云同步、AI Copilot、独立设备模拟器 GUI。

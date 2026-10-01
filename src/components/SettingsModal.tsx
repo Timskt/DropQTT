@@ -319,10 +319,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Protocol Version & Clean Session */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={LABEL} style={LABEL_COLOR}>
+              <label htmlFor="dropqtt-protocol-version" className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" style={{ color: 'var(--violet)' }} /><span>{t.protocolVersion}</span></span>
               </label>
-              <select value={form.protocolVersion ?? 3} onChange={(e) => { setForm({ ...form, protocolVersion: parseInt(e.target.value) }); setTestResult(null); }} className="field-input w-full">
+              <select
+                id="dropqtt-protocol-version"
+                value={form.protocolVersion ?? 3}
+                onChange={(e) => { setForm({ ...form, protocolVersion: parseInt(e.target.value) }); setTestResult(null); }}
+                className="field-input w-full"
+              >
                 <option value={3} style={OPT_STYLE}>{t.mqttV311}</option>
                 <option value={5} style={OPT_STYLE}>{t.mqttV5}</option>
               </select>
@@ -372,6 +377,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {t.willRetain}
                 </label>
               </div>
+              {/* v5-only session/will properties. Left empty they stay off the wire,
+                  which is what a v3.1.1-compatible CONNECT looks like. */}
+              {form.protocolVersion === 5 && (
+                <div className="col-span-2 grid grid-cols-3 gap-2">
+                  <div>
+                    <label htmlFor="dropqtt-session-expiry" className={LABEL} style={LABEL_COLOR} title={t.sessionExpiryHint}>
+                      {t.sessionExpiry}
+                    </label>
+                    <input
+                      id="dropqtt-session-expiry"
+                      type="number" min={0} className="field-input w-full"
+                      value={form.sessionExpirySecs ?? ''}
+                      placeholder="—"
+                      onChange={(e) => setForm({ ...form, sessionExpirySecs: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-delay" className={LABEL} style={LABEL_COLOR}>{t.willDelay}</label>
+                    <input
+                      id="dropqtt-will-delay"
+                      type="number" min={0} className="field-input w-full"
+                      value={form.willDelaySecs ?? ''}
+                      placeholder="—"
+                      onChange={(e) => setForm({ ...form, willDelaySecs: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-content-type" className={LABEL} style={LABEL_COLOR}>{t.willContentType}</label>
+                    <input
+                      id="dropqtt-will-content-type"
+                      type="text" className="field-input w-full font-mono"
+                      value={form.willContentType || ''}
+                      placeholder="application/json"
+                      onChange={(e) => setForm({ ...form, willContentType: e.target.value || undefined })}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             {form.useTls && (
               <div className="grid grid-cols-1 gap-2 pt-2" style={{ borderTop: '1px solid var(--border-inset)' }}>

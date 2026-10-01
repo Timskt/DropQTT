@@ -498,7 +498,7 @@ impl BridgeManager {
         let handle = tokio::spawn(async move {
             while !flag.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
-                    NetEvent::Connected => {
+                    NetEvent::Connected(_) => {
                         let first = !connected.swap(true, Ordering::SeqCst);
                         this.set_conn_error(&conn_id, None).await;
                         // Re-apply rule-driven subscriptions after (re)CONNACK
@@ -701,7 +701,8 @@ impl BridgeManager {
                 && (publish.content_type.is_some()
                     || !publish.user_properties.is_empty()
                     || publish.response_topic.is_some()
-                    || publish.correlation_data.is_some())
+                    || publish.correlation_data.is_some()
+                    || publish.payload_format.is_some())
             {
                 Some(PubProperties {
                     content_type: publish.content_type.clone(),
@@ -709,6 +710,12 @@ impl BridgeManager {
                     message_expiry: None,
                     response_topic: publish.response_topic.clone(),
                     correlation_data: publish.correlation_data.clone(),
+                    // The payload-format flag describes the bytes themselves, so it
+                    // survives a hop. A topic alias is only meaningful within the
+                    // connection that registered it, so it is deliberately not
+                    // forwarded: the target link has its own alias space.
+                    payload_format: publish.payload_format,
+                    topic_alias: None,
                 })
             } else {
                 None

@@ -123,6 +123,9 @@ impl HistoryStore {
                 user_properties: m.user_properties.clone(),
                 response_topic: m.response_topic.clone(),
                 correlation_data: m.correlation_data.clone(),
+                // Kept so a replayed message declares the same payload format the
+                // broker originally delivered it with.
+                payload_format: m.payload_format,
                 ..Default::default()
             };
             let _ = conn.execute(
@@ -292,6 +295,7 @@ mod tests {
             truncated: false,
             content_type: None,
             user_properties: Vec::new(),
+            payload_format: None,
             response_topic: None,
             correlation_data: None,
             qos: 1,

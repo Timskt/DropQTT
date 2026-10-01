@@ -153,6 +153,15 @@
 - **载荷小于 15 字节时不强塞头部**：保持用户要求的字节数，代价是这一轮没有延迟样本，界面显示 `timed 0` 而不是显示 0 ms 骗人。
 - **进度是 500 ms 一次的事件 + 面板 1 s 轮询**，20k msg/s 也不会产生每条一个 IPC。
 
+### 3.8 MQTT5 协议字段补全（第四轮，2026-10-01）
+
+- **发布侧新增**：Payload Format Indicator（0=字节流 / 1=UTF-8 / 不设置=属性完全不上线）、Topic Alias。二者与原有 content-type / message-expiry / response-topic / correlation-data / user properties 一起进 v5 属性面板。
+- **连接侧新增**：`Session-Expiry-Interval`（走 CONNECT properties，rumqttc 没有专用 setter，因此对 `connect_properties()` 读-改-写，避免覆盖已设的 max-packet-size）、`Will Delay Interval`、遗嘱 `Content-Type`。
+- **入站可见性**：`NormalizedPublish` 与 `MqttGenericMessage` 带上 `payload_format`，控制台用 `UTF-8`/`BYTES` 徽标显示**发布方声明**的格式（与"我们从字节猜出来的"区分开），并随历史 properties 一起入库，重放时保持同一声明。
+- **主题别名受 broker 通告上限约束**（本轮最重要的发现，见 §4.9）：CONNACK 的 `topic-alias-maximum` 为 0 时硬发别名，rumqttc 会当协议错误**把整条连接拆掉**。现在在 `publish_console` 前置校验，返回可读错误而连接不受牵连。
+- **桥接的转发策略**：`content-type`/`user-properties`/`response-topic`/`correlation-data`/`payload-format` 跨跳转发；**主题别名故意不转发** —— 别名只在单条连接内有意义，链到另一条连接上就是错的。
+- 遗嘱属性、Session-Expiry 在 v3.1.1 连接上不渲染（界面按 `protocolVersion === 5` 收敛）。
+
 ## 4. 验证矩阵（哪些真跑过）
 
 | 项目 | 命令 | 结果 | 说明 |
@@ -295,6 +304,28 @@ Playwright 用例通过 `window.__TAURI_INTERNALS__` 桩替换了 IPC，它证�
 1. 第一版 `elapsedMs` 对已结束的运行仍在增长，看起来像"跑不完"。改为进入终态时记下 `finished_ms`，并补了"停止后 elapsed 与 sent 都不再变化"的单测。
 2. 我一度判定"停止后还在发布"是漏杀任务。但那次比较的两个数跨过了 stop 的 CDP 往返（一次 `get_topic_stats` 就要几百毫秒），增长发生在 stop **之前**。改成"只在 stop 返回之后取两个样本"重测，增量为 0。**结论：是测量口径错了，不是代码错了** —— 而只有把 broker 侧计数拉进来做交叉验证，才分得清这两件事。
 
+### 4.9 v5 属性的线上取证
+
+`mosquitto_sub -d` 只打印包络行，**不打印 v5 属性**，所以它当不了这轮的证人。改用一个只说最小 MQTT5 的本地 TCP sink（127.0.0.1:18832），把属性字节段解出来。
+
+**先证明证人可信**：用 `mosquitto_pub` 作参考编码器 —— `-D publish payload-format-indicator 1 -D publish topic-alias 7 -D publish content-type text/plain -D publish message-expiry-interval 60` 后，sink 输出 `payload-format-indicator=1 topic-alias=7 content-type=text/plain message-expiry-interval=60`；`mosquitto_sub -x 120` 的 CONNECT 解出 `receive-maximum=20`（mosquitto 默认值，说明属性块边界算对了）。第一轮我还写错过：把固定头里的 dup/qos/retain 当成变量头首字节、v5 CONNACK/SUBACK 少写属性长度字节 —— 都是参考客户端当场逼出来的。
+
+应用自己的字节：
+
+| 字段 | sink 解出 |
+| --- | --- |
+| CONNECT · Session-Expiry | `session-expiry-interval=120` |
+| CONNECT · 遗嘱 | `topic=lab/will/exit payload=gone-dark qos=1 retain=0` |
+| CONNECT · 遗嘱属性 | `will-delay-interval=5 content-type=text/plain` |
+| PUBLISH · 声明 UTF-8 | `payload-format-indicator=1 message-expiry-interval=45` |
+| PUBLISH · 声明字节流 | `payload-format-indicator=0`（0 与"不设置"是两件事） |
+| PUBLISH · 什么都不设 | `publish properties: (none)` |
+
+**主题别名：一次真实的静默故障。** 对着通告"不支持别名"的 sink 发 `topicAlias: 7`，`publish_console` **返回成功但连接直接掉线**（rumqttc 把它当协议错误拆链）。现在 `publish_console` 先按 CONNACK 的 `topic-alias-maximum` 判定：
+`rejected(broker announced no topic-alias support; cannot send alias 7 (clear it to publish))`，且 `connected: true` —— 错误可读、连接无恙。
+
+**取证边界（不夸大）**：sink 的属性表对我暂时不关心的后续属性仍会错位（它把一个 user property 印成了 `reason-string=trace`），所以本表只列参考客户端已验证正确的字段。**入站别名解析未做线上验证**：依据是 `rumqttc-0.24.0/src/v5/state.rs:315-331` 在把包交给我们先就把 `publish.topic` 补全了，因此我们的控制台天然看到真实主题 —— 这是读源码得到的结论，不是跑出来的。
+
 ## 5. 已知限制（必须如实告知）
 
 ### 5.1 环境：本机 MSVC 不可用，但 gnu 可以完整跑起应用
@@ -351,14 +382,15 @@ error: linking with `link.exe` failed
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。
 > 上一轮的第 1、2 项（C2 后端定时发布、D1 压测台补齐）**已在第四轮完成并真机验证**，见 §3.6、§3.7 与 §4.7、§4.8。
+> 本轮第 3 项（B2 协议字段补全）同样已完成并做了线上取证，见 §3.8 与 §4.9。
 > MQTTX 对标的完整差距分析与排序见 `docs/ROADMAP_vs_MQTTX.md`。
 
 按性价比排序：
 
-1. **B2 协议字段补全**：Payload Format Indicator / Topic Alias / Session-Expiry / v5 Will properties。
-2. **RPC 一等公民**：带 `responseTopic` 自动临时订阅应答主题、按 `correlationData` 配对、显示往返延迟与超时。
-3. **压测吞吐开关**：允许压测运行不镜像到 feed/历史，把 §5.5 的实测 ~315 msg/s 提到通道上限；同时才有资格谈 P50/P95/P99 的"高压下"版本。
-4. **多连接**：单 client 槽 → `HashMap<connId, Connection>`。建议单独一轮，需先定"历史与流量榜按连接归属"的语义。
+1. **RPC 一等公民**：带 `responseTopic` 自动临时订阅应答主题、按 `correlationData` 配对、显示往返延迟与超时。
+2. **压测吞吐开关**：允许压测运行不镜像到 feed/历史，把 §5.5 的实测 ~315 msg/s 提到通道上限；同时才有资格谈"高压下"的 P50/P95/P99。
+3. **多连接**：单 client 槽 → `HashMap<connId, Connection>`。建议单独一轮，需先定"历史与流量榜按连接归属"的语义。
+4. **B2 的收尾**：入站主题别名的线上验证（目前只有源码依据，见 §4.9）；桥接对 user-property 转发的字节级复核。
 5. **C2b 保存的定时任务**：把任务定义（不只是节奏默认值）持久化，支持"启动时自动恢复"。
 6. **C2c 定时任务的 CBOR 编码**：需要一个 Rust CBOR 编码器；在那之前界面明确拒绝，不做静默降级。
 7. **Webhook 可选可靠性**：失败落盘重投（N 次 / M 秒退避），明确它是本地文件队列而非消息中间件。

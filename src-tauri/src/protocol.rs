@@ -35,6 +35,17 @@ pub struct BrokerConfig {
     pub will_qos: u8,
     #[serde(default)]
     pub will_retain: bool,
+    /// MQTT5 Will Delay Interval (seconds): how long the broker waits to publish
+    /// the will after the session actually ends
+    #[serde(default)]
+    pub will_delay_secs: Option<u32>,
+    /// MQTT5 content type declared by the will message
+    #[serde(default)]
+    pub will_content_type: Option<String>,
+    /// MQTT5 Session-Expiry-Interval on CONNECT (seconds). `None` keeps the
+    /// protocol default, which is 0 when clean start is used.
+    #[serde(default)]
+    pub session_expiry_secs: Option<u32>,
     // ---- mTLS / custom trust ----
     /// PEM CA bundle path for server verification (empty => system root store)
     #[serde(default)]
@@ -71,6 +82,9 @@ impl Default for BrokerConfig {
             will_payload: None,
             will_qos: 0,
             will_retain: false,
+            will_delay_secs: None,
+            will_content_type: None,
+            session_expiry_secs: None,
             tls_ca_path: None,
             tls_client_cert_path: None,
             tls_client_key_path: None,
@@ -181,6 +195,14 @@ pub struct PubProperties {
     /// MQTT5 Correlation Data (UTF-8 string on the UI, bytes on the wire)
     #[serde(default)]
     pub correlation_data: Option<String>,
+    /// MQTT5 Payload Format Indicator: 0 = unspecified bytes, 1 = UTF-8 encoded.
+    /// `None` leaves the flag off the wire entirely.
+    #[serde(default)]
+    pub payload_format: Option<u8>,
+    /// MQTT5 Topic Alias. Aliases are meaningful per connection, so this is a
+    /// per-message marker rather than a client-managed alias table.
+    #[serde(default)]
+    pub topic_alias: Option<u16>,
 }
 
 /// Console publish request with raw binary payload (base64 on the wire)
@@ -214,6 +236,9 @@ pub struct MqttGenericMessage {
     pub response_topic: Option<String>,
     #[serde(default)]
     pub correlation_data: Option<String>,
+    /// Payload Format Indicator the publisher declared (v5 only)
+    #[serde(default)]
+    pub payload_format: Option<u8>,
     pub qos: u8,
     pub retain: bool,
     pub timestamp: String,

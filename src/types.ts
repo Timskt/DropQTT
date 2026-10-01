@@ -19,6 +19,12 @@ export interface BrokerConfig {
   willPayload?: string;
   willQos?: number;
   willRetain?: boolean;
+  /** MQTT5 Will Delay Interval (seconds); absent keeps the property off the wire */
+  willDelaySecs?: number;
+  /** MQTT5 content type declared by the will message */
+  willContentType?: string;
+  /** MQTT5 Session-Expiry-Interval on CONNECT (seconds) */
+  sessionExpirySecs?: number;
   // ---- mTLS / custom trust (PEM file paths) ----
   tlsCaPath?: string;
   tlsClientCertPath?: string;
@@ -77,6 +83,8 @@ export interface MqttGenericMessage {
   userProperties?: [string, string][];
   responseTopic?: string;
   correlationData?: string;
+  /** MQTT5 Payload Format Indicator as published: 0 = bytes, 1 = UTF-8 */
+  payloadFormat?: number;
   qos: number;
   retain: boolean;
   timestamp: string;
@@ -92,6 +100,10 @@ export interface PubProperties {
   messageExpiry?: number;
   responseTopic?: string;
   correlationData?: string;
+  /** MQTT5 Payload Format Indicator: 0 = bytes, 1 = UTF-8, undefined = unset */
+  payloadFormat?: number;
+  /** MQTT5 Topic Alias (1..65535) */
+  topicAlias?: number;
 }
 
 export interface ConsolePublishParams {

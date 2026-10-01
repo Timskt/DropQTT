@@ -88,13 +88,16 @@ pub struct NormalizedPublish {
     pub user_properties: Vec<(String, String)>,
     pub response_topic: Option<String>,
     pub correlation_data: Option<String>,
+    /// MQTT5 Payload Format Indicator as the publisher declared it
+    pub payload_format: Option<u8>,
 }
 
 /// Normalized eventloop notifications.
 #[derive(Debug)]
 pub enum NetEvent {
-    /// CONNACK received (initial connect or automatic reconnect)
-    Connected,
+    /// CONNACK received (initial connect or automatic reconnect). Carries the
+    /// broker's `topic-alias-maximum`, which bounds the aliases we may send.
+    Connected(u16),
     /// Transport-level failure; rumqttc keeps retrying on the next poll
     ConnectionError(String),
     /// Incoming publish packet
@@ -158,6 +161,76 @@ fn qos_to_u8_v5(q: rumqttc::v5::mqttbytes::QoS) -> u8 {
     }
 }
 
+/// UI publish properties → the wire struct. Empty strings are dropped rather
+/// than sent, because a zero-length property is a different statement from an
+/// absent one.
+fn v5_publish_properties(p: &PubProperties) -> rumqttc::v5::mqttbytes::v5::PublishProperties {
+    rumqttc::v5::mqttbytes::v5::PublishProperties {
+        // 0 (ByteStream) and 1 (UTF-8) are the only defined values; anything else
+        // would be a protocol error, so it stays off the wire.
+        payload_format_indicator: p.payload_format.filter(|v| *v <= 1),
+        // Alias 0 is not assignable, and an unset alias must not register every
+        // topic under 0.
+        topic_alias: p.topic_alias.filter(|a| *a > 0),
+        content_type: p.content_type.clone(),
+        user_properties: p.user_properties.clone(),
+        message_expiry_interval: p.message_expiry,
+        response_topic: p
+            .response_topic
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        correlation_data: p
+            .correlation_data
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| Bytes::copy_from_slice(s.as_bytes())),
+        ..Default::default()
+    }
+}
+
+/// Reject a topic alias the broker would refuse. Sending one anyway is a
+/// protocol violation that rumqttc reports by tearing the connection down, so a
+/// silent publish failure would look like the app dropping the link.
+pub fn alias_rejection(alias: Option<u16>, broker_max: u16) -> Option<String> {
+    let alias = alias.filter(|a| *a > 0)?;
+    if broker_max == 0 {
+        return Some(format!(
+            "broker announced no topic-alias support; cannot send alias {alias} (clear it to publish)"
+        ));
+    }
+    (alias > broker_max).then(|| {
+        format!("broker allows topic aliases up to {broker_max}, not {alias} (clear it to publish)")
+    })
+}
+
+/// v5 will properties from the connection config. `None` keeps the will packet
+/// property-free, which is what a v3.1.1-style will looks like on the wire.
+fn will_properties(
+    config: &BrokerConfig,
+) -> Option<rumqttc::v5::mqttbytes::v5::LastWillProperties> {
+    let delay = config.will_delay_secs.filter(|d| *d > 0);
+    let content_type = config
+        .will_content_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    if delay.is_none() && content_type.is_none() {
+        return None;
+    }
+    Some(rumqttc::v5::mqttbytes::v5::LastWillProperties {
+        delay_interval: delay,
+        payload_format_indicator: None,
+        message_expiry_interval: None,
+        content_type,
+        response_topic: None,
+        correlation_data: None,
+        user_properties: Vec::new(),
+    })
+}
+
 /// Build a fresh client + eventloop pair for the given broker config.
 pub fn build_connection(config: &BrokerConfig) -> Result<(MqttClient, MqttEventLoop), String> {
     let transport = build_transport(config)?;
@@ -178,11 +251,21 @@ pub fn build_connection(config: &BrokerConfig) -> Result<(MqttClient, MqttEventL
                 config.will_payload.clone().unwrap_or_default(),
                 qos_from_u8_v5(config.will_qos),
                 config.will_retain,
-                None,
+                will_properties(config),
             ));
         }
         if let Some(transport) = transport {
             opts.set_transport(transport);
+        }
+        // Session-Expiry-Interval rides on CONNECT properties and rumqttc has no
+        // dedicated setter for it. Read-modify-write, because `set_max_packet_size`
+        // above already populated this same struct.
+        if let Some(secs) = config.session_expiry_secs {
+            let mut props = opts
+                .connect_properties()
+                .unwrap_or_default();
+            props.session_expiry_interval = Some(secs);
+            opts.set_connect_properties(props);
         }
 
         let (client, eventloop) = rumqttc::v5::AsyncClient::new(opts, 100);
@@ -230,23 +313,7 @@ impl MqttClient {
                 .await
                 .map_err(|e| format!("{:?}", e)),
             MqttClient::V5(client) => {
-                let v5_props = props.map(|p| rumqttc::v5::mqttbytes::v5::PublishProperties {
-                    content_type: p.content_type.clone(),
-                    user_properties: p.user_properties.clone(),
-                    message_expiry_interval: p.message_expiry,
-                    response_topic: p
-                        .response_topic
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string),
-                    correlation_data: p
-                        .correlation_data
-                        .as_deref()
-                        .filter(|s| !s.is_empty())
-                        .map(|s| Bytes::copy_from_slice(s.as_bytes())),
-                    ..Default::default()
-                });
+                let v5_props = props.map(v5_publish_properties);
                 match v5_props {
                     Some(vp) => client
                         .publish_with_properties(
@@ -328,7 +395,7 @@ impl MqttEventLoop {
     pub async fn poll(&mut self) -> NetEvent {
         match self {
             MqttEventLoop::V3(loop3) => match loop3.poll().await {
-                Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => NetEvent::Connected,
+                Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => NetEvent::Connected(0),
                 Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(p))) => {
                     NetEvent::Publish(NormalizedPublish {
                         topic: p.topic,
@@ -339,6 +406,7 @@ impl MqttEventLoop {
                         user_properties: Vec::new(),
                         response_topic: None,
                         correlation_data: None,
+                        payload_format: None,
                     })
                 }
                 Ok(rumqttc::Event::Incoming(
@@ -348,11 +416,16 @@ impl MqttEventLoop {
                 Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
             },
             MqttEventLoop::V5(loop5) => match loop5.poll().await {
-                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(_))) => {
-                    NetEvent::Connected
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(a))) => {
+                    NetEvent::Connected(
+                        a.properties
+                            .as_ref()
+                            .and_then(|p| p.topic_alias_max)
+                            .unwrap_or(0),
+                    )
                 }
                 Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(p))) => {
-                    let (content_type, user_properties, response_topic, correlation_data) =
+                    let (content_type, user_properties, response_topic, correlation_data, payload_format) =
                         match p.properties {
                             Some(vp) => (
                                 vp.content_type,
@@ -361,8 +434,9 @@ impl MqttEventLoop {
                                 vp.correlation_data
                                     .as_deref()
                                     .map(|b| String::from_utf8_lossy(b).to_string()),
+                                vp.payload_format_indicator,
                             ),
-                            None => (None, Vec::new(), None, None),
+                            None => (None, Vec::new(), None, None, None),
                         };
                     NetEvent::Publish(NormalizedPublish {
                         topic: String::from_utf8_lossy(&p.topic).to_string(),
@@ -373,6 +447,7 @@ impl MqttEventLoop {
                         user_properties,
                         response_topic,
                         correlation_data,
+                        payload_format,
                     })
                 }
                 Ok(rumqttc::v5::Event::Incoming(
@@ -407,8 +482,91 @@ mod tests {
     }
 
     #[test]
-    fn plain_tcp_and_default_tls_stay_valid() {
-        // No TLS at all, and TLS trusting the system store, are both intentional.
+    fn topic_aliases_are_gated_by_what_the_broker_announced() {
+        // A CONNACK without the property means "no aliases at all", and sending
+        // one anyway kills the connection at the protocol layer.
+        assert_eq!(alias_rejection(None, 0), None);
+        assert_eq!(alias_rejection(Some(0), 0), None, "alias 0 is not sent");
+        assert!(alias_rejection(Some(3), 0).unwrap().contains("no topic-alias support"));
+        assert!(alias_rejection(Some(3), 2).unwrap().contains("up to 2"));
+        assert_eq!(alias_rejection(Some(2), 2), None, "the limit is inclusive");
+        assert_eq!(alias_rejection(Some(10), 65535), None);
+    }
+
+    #[test]
+    fn publish_properties_only_carry_what_the_ui_set() {
+        let empty = v5_publish_properties(&PubProperties::default());
+        assert_eq!(empty.payload_format_indicator, None);
+        assert_eq!(empty.topic_alias, None);
+        assert_eq!(empty.content_type, None);
+        assert_eq!(empty.correlation_data, None);
+
+        // ByteStream is a real statement (0), not "absent".
+        let bytes = v5_publish_properties(&PubProperties {
+            payload_format: Some(0),
+            topic_alias: Some(3),
+            response_topic: Some("   ".into()),
+            correlation_data: Some(String::new()),
+            message_expiry: Some(60),
+            ..Default::default()
+        });
+        assert_eq!(bytes.payload_format_indicator, Some(0));
+        assert_eq!(bytes.topic_alias, Some(3), "alias 3 is assignable");
+        assert_eq!(bytes.response_topic, None, "blank is not a topic");
+        assert_eq!(bytes.correlation_data, None);
+        assert_eq!(bytes.message_expiry_interval, Some(60));
+
+        // Out-of-range values stay off the wire instead of corrupting the packet.
+        assert_eq!(
+            v5_publish_properties(&PubProperties {
+                payload_format: Some(7),
+                topic_alias: Some(0),
+                ..Default::default()
+            })
+            .payload_format_indicator,
+            None
+        );
+        assert_eq!(
+            v5_publish_properties(&PubProperties {
+                payload_format: Some(7),
+                topic_alias: Some(0),
+                ..Default::default()
+            })
+            .topic_alias,
+            None
+        );
+    }
+
+    #[test]
+    fn will_properties_are_omitted_until_the_v5_fields_are_used() {
+        let mut c = cfg();
+        c.will_topic = Some("device/offline".into());
+        c.will_payload = Some("bye".into());
+        assert!(will_properties(&c).is_none(), "a plain v3-style will stays bare");
+
+        c.will_delay_secs = Some(0);
+        assert!(will_properties(&c).is_none(), "delay 0 is the protocol default");
+
+        c.will_delay_secs = Some(30);
+        let w = will_properties(&c).expect("delay produces properties");
+        assert_eq!(w.delay_interval, Some(30));
+        assert_eq!(w.content_type, None);
+
+        c.will_content_type = Some("  ".into());
+        assert_eq!(
+            will_properties(&c).expect("still has the delay").content_type,
+            None,
+            "blank content type is not a media type"
+        );
+        c.will_content_type = Some("application/json".into());
+        assert_eq!(
+            will_properties(&c).expect("both set").content_type.as_deref(),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn plain_tcp_and_default_tls_stay_valid() {        // No TLS at all, and TLS trusting the system store, are both intentional.
         assert!(build_transport(&cfg()).unwrap().is_none());
         let mut tls = cfg();
         tls.use_tls = true;

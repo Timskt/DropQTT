@@ -440,6 +440,14 @@ export interface Translations {
   responseTopicHint: string;
   correlationDataLabel: string;
   correlationDataHint: string;
+  sessionExpiry: string;
+  sessionExpiryHint: string;
+  willDelay: string;
+  willContentType: string;
+  payloadFormatHint: string;
+  payloadFormatUnset: string;
+  topicAliasLabel: string;
+  topicAliasHint: string;
   addProperty: string;
   propertyKey: string;
   propertyValue: string;
@@ -917,6 +925,14 @@ export const translations: Record<Language, Translations> = {
     responseTopicHint: 'RPC 请求：应答发到此主题',
     correlationDataLabel: '关联数据 (Correlation Data)',
     correlationDataHint: 'RPC 请求：应答会原样带回此值以匹配请求',
+    sessionExpiry: '会话过期 (秒)',
+    sessionExpiryHint: 'MQTT5 Session-Expiry-Interval：断线后 broker 保留会话与离线 QoS1/2 消息的时长；留空表示不发该属性',
+    willDelay: '遗嘱延迟 (秒)',
+    willContentType: '遗嘱 Content-Type',
+    payloadFormatHint: 'MQTT5 Payload Format Indicator：0=字节流，1=UTF-8；不设置则不发送该属性',
+    payloadFormatUnset: 'PFI · 不设置',
+    topicAliasLabel: '主题别名 (Topic Alias)',
+    topicAliasHint: 'MQTT5 主题别名按连接有效，且受 broker 在 CONNACK 里通告的 topic-alias-maximum 限制；超出会被拒绝而不是断线。首个带别名的发布必须同时带完整主题',
     addProperty: '添加属性',
     propertyKey: '键',
     propertyValue: '值',
@@ -1392,6 +1408,14 @@ export const translations: Record<Language, Translations> = {
     responseTopicHint: 'RPC request: the reply is published to this topic',
     correlationDataLabel: 'Correlation Data',
     correlationDataHint: 'RPC request: echoed back verbatim in the reply to match it',
+    sessionExpiry: 'Session expiry (s)',
+    sessionExpiryHint: 'MQTT5 Session-Expiry-Interval: how long the broker keeps the session and offline QoS1/2 messages after a drop; empty sends no property',
+    willDelay: 'Will delay (s)',
+    willContentType: 'Will content type',
+    payloadFormatHint: 'MQTT5 Payload Format Indicator: 0 = bytes, 1 = UTF-8; unset keeps the property off the wire',
+    payloadFormatUnset: 'PFI · unset',
+    topicAliasLabel: 'Topic alias',
+    topicAliasHint: 'MQTT5 topic aliases are per-connection and capped by the topic-alias-maximum the broker announces in CONNACK; an oversized one is rejected rather than dropping the link. The first publish that assigns an alias must also carry the full topic',
     addProperty: 'Add Property',
     propertyKey: 'Key',
     propertyValue: 'Value',
@@ -1867,6 +1891,14 @@ export const translations: Record<Language, Translations> = {
     responseTopicHint: 'RPC 請求：應答發布到此主題',
     correlationDataLabel: '關聯資料 (Correlation Data)',
     correlationDataHint: 'RPC 請求：應答會原樣帶回此值以對應請求',
+    sessionExpiry: '工作階段過期 (秒)',
+    sessionExpiryHint: 'MQTT5 Session-Expiry-Interval：斷線後 broker 保留工作階段與離線 QoS1/2 訊息的時間；留空表示不傳送該屬性',
+    willDelay: '遺囑延遲 (秒)',
+    willContentType: '遺囑 Content-Type',
+    payloadFormatHint: 'MQTT5 Payload Format Indicator：0=位元組流，1=UTF-8；不設定則不傳送該屬性',
+    payloadFormatUnset: 'PFI · 不設定',
+    topicAliasLabel: '主題別名 (Topic Alias)',
+    topicAliasHint: 'MQTT5 主題別名以連線為單位，且受 broker 在 CONNACK 通告的 topic-alias-maximum 限制；超出會被拒絕而非斷線。首次帶別名的發布必須同時帶完整主題',
     addProperty: '新增屬性',
     propertyKey: '鍵',
     propertyValue: '值',
@@ -2342,6 +2374,14 @@ export const translations: Record<Language, Translations> = {
     responseTopicHint: 'RPC リクエスト：応答はこのトピックに公開されます',
     correlationDataLabel: '相関データ (Correlation Data)',
     correlationDataHint: 'RPC リクエスト：応答にこの値がそのまま返され対応付けます',
+    sessionExpiry: 'セッション有効期間 (秒)',
+    sessionExpiryHint: 'MQTT5 Session-Expiry-Interval：切断後にブローカーがセッションとオフライン QoS1/2 メッセージを保持する時間。空ならプロパティを送りません',
+    willDelay: 'Will 遅延 (秒)',
+    willContentType: 'Will Content-Type',
+    payloadFormatHint: 'MQTT5 Payload Format Indicator：0=バイト列、1=UTF-8。未設定ならプロパティは送信されません',
+    payloadFormatUnset: 'PFI · 未設定',
+    topicAliasLabel: 'トピックエイリアス',
+    topicAliasHint: 'MQTT5 のトピックエイリアスは接続単位で、CONNACK でブローカーが通告する topic-alias-maximum が上限です。超過は接続断ではなくエラーで拒否されます',
     addProperty: 'プロパティ追加',
     propertyKey: 'キー',
     propertyValue: '値',

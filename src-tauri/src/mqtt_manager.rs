@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -178,6 +178,9 @@ pub struct MqttManager {
     incoming_transfers: Mutex<HashMap<String, IncomingTransfer>>,
     outgoing_transfers: Mutex<HashMap<String, ActiveOutgoing>>,
     is_connected: AtomicBool,
+    /// `topic-alias-maximum` from the latest CONNACK; 0 means the broker takes no
+    /// aliases, so an alias on a publish would be a protocol violation.
+    broker_alias_max: AtomicU16,
 }
 
 impl Default for MqttManager {
@@ -212,6 +215,7 @@ impl MqttManager {
             incoming_transfers: Mutex::new(HashMap::new()),
             outgoing_transfers: Mutex::new(HashMap::new()),
             is_connected: AtomicBool::new(false),
+            broker_alias_max: AtomicU16::new(0),
         }
     }
 
@@ -322,7 +326,7 @@ impl MqttManager {
                 r = eventloop.poll() => r,
             };
             match result {
-                NetEvent::Connected => {
+                NetEvent::Connected(_) => {
                     let latency = start.elapsed().as_millis() as u64;
                     client.disconnect().await;
                     return Ok(latency);
@@ -359,7 +363,8 @@ impl MqttManager {
             // runs on its own task so batch serialization never blocks keepalive.
             while !flag.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
-                    NetEvent::Connected => {
+                    NetEvent::Connected(alias_max) => {
+                        this.broker_alias_max.store(alias_max, Ordering::SeqCst);
                         // Start every silence timer from now: a gap while we were
                         // disconnected is our own outage, not the device's.
                         this.silence_watchdog
@@ -483,6 +488,7 @@ impl MqttManager {
 
     pub async fn disconnect(&self) {
         self.is_connected.store(false, Ordering::SeqCst);
+        self.broker_alias_max.store(0, Ordering::SeqCst);
         // Disarm so the outage we are about to cause is not reported as the
         // device having gone quiet.
         self.silence_watchdog.set_connected(false, 0);
@@ -914,6 +920,14 @@ impl MqttManager {
             .await
             .clone()
             .ok_or_else(|| "MQTT client not connected".to_string())?;
+        // Check the broker's advertised limit first: rumqttc treats an oversized
+        // alias as a protocol violation and drops the whole connection for it.
+        if let Some(err) = crate::transport::alias_rejection(
+            params.properties.topic_alias,
+            self.broker_alias_max.load(Ordering::SeqCst),
+        ) {
+            return Err(err);
+        }
 
         let payload = base64::engine::general_purpose::STANDARD
             .decode(params.payload_base64.as_bytes())
@@ -926,6 +940,8 @@ impl MqttManager {
             || params.properties.message_expiry.is_some()
             || params.properties.response_topic.is_some()
             || params.properties.correlation_data.is_some()
+            || params.properties.payload_format.is_some()
+            || params.properties.topic_alias.is_some()
         {
             Some(params.properties.clone())
         } else {
@@ -955,6 +971,7 @@ impl MqttManager {
             user_properties: params.properties.user_properties.clone(),
             response_topic: params.properties.response_topic.clone(),
             correlation_data: params.properties.correlation_data.clone(),
+            payload_format: params.properties.payload_format,
             qos: params.qos,
             retain: params.retain,
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
@@ -1137,6 +1154,7 @@ impl MqttManager {
                 user_properties: publish.user_properties.clone(),
                 response_topic: publish.response_topic.clone(),
                 correlation_data: publish.correlation_data.clone(),
+                payload_format: publish.payload_format,
                 qos: publish.qos,
                 retain: publish.retain,
                 timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
