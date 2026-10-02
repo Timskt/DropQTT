@@ -36,7 +36,7 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
     }
   };
 
-  const cleanPrefix = subscribeTopic.trim().replace(/\/\#$/, '').replace(/\/\+$/, '');
+  const cleanPrefix = subscribeTopic.trim().replace(/\/#$/, '').replace(/\/\+$/, '');
 
   return (
     <div className="panel p-4 space-y-4">

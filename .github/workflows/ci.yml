@@ -31,6 +31,12 @@ jobs:
       - name: Typecheck
         run: pnpm exec tsc --noEmit
 
+      - name: Lint (tsc cannot see hook dependency and ref-during-render bugs)
+        # Threshold is today's exact warning count (all react-hooks/set-state-in-effect
+        # or purity, on polling hooks where it is idiomatic). Raising it must be a
+        # deliberate decision, and lowering it as the warnings get fixed.
+        run: pnpm run lint --max-warnings=10
+
       - name: Unit tests
         run: pnpm test
 

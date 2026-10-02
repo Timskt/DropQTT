@@ -8,7 +8,7 @@ import { useSyncExternalStore } from 'react';
  */
 const MAX_TOPICS = 200;
 
-let topics: string[] = []; // newest-first, unique
+const topics: string[] = []; // newest-first, unique
 let snapshot: string[] = topics;
 const listeners = new Set<() => void>();
 

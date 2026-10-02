@@ -87,14 +87,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
   useEffect(() => {
     if (isOpen) {
       setForm(config);
       setTestResult(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, config]);
 
   // Escape closes the dialog, Tab stays inside it, and focus returns on close.

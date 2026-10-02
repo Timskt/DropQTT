@@ -28,10 +28,10 @@ export function useMqttMessages(isConnected: boolean) {
   // Cumulative backend feed drops under overload (stats stay exact)
   const [feedDropped, setFeedDropped] = useState(0);
   const pausedRef = useRef(paused);
-  pausedRef.current = paused;
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
   const pendingRef = useRef<MqttGenericMessage[]>([]);
   const connectedRef = useRef(isConnected);
-  connectedRef.current = isConnected;
+  useEffect(() => { connectedRef.current = isConnected; }, [isConnected]);
 
   useEffect(() => {
     let disposed = false;
@@ -85,7 +85,7 @@ export function useMqttMessages(isConnected: boolean) {
 
   /** Current subscription list snapshot (for connect-time registration) */
   const subscriptionsRef = useRef(subscriptions);
-  subscriptionsRef.current = subscriptions;
+  useEffect(() => { subscriptionsRef.current = subscriptions; }, [subscriptions]);
 
   const addSubscription = useCallback(
     async (topic: string, qos: number, color?: string, options?: SubOptions) => {

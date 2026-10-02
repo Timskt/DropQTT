@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { looksLikeSenml, parseSenmlPack, senmlToTable } from '../../src/utils/senml';
 
 const NOW_MS = 1_700_000_000_000;
-const NOW_SEC = NOW_MS / 1000;
 
 describe('SenML base-field inheritance', () => {
   const pack = [

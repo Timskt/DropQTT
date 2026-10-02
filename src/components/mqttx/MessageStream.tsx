@@ -436,6 +436,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
           <button
             onClick={onTogglePaused}
             title={paused ? t.resumeFeed : t.pauseFeed}
+            aria-label={paused ? t.resumeFeed : t.pauseFeed}
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded text-[11px] border transition ${
               paused ? 'chip-warn !py-1.5 font-semibold' : ''
             }`}

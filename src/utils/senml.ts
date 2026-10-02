@@ -94,7 +94,7 @@ function joinName(base: string, local: unknown): string {
   return base.endsWith('/') ? base + n : base + n;
 }
 
-const NAME_SAFE = /^[A-Za-z0-9][A-Za-z0-9\-:.\/_]*$/;
+const NAME_SAFE = /^[A-Za-z0-9][A-Za-z0-9\-:./_]*$/;
 
 /** Parse a SenML pack into flat readings, or throw on unusable input. */
 export function parseSenmlPack(value: unknown, nowMs = Date.now()): SenmlResult {

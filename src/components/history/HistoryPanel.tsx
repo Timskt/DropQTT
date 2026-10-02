@@ -190,7 +190,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
 
   // Auto-refresh: keep the view live without hammering when off.
   const loadRef = useRef(load);
-  loadRef.current = load;
+  useEffect(() => { loadRef.current = load; }, [load]);
   useEffect(() => {
     if (!autoRefresh) return;
     const id = setInterval(() => loadRef.current(), 3000);

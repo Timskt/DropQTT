@@ -78,7 +78,7 @@ export function App() {
   // registry at connect time, messages need the connection flag.
   const getConsoleTopicsRef = useRef<() => { topic: string; qos: number }[]>(() => []);
   const subscribeTopicRef = useRef(subscribeTopic);
-  subscribeTopicRef.current = subscribeTopic;
+  useEffect(() => { subscribeTopicRef.current = subscribeTopic; }, [subscribeTopic]);
 
   const broker = useBroker({
     getTopicsToRegister: () => [
@@ -88,7 +88,7 @@ export function App() {
   });
 
   const mqtt = useMqttMessages(broker.isConnected);
-  getConsoleTopicsRef.current = mqtt.getTopicsToRegister;
+  useEffect(() => { getConsoleTopicsRef.current = mqtt.getTopicsToRegister; }, [mqtt.getTopicsToRegister]);
 
   // Persisted-history row count → drives the sidebar "报文历史" badge
   const historyCount = useHistoryCount(broker.isConnected);

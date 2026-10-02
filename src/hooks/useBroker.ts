@@ -44,7 +44,7 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const topicsRef = useRef(getTopicsToRegister);
-  topicsRef.current = getTopicsToRegister;
+  useEffect(() => { topicsRef.current = getTopicsToRegister; }, [getTopicsToRegister]);
 
   // Live status events
   useEffect(() => {

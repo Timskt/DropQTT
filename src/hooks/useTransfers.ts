@@ -14,7 +14,7 @@ import { prefersReducedMotion } from '../utils/motion';
 export function useTransfers() {
   const [transfers, setTransfers] = useState<Record<string, TransferProgress>>({});
   const transfersRef = useRef(transfers);
-  transfersRef.current = transfers;
+  useEffect(() => { transfersRef.current = transfers; }, [transfers]);
 
   // Same key and the same encoding as before (JSON booleans stringify to
   // 'true'/'false'), so existing settings are read without a migration.

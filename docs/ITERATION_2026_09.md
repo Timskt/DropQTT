@@ -513,6 +513,32 @@ P0-2 的计数**只有单元测试证明**（`storage_failure_is_not_reported_as
 
 **验证边界（如实说明）**：这批由新增 `tests/ui/ux-guards.spec.ts`（4 条）与全量门覆盖 —— UI **42/42**、单测 **29/29**、harness **95/95**、clippy 干净、`cargo build` 与 `npx vite build` 通过。**流量过滤没有做真机 92 主题取证**：我的冒烟脚本在 `connect_broker` 传了缺 `useTls` 的配置被后端直接拒绝（顺带说明后端参数校验是严格的），脚本在启动阶段就退了，所以这一项目前只有 mock 证据。
 
+### 4.19 ESLint 门禁落地（第八轮，2026-10-02）
+
+审计的 P1-6 是对的：`tsc` 看不见 hook 依赖数组与 render 期副作用，而这两类恰好是这个项目最容易"界面看起来对、实际拿到旧值"的错误来源。
+
+**装的是**：`eslint@10` + `@eslint/js` + `typescript-eslint@8` + `eslint-plugin-react-hooks@7` + `globals`。**必须用 pnpm**：CI 跑 `pnpm install --frozen-lockfile`，用 npm 装会只更新 `package-lock.json`，把 CI 直接打挂。本机 `pnpm` 的 shim 是坏的（`Failed to switch pnpm to v11.1.2`），可用的是 **`corepack pnpm`**（版本由 `packageManager` 字段决定，正好 11.1.2）。
+
+**规则分级（这一轮的判断）**：
+- `react-hooks/rules-of-hooks`、`react-hooks/exhaustive-deps`、`react-hooks/refs` = **error**。
+- `react-hooks/set-state-in-effect`、`react-hooks/purity` = **warn**。前者会在十几个"轮询钩子里 await 后 setState"的惯用写法上报警，后者盯的是 `Date.now()` 参与渲染；把它们设成 error 会换来十处无收益改写，换不到安全性。
+- `@typescript-eslint/no-explicit-any` 关掉：Tauri 事件负载与测试替身本来就是动态形状，强行加类型只是仪式。
+
+**首次运行 24 条 → 现在 0 error / 10 warn**，且**没有加一条 `eslint-disable`**：
+- 9 处 render 期写 ref（审计 P2-17 点名的就是这类）全部改成 `useRef(value)` + 就地 `useEffect` 写入。我先抽了个 `useLatestRef()` helper，结果 `exhaustive-deps` 立刻反过来要求把 helper 返回的 ref 列进依赖数组——规则**看不出自定义 hook 返回的是稳定 ref**，于是凭空多出 8 条误报。改回内联写法后误报归零。**结论：可读性 helper 会让静态规则瞎掉，这种抽象在这条边界上不值。**
+- 4 条真错：两处正则里的多余转义（`\/`、`\#`）、一处 `let` 应为 `const`、一处测试里未使用的常量。
+- 1 条**已经过期的 `eslint-disable-next-line`**（`SettingsModal` 的依赖数组早已补齐，注释还在替一条不存在的问题说话）——删掉。这正是禁用注释的长期风险：代码修好了，注释留下并继续遮蔽后来者。
+
+**真机验证**（lab broker + 单实例 CDP，覆盖被改写的三条运行时路径）：
+- 连接时订阅注册（`topicsRef`）：先订阅后连接 → `lint/ref/feed` 的报文进了控制台 ✓
+- 重连（换 clientId 重连）后原订阅仍生效（`subscriptionsRef`/`connectedRef`）：`lint/ref/again` 进feed ✓
+- 暂停/继续（`pausedRef`）：暂停期间的报文**不入屏**，点继续后**补出** ✓
+- 设置弹窗 Esc 关闭（`onCloseRef`）✓；历史面板载入 ✓
+
+顺带被真机逼出一个**可访问性缺陷**：暂停按钮在 paused 状态下把可及名换成了待读条数（`+3`），"继续接收"只活在 `title` 里，于是我的自动化定位不到它、屏幕阅读器也读不出它是干什么的。补了 `aria-label={paused ? t.resumeFeed : t.pauseFeed}`，徽标继续做视觉信息。
+
+**CI**：`frontend` job 在 typecheck 之后新增 `pnpm run lint --max-warnings=10`，阈值就是今天的告警数——**收紧要有人改代码，放宽要有人签字**。门：`eslint` 0 error / 10 warn、`tsc` 通过、vitest **29/29**、Playwright **42/42**、`vite build` 通过。
+
 ## 5. 已知限制（必须如实告知）
 
 ### 5.1 环境：本机 MSVC 不可用，但 gnu 可以完整跑起应用
@@ -589,7 +615,7 @@ error: linking with `link.exe` failed
 | **P1-5 `releaseDraft: false`** | 成立。但它改的是**你的发布流程**：改成草稿后 updater 何时可见需要一个人工/CI 确认步骤。我不替你决定发布节奏。 |
 | **P1-4 capabilities `fs:default` 过宽** | 报告的前提**是错的**：它说"当前代码没有从前端直接调用 fs 读写"，实际 `src/utils/exportMessages.ts:61` 就在 `import('@tauri-apps/plugin-fs')` 里用 `writeTextFile` 落盘导出（CSV/JSON/规则导出都走这条路）。所以直接删 `fs:default` 会**静默砍掉导出功能**。真要收窄，得先把导出改成一条后端命令（`write_text_file`）再删权限，或用 `fs:scope` 精确列出允许落盘的目录 —— 而 scope 写错的表现正是"点了没反应"，需要**逐个目标目录人工验证**（下载/文档/桌面），本机无法脚本化原生对话框。我没有用一半的验证去做这个改动。 |
 | **P1-14 历史 payload 双列存储** | 成立（约 2.3× 体积），但 `payload` 列是**文本检索**的字段；只留 base64 就要在 SQLite 侧做解码检索，等于换搜索模型。这不是删一列能了事的。 |
-| **P1-6 CI 加 ESLint（含 react-hooks）** | 成立且投入产出比确实高，但要新增依赖 + 一次性吞掉全仓库告警。建议单独一轮，先以 warn 基线落地。 |
+| **P1-6 CI 加 ESLint** | ~~留给后续~~ **第八轮已落地**（见 §4.19）。 |
 | **P1-10 / P1-11 IPC 类型化（`ts-rs` / `tauri-specta`）** | 成立。这属于 §6.1"拆 `MqttManager`"同级别的结构性工程，需要一次贯穿全仓库的改动。 |
 | **P2-6 侧边栏 `v0.9.0-core` 后缀** | 显示与 `package.json` 的 `0.9.0` 不一致是事实，但后缀可能有意区分的构建线；这是品牌/发布决定，我不动。 |
 | **§6.1 / §6.2 大文件拆分、§7.1 Shared Subscription、§6.3 统一错误类型** | 报告自己的分级也把它们放在"重构/扩展"，与本轮"静默失败 + 合法性 + 一致性"的主题不同轴，留作后续。 |
