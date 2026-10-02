@@ -212,6 +212,12 @@ pub struct PubProperties {
     /// MQTT5 Correlation Data (UTF-8 string on the UI, bytes on the wire)
     #[serde(default)]
     pub correlation_data: Option<String>,
+    /// Correlation data as hex of the **raw bytes**. This exists because the
+    /// value is a byte string: a bridge hop that forwards a device's binary
+    /// correlation has nowhere else to put it. Takes precedence over
+    /// `correlation_data`, which is the lossy-by-construction text form.
+    #[serde(default)]
+    pub correlation_hex: Option<String>,
     /// MQTT5 Payload Format Indicator: 0 = unspecified bytes, 1 = UTF-8 encoded.
     /// `None` leaves the flag off the wire entirely.
     #[serde(default)]
@@ -234,6 +240,20 @@ pub struct ConsolePublishParams {
     pub properties: PubProperties,
 }
 
+/// Correlation data is an opaque byte string on the wire (MQTT 5 §3.3.2.3.0),
+/// while the UI field that produced ours is text. Keep both honest display forms:
+/// the text is reported only when the bytes really are UTF-8, and the hex form is
+/// always the untouched bytes. Decoding lossily and calling the result "the
+/// correlation" would be a claim about data we cannot make.
+pub fn correlation_forms(bytes: &[u8]) -> (Option<String>, Option<String>) {
+    if bytes.is_empty() {
+        return (None, None);
+    }
+    let hex = Some(hex::encode(bytes));
+    let text = std::str::from_utf8(bytes).ok().map(str::to_string);
+    (text, hex)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MqttGenericMessage {
@@ -251,8 +271,13 @@ pub struct MqttGenericMessage {
     pub user_properties: Vec<(String, String)>,
     #[serde(default)]
     pub response_topic: Option<String>,
+    /// Correlation data, decoded only when the bytes are valid UTF-8.
     #[serde(default)]
     pub correlation_data: Option<String>,
+    /// The same correlation data as hex of the raw bytes — always lossless, so a
+    /// device using a 4-byte UUID shows what it actually sent.
+    #[serde(default)]
+    pub correlation_hex: Option<String>,
     /// Payload Format Indicator the publisher declared (v5 only)
     #[serde(default)]
     pub payload_format: Option<u8>,
@@ -298,6 +323,27 @@ mod tests {
         let deserialized: TransferMeta = serde_json::from_str(&json).expect("deserialize meta");
         assert_eq!(deserialized.total_chunks, 4);
         assert_eq!(deserialized.chunk_size, 262144);
+    }
+
+    #[test]
+    fn correlation_forms_keep_the_bytes_and_only_claim_text_when_it_is_text() {
+        // A plain ASCII correlation has both forms, and they agree.
+        let (text, hexed) = correlation_forms(b"req-1");
+        assert_eq!(text.as_deref(), Some("req-1"));
+        assert_eq!(hexed.as_deref(), Some("7265712d31"));
+
+        // A 4-byte device UUID is not text; the hex still says what arrived.
+        let (text, hexed) = correlation_forms(&[0x04, 0xd4, 0x81, 0xf7]);
+        assert_eq!(text, None, "not valid UTF-8, so no text may be claimed");
+        assert_eq!(hexed.as_deref(), Some("04d481f7"));
+
+        // Valid UTF-8 that is not ASCII keeps its text form.
+        let (text, hexed) = correlation_forms("温度".as_bytes());
+        assert_eq!(text.as_deref(), Some("温度"));
+        assert_eq!(hexed.as_deref(), Some("e6b8a9e5baa6"));
+
+        // Empty correlation data carries nothing to display.
+        assert_eq!(correlation_forms(&[]), (None, None));
     }
 
     #[test]

@@ -53,6 +53,8 @@ const boot = async (page: any) => {
         if (cmd === 'get_default_download_dir') return 'D:/Downloads';
         if (cmd === 'get_topic_stats_cap') return 5000;
         if (cmd === 'get_subscription_stats') return {};
+        if (cmd === 'get_subscription_ack_state')
+          return w.ackState ?? { rejected: [], refusedUnsubscribes: [], capped: [], unattributed: 0 };
         if (cmd === 'get_topic_stats' || cmd === 'get_broker_sys') return [];
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];
         if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };

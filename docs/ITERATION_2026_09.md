@@ -637,6 +637,72 @@ B hits: {"$share/g1/lab/shared/#":12}
 
 `useBridge` 用 `EVENT_LOG_CAP = 150` 裁事件环形缓冲，而 `BridgePanel` 的"只显示最近 {cap} 条"文案里**另外写死了一个 150**。改上限不会报错，只会让界面开始报一个假数 —— 这类"两个真相源"正是本轮一直在删的东西，所以 hook 导出常量、面板引用它。**没有为它加测试**：这条改动的正确性是"两处读同一个符号"，一个断言 `150` 出现在文案里的测试只能证明它自己。门：`tsc`、`eslint` 0 error、Playwright **46/46** 复跑通过。
 
+### 4.25 订阅被拒不是"看不见"，而是"整个会话在反复掉线"（第十轮，2026-10-03，实测推翻审阅稿 §1.1）
+
+`docs/REVIEW_2026_10_03.md` 说 SUBACK 被归进 `NetEvent::Other` 丢弃，于是界面在 ACL 拒绝时仍显示"已订阅"。
+按这条去实现时，真机不给这个结果：接上可编程的探针 broker 后，应用**根本没有画出红标**，而是横幅里反复出现
+`MqttState(SubFail { reason: NotAuthorized })`，状态在 Connected/Disconnected 之间跳。查 rumqttc 0.24 源码确认：
+
+```rust
+// rumqttc-0.24.0/src/v5/state.rs
+fn handle_incoming_suback(&mut self, suback: &mut SubAck) -> Result<(), StateError> {
+    for reason in suback.return_codes.iter() {
+        match reason {
+            SubscribeReasonCode::Success(qos) => { ... }
+            _ => return Err(StateError::SubFail { reason: *reason }),   // 致命
+        }
+    }
+```
+
+也就是说**被拒的 SUBACK 永远到不了我们手里**：`poll()` 返回 `Err(ConnectionError::MqttState(SubFail))`，
+连接被拆，1 秒后 CONNACK 重放又带上同一个过滤器 → 再被拒 → 无限掉线循环。PUBACK/PUBREC/PUBCOMP/UNSUBACK
+各有对应的 `*Fail`，同一形状。审阅稿把后果说轻了一个数量级，把修法也指错了方向。
+
+改成的样子：
+
+- `transport::v5_error_event()` 把 rumqttc 那一条错误通道**拆开**：ack 类拒绝映射成
+  `NetEvent::AckRejected{stage, code, text}`（code 是规范字节），其余才继续当 `ConnectionError`。
+  字节表写在 `transport.rs`，并由 `suback_reason_bytes_match_the_spec` 等测试逐个变体钉住。
+- 授予类 SUBACK 仍作为包到达，所以 `NetEvent::SubAck` 这条路负责**QoS 降级**：broker 回 0x01 而我们请求 0x02
+  时，订阅条上出现 `granted QoS 1`，并 emit `subscription-downgraded`。
+- `acks::AckTracker` 是这轮新增的纯逻辑模块（10 个 harness 测试）：一次 SUBSCRIBE 只带一个过滤器，
+  所以 FIFO 能精确归因；**多出来的 reason 字节记成 `unattributed` 而不是猜给某个过滤器**——把"无辜订阅画成红标"
+  比"少画一个红标"糟得多。
+- 关键止血：被拒过滤器进入 **quarantine**，CONNACK 重放时跳过它。用户重新订阅（`expect_sub`）或移除
+  （`forget`）才解除。一次拒绝 = 一条可见结论，而不是每秒一次的会话拆除。
+- 前端 `useSubscriptionStats` 把**事件监听挂在挂载期而不是"已连接"期间**——这条是实测逼出来的：
+  拒绝事件本身就是让连接掉下去的原因，监听器若被 `isConnected` 挡住，就会在需要它的那一刻恰好不在场
+  （第一轮真机跑出来就是"红标靠 1.5 s 轮询补上、toast 永远不出现"）。
+- 诊断新增 `ack_verdicts` 健康检查与 4 个计数（被拒订阅 / 被拒取消订阅 / 被拒发布 / 无法对应的应答码），
+  运维面板同数显示；压测台不再把失败回执算成 acked，`0x10 无订阅者` 单独一列。
+
+真机取证（探针 broker `~/mqtt-lab/probe-broker.mjs`，127.0.0.1:18832，每个 verdict 都由服务端脚本指定）：
+点击 Connect 后 500 ms 内出现两条 toast —— `Broker refused secret/telemetry: not authorized (ACL)` 与
+`Broker capped public/# at QoS 1`，两个徽标随后常驻；**状态连续 6 秒保持 Connected**；
+服务端侧最后一轮连接只订阅了 `public/#` 与 `$SYS/#`，`secret/telemetry` 不再被重放 —— 循环确实被切断了。
+
+顺带两条独立取证：
+- reason code 字节表**不能凭记忆写**。我先写的表把 SUBACK 的"topic filter invalid"记成 0x8E，
+  用 mqtt.js 的 `mqtt-packet/constants.js`（另一份独立实现）核对后才知道是 **0x8F**，
+  而 0x90 属于 PUBLISH 族。测试里把这条陷阱单独钉住（`describe_sub(0x8e)` 必须是"未识别"）。
+- mosquitto 2.0.15 **不在 SUBSCRIBE 上强制 ACL**：给它一个只允许 `public/#` 的 acl_file，
+  订阅 `secret/#` 仍被授予（broker 日志 `Sending SUBACK` 可查），但**发布**被拒并回
+  `PUBACK rc135`（同一日志可查）。所以 SUBACK 拒绝只能靠可编程探针复现，PUBACK 拒绝有真实 broker 证据。
+
+门：Rust harness **121/121**、vitest **35/35**、Playwright **52/52**（新增 `tests/ui/suback-verdicts.spec.ts` 6 项、
+`tests/unit/ackReason.test.ts` 6 项）、`tsc` 干净、`cargo clippy --all-targets` 干净、ESLint 0 error（warn 仍是 10 的预算）。
+
+### 4.26 关联数据按字节处理，并且不再谎报文本（A2）
+
+`transport.rs` 之前用 `String::from_utf8_lossy` 解 correlationData。规范里它是不透明字节串，
+设备常用 4 字节 UUID 或 protobuf tag。改成 `Vec<u8>` 后：RPC 配对是**字节相等**；显示走两条诚实的分支
+（`protocol::correlation_forms`）——字节是合法 UTF-8 才给文本，同时永远给一份 hex。
+副作用是行为变严：过去入站值会被 `trim()` 再比，所以 `"abc "` 能配上 `"abc"`；现在必须逐字节一致，
+配不上就超时，而 hex 会显示在 RPC 行的 tooltip 里，用户看得见差在哪。
+桥接转发也补了无损通道：`PubProperties.correlation_hex` 优先于文本字段，非 UTF-8 的关联数据跳一跳不失真。
+harness 里 `a_binary_reply_cannot_pair_through_a_lossy_text_decoding` 用 0xFF 0x00 钉住了这个回归方向
+（它 lossy 解码后正好等于 `"\u{FFFD}\u{0}"`，旧代码会把它配给一个从未见过的请求）。
+
 ## 5. 已知限制（必须如实告知）
 
 ### 5.1 环境：本机 MSVC 不可用，但 gnu 可以完整跑起应用
@@ -721,6 +787,18 @@ error: linking with `link.exe` failed
 | **§6.1 / §6.2 大文件拆分、§7.1 Shared Subscription、§6.3 统一错误类型** | 报告自己的分级也把它们放在"重构/扩展"，与本轮"静默失败 + 合法性 + 一致性"的主题不同轴，留作后续。 |
 
 报告里剩下的 P2（`MessageStream` 虚拟化、`{n}` 手工插值统一、`BridgePanel` 防连点、`spawn_blocking`、`useTransfers` 去轮询、bridge 事件上限常量、诊断构造迂回、`$SYS` 关键词识别）**仍然成立**，已并入 §6 的候选池。
+
+### 5.10 本轮（A1/A2）没有做到的三件事
+
+1. **PUBACK 拒绝没能在桌面应用里跑通**。代码路径有 harness 测试、有真实 mosquitto 的 `PUBACK rc135` 证据、
+   有 Playwright 的合并 toast 测试，但我用 CDP 驱动发布表单时 QoS1 的 PUBLISH 始终没到线上
+   （填进去的 topic 没能进 React 状态）。这是**我的驱动不精确**，不是已证明的产品缺陷，也没有被证明不存在。
+2. **桥接链路上的拒绝仍然会重放**。`bridge.rs` 只把 `AckRejected` 转成链路错误文案（不再是 debug 串）+ 1.5 s 退避，
+   没有 quarantine —— 桥接的订阅集来自规则，规则不改就一直失败。要做的是"规则级失败标记 + 面板红点"，
+   那是另一件事，没塞进这轮。
+3. **归因依赖 broker 按序回 SUBACK**。我们一次 SUBSCRIBE 只带一个过滤器，FIFO 在 TCP + 合规 broker 下是精确的；
+   但 `SubFail` 错误里**没有 packet id**，所以"哪个过滤器被拒"是按在飞顺序推的。数不对时我记 `unattributed`
+   并显示"无法对应的应答码"，而不是猜。
 
 ## 6. 下一轮候选
 

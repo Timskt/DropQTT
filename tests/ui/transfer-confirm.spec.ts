@@ -40,6 +40,8 @@ const boot = async (page: any) => {
         if (cmd === 'bridge_status' || cmd === 'list_transfers' || cmd === 'get_topic_stats'
           || cmd === 'get_broker_sys' || cmd === 'schedule_list' || cmd === 'bench_progress') return [];
         if (cmd === 'get_subscription_stats') return {};
+        if (cmd === 'get_subscription_ack_state')
+          return w.ackState ?? { rejected: [], refusedUnsubscribes: [], capped: [], unattributed: 0 };
         if (cmd === 'get_topic_stats_cap') return 5000;
         if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
         if (cmd === 'plugin:event|listen') {

@@ -471,6 +471,37 @@ export interface Translations {
   preview: string;
   sendHint: string;
   hitTotal: string;
+  subRejectedChip: string;
+  subQuarantinedHint: string;
+  subRejectedToast: string;
+  subDowngradedToast: string;
+  unsubRejectedToast: string;
+  publishRejectedToast: string;
+  publishRejectedManyToast: string;
+  opsRejectedSubs: string;
+  opsRefusedUnsubs: string;
+  opsPublishRejected: string;
+  opsAcksUnattributed: string;
+  benchNoSubscribers: string;
+  corrHexHint: string;
+  corrHexBadge: string;
+  rpcNoCorrelation: string;
+  ackCodeGrantedQos: string;
+  ackCodeUnspecified: string;
+  ackCodeImplSpecific: string;
+  ackCodeNotAuthorized: string;
+  ackCodeTopicFilterInvalid: string;
+  ackCodeTopicNameInvalid: string;
+  ackCodePkidInUse: string;
+  ackCodePkidNotFound: string;
+  ackCodeQuotaExceeded: string;
+  ackCodeSharedSubsUnsupported: string;
+  ackCodeSubIdUnsupported: string;
+  ackCodeWildcardSubsUnsupported: string;
+  ackCodeNoSubscribers: string;
+  ackCodePayloadFormatInvalid: string;
+  ackCodeNoSubscriptionExisted: string;
+  ackCodeUnrecognized: string;
   hitCount: string;
   resetStats: string;
   exportJsonTitle: string;
@@ -1002,6 +1033,37 @@ export const translations: Record<Language, Translations> = {
     flushPending: '释放 {count} 条缓存消息',
     preview: '预览',
     sendHint: '⌘/Ctrl + Enter 发送',
+    subRejectedChip: '被拒：{reason}',
+    subQuarantinedHint: '在重新订阅前不会重试（被拒的 SUBACK 会中断会话）',
+    subRejectedToast: 'broker 拒绝订阅 {topic}：{reason}',
+    subDowngradedToast: 'broker 将 {topic} 降为 QoS {qos}',
+    unsubRejectedToast: 'broker 拒绝取消订阅 {topic}：{reason} —— 它可能仍在投递',
+    publishRejectedToast: 'broker 拒绝了这条发布：{reason}',
+    publishRejectedManyToast: 'broker 拒绝了 {n} 条发布：{reason}',
+    opsRejectedSubs: '被拒订阅',
+    opsRefusedUnsubs: '被拒取消订阅',
+    opsPublishRejected: '被拒发布',
+    opsAcksUnattributed: '无法对应的应答码',
+    benchNoSubscribers: '无订阅者',
+    corrHexHint: '以原始字节的十六进制显示关联数据',
+    corrHexBadge: '十六进制',
+    rpcNoCorrelation: '应答未带关联数据',
+    ackCodeGrantedQos: '已授予 QoS {qos}',
+    ackCodeUnspecified: '未说明的错误',
+    ackCodeImplSpecific: '服务器实现特定错误',
+    ackCodeNotAuthorized: '未授权（ACL）',
+    ackCodeTopicFilterInvalid: '主题过滤器非法',
+    ackCodeTopicNameInvalid: '主题名非法',
+    ackCodePkidInUse: '报文标识符已被占用',
+    ackCodePkidNotFound: '报文标识符不存在',
+    ackCodeQuotaExceeded: '配额超限',
+    ackCodeSharedSubsUnsupported: '不支持共享订阅',
+    ackCodeSubIdUnsupported: '不支持订阅标识符',
+    ackCodeWildcardSubsUnsupported: '不支持通配符订阅',
+    ackCodeNoSubscribers: '没有匹配的订阅者',
+    ackCodePayloadFormatInvalid: '负载格式非法',
+    ackCodeNoSubscriptionExisted: '原本就没有该订阅',
+    ackCodeUnrecognized: '未识别的应答码 {code}',
     hitTotal: '共 {count} 次命中',
     hitCount: '该过滤器匹配到的入站消息数',
     resetStats: '重置统计',
@@ -1531,6 +1593,37 @@ export const translations: Record<Language, Translations> = {
     feedPaused: 'Feed frozen — incoming messages buffered',
     flushPending: 'Flush {count} buffered',
     preview: 'Preview',
+    subRejectedChip: 'refused: {reason}',
+    subQuarantinedHint: 'not retried until you subscribe again (a refused SUBACK drops the session)',
+    subRejectedToast: 'Broker refused {topic}: {reason}',
+    subDowngradedToast: 'Broker capped {topic} at QoS {qos}',
+    unsubRejectedToast: 'Broker refused to unsubscribe {topic}: {reason} — it may still be delivering',
+    publishRejectedToast: 'Broker refused a publish: {reason}',
+    publishRejectedManyToast: 'Broker refused {n} publishes: {reason}',
+    opsRejectedSubs: 'Refused subscriptions',
+    opsRefusedUnsubs: 'Refused unsubscribes',
+    opsPublishRejected: 'Refused publishes',
+    opsAcksUnattributed: 'Unmatched ack codes',
+    benchNoSubscribers: 'no subscribers',
+    corrHexHint: 'Correlation data shown as hex of the raw bytes',
+    corrHexBadge: 'hex',
+    rpcNoCorrelation: 'reply carried no correlation data',
+    ackCodeGrantedQos: 'granted QoS {qos}',
+    ackCodeUnspecified: 'unspecified error',
+    ackCodeImplSpecific: 'implementation specific error',
+    ackCodeNotAuthorized: 'not authorized (ACL)',
+    ackCodeTopicFilterInvalid: 'topic filter invalid',
+    ackCodeTopicNameInvalid: 'topic name invalid',
+    ackCodePkidInUse: 'packet identifier in use',
+    ackCodePkidNotFound: 'packet identifier not found',
+    ackCodeQuotaExceeded: 'quota exceeded',
+    ackCodeSharedSubsUnsupported: 'shared subscriptions not supported',
+    ackCodeSubIdUnsupported: 'subscription identifiers not supported',
+    ackCodeWildcardSubsUnsupported: 'wildcard subscriptions not supported',
+    ackCodeNoSubscribers: 'no matching subscribers',
+    ackCodePayloadFormatInvalid: 'payload format invalid',
+    ackCodeNoSubscriptionExisted: 'no subscription existed',
+    ackCodeUnrecognized: 'unrecognized reason code {code}',
     sendHint: '⌘/Ctrl + Enter to send',
     hitTotal: '{count} hits total',
     hitCount: 'Inbound messages matched by this filter',
@@ -2060,6 +2153,37 @@ export const translations: Record<Language, Translations> = {
     resumeFeed: '繼續接收',
     feedPaused: '訊息流已凍結 — 新報文暫存緩衝區',
     flushPending: '釋放 {count} 條緩衝訊息',
+    subRejectedChip: '被拒：{reason}',
+    subQuarantinedHint: '在重新訂閱前不會重試（被拒的 SUBACK 會中斷工作階段）',
+    subRejectedToast: 'broker 拒絕訂閱 {topic}：{reason}',
+    subDowngradedToast: 'broker 將 {topic} 降為 QoS {qos}',
+    unsubRejectedToast: 'broker 拒絕取消訂閱 {topic}：{reason} —— 它可能仍在投递',
+    publishRejectedToast: 'broker 拒絕了這則發佈：{reason}',
+    publishRejectedManyToast: 'broker 拒絕了 {n} 則發佈：{reason}',
+    opsRejectedSubs: '被拒訂閱',
+    opsRefusedUnsubs: '被拒取消訂閱',
+    opsPublishRejected: '被拒發佈',
+    opsAcksUnattributed: '無法對應的應答碼',
+    benchNoSubscribers: '無訂閱者',
+    corrHexHint: '以原始位元組的十六進位顯示關聯資料',
+    corrHexBadge: '十六進位',
+    rpcNoCorrelation: '應答未帶關聯資料',
+    ackCodeGrantedQos: '已授予 QoS {qos}',
+    ackCodeUnspecified: '未說明的錯誤',
+    ackCodeImplSpecific: '伺服器實作特定錯誤',
+    ackCodeNotAuthorized: '未授權（ACL）',
+    ackCodeTopicFilterInvalid: '主題過濾器非法',
+    ackCodeTopicNameInvalid: '主題名非法',
+    ackCodePkidInUse: '報表識別碼已被佔用',
+    ackCodePkidNotFound: '報表識別碼不存在',
+    ackCodeQuotaExceeded: '配額超限',
+    ackCodeSharedSubsUnsupported: '不支援共享訂閱',
+    ackCodeSubIdUnsupported: '不支援訂閱識別碼',
+    ackCodeWildcardSubsUnsupported: '不支援萬用字元訂閱',
+    ackCodeNoSubscribers: '沒有相符的訂閱者',
+    ackCodePayloadFormatInvalid: '載入格式非法',
+    ackCodeNoSubscriptionExisted: '原本就沒有該訂閱',
+    ackCodeUnrecognized: '未識別的應答碼 {code}',
     preview: '預覽',
     sendHint: '⌘/Ctrl + Enter 傳送',
     hitTotal: '共 {count} 次命中',
@@ -2589,6 +2713,37 @@ export const translations: Record<Language, Translations> = {
     pauseFeed: '受信を一時停止',
     resumeFeed: '再開',
     feedPaused: 'フィード凍結中 — 新メッセージはバッファに保留',
+    subRejectedChip: '拒否: {reason}',
+    subQuarantinedHint: '再購読するまで再試行しません（拒否された SUBACK はセッションを切断します）',
+    subRejectedToast: 'ブローカーが {topic} を拒否しました: {reason}',
+    subDowngradedToast: 'ブローカーが {topic} を QoS {qos} に下げました',
+    unsubRejectedToast: 'ブローカーが {topic} の解除を拒否しました: {reason} — 配信が続く可能性があります',
+    publishRejectedToast: 'ブローカーが publish を拒否しました: {reason}',
+    publishRejectedManyToast: 'ブローカーが {n} 件の publish を拒否しました: {reason}',
+    opsRejectedSubs: '拒否された購読',
+    opsRefusedUnsubs: '拒否された解除',
+    opsPublishRejected: '拒否された送信',
+    opsAcksUnattributed: '対応できない応答コード',
+    benchNoSubscribers: '購読者なし',
+    corrHexHint: '相関データを生のバイト列の16進で表示',
+    corrHexBadge: '16進',
+    rpcNoCorrelation: '応答に相関データなし',
+    ackCodeGrantedQos: 'QoS {qos} を許可',
+    ackCodeUnspecified: '原因不明のエラー',
+    ackCodeImplSpecific: 'サーバー実装固有のエラー',
+    ackCodeNotAuthorized: '認可されていません (ACL)',
+    ackCodeTopicFilterInvalid: 'トピックフィルタが不正',
+    ackCodeTopicNameInvalid: 'トピック名が不正',
+    ackCodePkidInUse: 'パケット ID が使用中',
+    ackCodePkidNotFound: 'PACKET ID が見つかりません',
+    ackCodeQuotaExceeded: 'quota を超過',
+    ackCodeSharedSubsUnsupported: '共有サブスクリプション未対応',
+    ackCodeSubIdUnsupported: 'サブスクリプション ID 未対応',
+    ackCodeWildcardSubsUnsupported: 'ワイルドカード購読未対応',
+    ackCodeNoSubscribers: '一致する購読者がいません',
+    ackCodePayloadFormatInvalid: 'ペイロード形式が不正',
+    ackCodeNoSubscriptionExisted: '該当する購読がありません',
+    ackCodeUnrecognized: '不明な応答コード {code}',
     flushPending: '{count} 件の保留を解除',
     preview: 'プレビュー',
     sendHint: '⌘/Ctrl + Enter で送信',

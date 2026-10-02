@@ -2,6 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { Plus, Radio, X, RotateCcw, SlidersHorizontal, Users } from 'lucide-react';
 import { SubOptions, TopicSubscription, subOptionsDefaults } from '../../types';
 import { Translations } from '../../i18n';
+import { ackHex, describeAck } from '../../utils/ackReason';
+import type { SubscriptionAck } from '../../hooks/useSubscriptionStats';
 import { useObservedTopics } from '../../utils/topicStore';
 
 interface SubscriptionsBarProps {
@@ -10,6 +12,8 @@ interface SubscriptionsBarProps {
   onRemoveSubscription: (topic: string) => void;
   /** Topic filter -> inbound publish hit count (backend-maintained) */
   hitStats: Record<string, number>;
+  /** What the broker actually said about each filter (SUBACK verdicts) */
+  ack: SubscriptionAck;
   onResetStats: () => void;
   connected: boolean;
   /** v5 subscription options have no v3.1.1 wire equivalent. */
@@ -24,6 +28,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   onAddSubscription,
   onRemoveSubscription,
   hitStats,
+  ack,
   onResetStats,
   connected,
   isV5,
@@ -70,6 +75,21 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
     // Cycle to next color
     const nextIdx = (COLOR_PALETTE.indexOf(selectedColor) + 1) % COLOR_PALETTE.length;
     setSelectedColor(COLOR_PALETTE[nextIdx]);
+  };
+
+  // A refused filter is the one case where the broker contradicts the green dot.
+  const refusalNote = (topic: string): { label: string; detail: string } | null => {
+    const r = ack.rejected[topic];
+    if (!r) return null;
+    const label = describeAck(r.code, 'sub', t);
+    const detail = [
+      `${ackHex(r.code)} ${label}`,
+      t.subQuarantinedHint,
+      r.reasonString ? `broker: ${r.reasonString}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return { label, detail };
   };
 
   const activeFlags = (o?: SubOptions) =>
@@ -232,6 +252,18 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
         </div>
       )}
 
+      {ack.refusedUnsubscribes.length > 0 && (
+        <div
+          className="text-[11px] px-2 py-1.5 rounded inset-box"
+          style={{ color: 'var(--warn)' }}
+          data-testid="unsub-refused-note"
+        >
+          {ack.refusedUnsubscribes
+            .map((r) => `${r.filter} (${ackHex(r.code)} ${describeAck(r.code, 'unsub', t)})`)
+            .join(' · ')}
+        </div>
+      )}
+
       {/* Active Subscriptions Chips */}
       <div className="flex flex-wrap gap-2 pt-1 min-h-[36px] items-center">
         {subscriptions.length === 0 ? (
@@ -239,15 +271,21 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
             {t.noSubscriptions}
           </div>
         ) : (
-          subscriptions.map((sub) => (
+          subscriptions.map((sub) => {
+            const refusal = refusalNote(sub.topic);
+            const capped = ack.capped[sub.topic];
+            return (
             <div
               key={sub.topic}
               className="flex items-center space-x-2 px-3 py-1.5 inset-box text-xs shadow-sm"
-              style={{ color: 'var(--text-secondary)' }}
+              style={{
+                color: 'var(--text-secondary)',
+                outline: refusal ? '1px solid var(--danger)' : 'none',
+              }}
             >
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: sub.color || '#10b981' }}
+                style={{ backgroundColor: refusal ? 'var(--danger)' : sub.color || '#10b981' }}
               />
               <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{sub.topic}</span>
               {shareGroupOf(sub.topic) && (
@@ -260,7 +298,29 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
               )}
               <span className="text-[11px] px-1 py-0.5 inset-box font-mono" style={{ color: 'var(--text-muted)' }}>
                 QoS {sub.qos}
+                {capped !== undefined && <span> → {capped}</span>}
               </span>
+              {refusal && (
+                <span
+                  className="text-[10px] px-1 py-0.5 chip font-mono"
+                  data-testid={`sub-refused-${sub.topic}`}
+                  style={{ background: 'var(--danger)', color: 'var(--accent-contrast)' }}
+                  title={refusal.detail}
+                >
+                  {t.subRejectedChip.replace('{reason}', refusal.label)}
+                </span>
+              )}
+              {!refusal && capped !== undefined && (
+                <span
+                  className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
+                  data-testid={`sub-capped-${sub.topic}`}
+                  title={t.subDowngradedToast
+                    .replace('{topic}', sub.topic)
+                    .replace('{qos}', String(capped))}
+                >
+                  {t.ackCodeGrantedQos.replace('{qos}', String(capped))}
+                </span>
+              )}
               {activeFlags(sub.options).length > 0 && (
                 <span
                   className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
@@ -286,7 +346,8 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
                 <X className="w-3 h-3" />
               </button>
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

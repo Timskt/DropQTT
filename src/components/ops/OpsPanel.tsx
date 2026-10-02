@@ -227,6 +227,26 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                   color={snapshot.mqtt.confirmTimeouts ? 'var(--warn)' : 'var(--text-primary)'}
                 />
                 <Metric
+                  label={t.opsRejectedSubs}
+                  value={snapshot.mqtt.subscriptionsRejected ?? 0}
+                  color={snapshot.mqtt.subscriptionsRejected ? 'var(--danger)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsRefusedUnsubs}
+                  value={snapshot.mqtt.unsubscribesRejected ?? 0}
+                  color={snapshot.mqtt.unsubscribesRejected ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsPublishRejected}
+                  value={snapshot.mqtt.publishRejected ?? 0}
+                  color={snapshot.mqtt.publishRejected ? 'var(--danger)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsAcksUnattributed}
+                  value={snapshot.mqtt.acksUnattributed ?? 0}
+                  color={snapshot.mqtt.acksUnattributed ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
                   label={t.opsRpcPending}
                   value={snapshot.mqtt.rpcPending ?? 0}
                   color={snapshot.mqtt.rpcPending ? 'var(--warn)' : 'var(--text-primary)'}

@@ -283,6 +283,20 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                         {r.qos > 0 ? ` · ${r.acked.toLocaleString()} ${t.benchAcked}` : ''}
                         {` · ${rate.toFixed(0)}/s`}
                       </span>
+                      {(r.nacked > 0 || r.noSubscribers > 0) && (
+                        <span
+                          className="shrink-0"
+                          data-testid="bench-refused"
+                          style={{ color: r.nacked > 0 ? 'var(--danger)' : 'var(--warn)' }}
+                          aria-label={`${t.opsPublishRejected}: ${r.nacked}, ${t.benchNoSubscribers}: ${r.noSubscribers}`}
+                          title={`${r.nacked} ${t.opsPublishRejected} · ${r.noSubscribers} ${t.benchNoSubscribers}`}
+                        >
+                          {r.nacked > 0 ? `✕ ${r.nacked.toLocaleString()}` : ''}
+                          {r.noSubscribers > 0
+                            ? `${r.nacked > 0 ? ' · ' : ''}∅ ${r.noSubscribers.toLocaleString()}`
+                            : ''}
+                        </span>
+                      )}
                       <span className="shrink-0" style={{ color: r.latency.samples ? 'var(--accent)' : 'var(--text-muted)' }}>
                         {r.latency.samples
                           ? `p50 ${r.latency.p50Ms} · p95 ${r.latency.p95Ms} · p99 ${r.latency.p99Ms} ms`

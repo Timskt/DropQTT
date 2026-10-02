@@ -1,5 +1,6 @@
 pub mod bridge;
 pub mod bench;
+pub mod acks;
 pub mod diagnostics;
 pub mod history;
 pub mod mqtt_manager;
@@ -149,6 +150,13 @@ async fn unsubscribe_topic(
     topic: String,
 ) -> Result<(), String> {
     state.mqtt.unsubscribe_topic(topic).await
+}
+
+/// Ack verdicts for the subscriptions bar: which filters the broker refuses,
+/// which unsubscribes it refused, and which grants it capped at a lower QoS.
+#[tauri::command]
+async fn get_subscription_ack_state(state: State<'_, AppState>) -> Result<acks::AckState, String> {
+    Ok(state.mqtt.sub_ack_state().await)
 }
 
 #[tauri::command]
@@ -513,6 +521,7 @@ pub fn run() {
             cancel_transfer,
             subscribe_topic,
             unsubscribe_topic,
+            get_subscription_ack_state,
             get_subscription_stats,
             reset_subscription_stats,
             get_topic_stats,

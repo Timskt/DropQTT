@@ -189,7 +189,20 @@ const MessageRow = React.memo(function MessageRow({
             </span>
           )}
           {msg.responseTopic && <span className="chip chip-sky shrink-0 hidden xl:inline" title={t.responseTopicLabel}>↩ {msg.responseTopic}</span>}
-          {msg.correlationData && <span className="chip chip-neutral shrink-0 hidden xl:inline font-mono" title={t.correlationDataLabel}>#{msg.correlationData}</span>}
+          {(msg.correlationData || msg.correlationHex) && (
+            <span
+              className="chip chip-neutral shrink-0 hidden xl:inline font-mono"
+              title={
+                msg.correlationData
+                  ? `${t.correlationDataLabel}: ${msg.correlationData}`
+                  : `${t.corrHexHint}: ${msg.correlationHex}`
+              }
+              data-testid="corr-chip"
+            >
+              #{(msg.correlationData ?? msg.correlationHex ?? '').slice(0, 12)}
+              {!msg.correlationData && ` ${t.corrHexBadge}`}
+            </span>
+          )}
           {viewMode === 'auto' && (
             <span className="text-[10px] shrink-0 hidden md:inline" style={{ color: 'var(--text-muted)' }}>{effective}</span>
           )}

@@ -92,7 +92,16 @@ export const RpcPanel: React.FC<RpcPanelProps> = ({ calls, onClearFinished, t })
                 <span className="truncate max-w-[28%]" style={{ color: 'var(--text-muted)' }} title={call.responseTopic}>
                   {call.responseTopic}
                 </span>
-                <span className="shrink-0 hidden xl:inline" style={{ color: 'var(--text-muted)' }} title={`${t.rpcCorrelationLabel}: ${call.correlation}`}>
+                <span
+                  className="shrink-0 hidden xl:inline"
+                  style={{ color: 'var(--text-muted)' }}
+                  data-testid="rpc-corr"
+                  title={`${t.rpcCorrelationLabel}: ${call.correlation}${
+                    call.reply?.correlationHex
+                      ? ` ⇐ ${t.corrHexHint}: ${call.reply.correlationHex}`
+                      : ` ⇐ ${t.rpcNoCorrelation}`
+                  }`}
+                >
                   #{call.correlation.slice(0, 8)}
                 </span>
                 <span className="ml-auto shrink-0" style={{ color }}>

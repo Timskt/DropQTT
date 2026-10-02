@@ -134,6 +134,7 @@ impl HistoryStore {
                 user_properties: m.user_properties.clone(),
                 response_topic: m.response_topic.clone(),
                 correlation_data: m.correlation_data.clone(),
+                correlation_hex: m.correlation_hex.clone(),
                 // Kept so a replayed message declares the same payload format the
                 // broker originally delivered it with.
                 payload_format: m.payload_format,
@@ -336,6 +337,7 @@ mod tests {
             payload_format: None,
             response_topic: None,
             correlation_data: None,
+            correlation_hex: None,
             qos: 1,
             retain: false,
             timestamp: String::new(),

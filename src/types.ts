@@ -85,6 +85,8 @@ export interface MqttGenericMessage {
   userProperties?: [string, string][];
   responseTopic?: string;
   correlationData?: string;
+  /** Correlation data as hex of the raw bytes; lossless even when it is not text */
+  correlationHex?: string;
   /** MQTT5 Payload Format Indicator as published: 0 = bytes, 1 = UTF-8 */
   payloadFormat?: number;
   qos: number;
@@ -102,6 +104,9 @@ export interface PubProperties {
   messageExpiry?: number;
   responseTopic?: string;
   correlationData?: string;
+  /** Correlation data as hex of raw bytes. Sent instead of `correlationData` when
+   *  the value is not text, so a bridge hop does not lose it. */
+  correlationHex?: string;
   /** MQTT5 Payload Format Indicator: 0 = bytes, 1 = UTF-8, undefined = unset */
   payloadFormat?: number;
   /** MQTT5 Topic Alias (1..65535) */
@@ -186,8 +191,13 @@ export interface BenchProgress {
   qos: number;
   retain: boolean;
   sent: number;
-  /** PUBACK (QoS1) / PUBCOMP (QoS2) received for this run's publishes */
+  /** PUBACK (QoS1) / PUBCOMP (QoS2) received for this run's publishes, each one
+   *  carrying a plain success reason */
   acked: number;
+  /** Publishes the broker refused with a reason code of 0x80 or above */
+  nacked: number;
+  /** Publishes accepted with "no matching subscribers" — kept, but delivered to nobody */
+  noSubscribers: number;
   observed: number;
   elapsedMs: number;
   status: BenchStatus;
@@ -210,6 +220,38 @@ export const subOptionsDefaults = (qos = 1): SubOptions => ({
   retainAsPublished: false,
   retainHandling: 0,
 });
+
+/** One entry of `SubscriptionAckState.capped`. */
+export interface CappedSub {
+  filter: string;
+  granted: number;
+}
+
+/** Everything the backend knows about broker ack verdicts. */
+export interface SubscriptionAckState {
+  rejected?: SubRejection[];
+  refusedUnsubscribes?: SubRejection[];
+  capped?: CappedSub[];
+  unattributed?: number;
+}
+
+/** Payload of the `subscription-downgraded` event. */
+export interface QosDowngradeEvent {
+  filter: string;
+  asked: number;
+  granted: number;
+}
+
+/** A subscription (or unsubscribe) the broker refused, with the reason byte. */
+export interface SubRejection {
+  filter: string;
+  /** Raw wire reason code, localized by `describeAck` */
+  code: number;
+  /** English fallback straight from the backend; the UI prefers `code` */
+  meaning: string;
+  reasonString?: string | null;
+  atMs: number;
+}
 
 export interface TopicSubscription {
   topic: string;
@@ -270,7 +312,9 @@ export interface RpcReply {
   payloadLen: number;
   qos: number;
   retain: boolean;
-  correlationData?: string | null;
+  /** Reply correlation as hex of the bytes that arrived, or null when the reply
+   *  carried none — which is why the pairing may be marked `pairedByPosition`. */
+  correlationHex?: string | null;
   contentType?: string | null;
   timestampMs: number;
 }
@@ -345,6 +389,14 @@ export interface MqttDiagnostics {
   confirmTimeouts: number;
   rpcPending?: number;
   rpcTimeouts?: number;
+  /** Subscriptions the broker refuses right now (SUBACK >= 0x80) */
+  subscriptionsRejected?: number;
+  /** Unsubscribes the broker refused; delivery may continue regardless */
+  unsubscribesRejected?: number;
+  /** Ack reason bytes that answered nothing we had asked about */
+  acksUnattributed?: number;
+  /** Publishes refused by the broker this session */
+  publishRejected?: number;
   historyAvailable: boolean;
   history: HistoryStats;
   downloadDir: string;

@@ -98,9 +98,28 @@ pub struct NormalizedPublish {
     pub content_type: Option<String>,
     pub user_properties: Vec<(String, String)>,
     pub response_topic: Option<String>,
-    pub correlation_data: Option<String>,
+    /// MQTT5 Correlation Data, kept as the bytes the broker sent. The spec makes
+    /// it an opaque byte string, and devices commonly use a 4-byte UUID or a
+    /// protobuf tag; decoding it as UTF-8 would make request/response pairing
+    /// depend on the payload happening to be text.
+    pub correlation_data: Option<Vec<u8>>,
     /// MQTT5 Payload Format Indicator as the publisher declared it
     pub payload_format: Option<u8>,
+}
+
+/// Which acknowledgement a broker refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AckStage {
+    Subscribe,
+    Unsubscribe,
+    PublishAck,
+    PublishReceive,
+    PublishRelease,
+    PublishComplete,
+    /// The broker sent a DISCONNECT packet with an error reason.
+    ServerDisconnect,
+    /// The CONNACK itself was refused.
+    Connect,
 }
 
 /// Normalized eventloop notifications.
@@ -113,10 +132,42 @@ pub enum NetEvent {
     ConnectionError(String),
     /// Incoming publish packet
     Publish(NormalizedPublish),
-    /// PUBACK (QoS1) or PUBCOMP (QoS2, i.e. the final half of the handshake)
-    /// for one of our publishes
-    PublishAcked,
-    /// Any other packet we intentionally ignore (SubAck, PubRec, ...)
+    /// PUBACK (QoS1), PUBREC (QoS2 first half) or PUBCOMP (QoS2 final half) for
+    /// one of our publishes. `code` is the v5 reason byte; `None` means v3.1.1,
+    /// which has no reason codes and acknowledges only by the packet's presence.
+    PublishAcked {
+        /// v5 reason byte. 0x00 is the only delivery acknowledgement; 0x10 means
+        /// the broker took the packet but nobody was subscribed; 0x80 and above
+        /// are refusals. v3.1.1 has no reason codes and always reports 0x00,
+        /// because there the packet's presence *is* the acknowledgement.
+        code: u8,
+        reason_string: Option<String>,
+    },
+    /// SUBACK: one reason byte per filter, in the order we sent them.
+    SubAck {
+        codes: Vec<u8>,
+        reason_string: Option<String>,
+    },
+    /// UNSUBACK: same shape, and a refusal means the broker may still be
+    /// delivering on a filter we just dropped locally.
+    UnsubAck {
+        codes: Vec<u8>,
+        reason_string: Option<String>,
+    },
+    /// A broker **refusal** of an ack. This is not a packet we got to see:
+    /// rumqttc's v5 state machine turns any non-success ack code into a fatal
+    /// `StateError` (`SubFail`, `PubAckFail`, ...), which tears the connection
+    /// down *instead of* delivering the SUBACK. Recognizing it is the only way
+    /// to tell the user why the session keeps dropping — and the only way to
+    /// stop replaying the filter that caused it.
+    AckRejected {
+        stage: AckStage,
+        code: u8,
+        /// `Debug` form of rumqttc's variant, for the diagnostics report only;
+        /// the UI speaks from `code`.
+        text: String,
+    },
+    /// Any other packet we intentionally ignore (AUTH, PINGRESP, ...)
     Other,
 }
 
@@ -172,6 +223,118 @@ fn qos_to_u8_v5(q: rumqttc::v5::mqttbytes::QoS) -> u8 {
     }
 }
 
+/// Wire byte for a v3.1.1 SUBACK code. Kept in sync with the spec by the tests
+/// at the bottom of this module.
+fn sub_code_v3(code: &rumqttc::mqttbytes::v4::SubscribeReasonCode) -> u8 {
+    use rumqttc::mqttbytes::v4::SubscribeReasonCode as C;
+    match code {
+        C::Success(q) => qos_to_u8(*q),
+        C::Failure => 0x80,
+    }
+}
+
+/// Wire byte for a v5 SUBACK code (MQTT 5 §3.2.2.2.0).
+fn sub_code_v5(code: &rumqttc::v5::mqttbytes::v5::SubscribeReasonCode) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::SubscribeReasonCode as C;
+    match code {
+        C::Success(q) => qos_to_u8_v5(*q),
+        C::Failure | C::Unspecified => 0x80,
+        C::ImplementationSpecific => 0x83,
+        C::NotAuthorized => 0x87,
+        C::TopicFilterInvalid => 0x8F,
+        C::PkidInUse => 0x91,
+        C::QuotaExceeded => 0x97,
+        C::SharedSubscriptionsNotSupported => 0x9E,
+        C::SubscriptionIdNotSupported => 0xA1,
+        C::WildcardSubscriptionsNotSupported => 0xA2,
+    }
+}
+
+fn unsub_code_v5(code: &rumqttc::v5::mqttbytes::v5::UnsubAckReason) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::UnsubAckReason as C;
+    match code {
+        C::Success => 0x00,
+        C::NoSubscriptionExisted => 0x11,
+        C::UnspecifiedError => 0x80,
+        C::ImplementationSpecificError => 0x83,
+        C::NotAuthorized => 0x87,
+        C::TopicFilterInvalid => 0x8F,
+        C::PacketIdentifierInUse => 0x91,
+    }
+}
+
+fn puback_code_v5(code: &rumqttc::v5::mqttbytes::v5::PubAckReason) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::PubAckReason as C;
+    match code {
+        C::Success => 0x00,
+        C::NoMatchingSubscribers => 0x10,
+        C::UnspecifiedError => 0x80,
+        C::ImplementationSpecificError => 0x83,
+        C::NotAuthorized => 0x87,
+        C::TopicNameInvalid => 0x90,
+        C::PacketIdentifierInUse => 0x91,
+        C::QuotaExceeded => 0x97,
+        C::PayloadFormatInvalid => 0x99,
+    }
+}
+
+fn pubrec_code_v5(code: &rumqttc::v5::mqttbytes::v5::PubRecReason) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::PubRecReason as C;
+    match code {
+        C::Success => 0x00,
+        C::NoMatchingSubscribers => 0x10,
+        C::UnspecifiedError => 0x80,
+        C::ImplementationSpecificError => 0x83,
+        C::NotAuthorized => 0x87,
+        C::TopicNameInvalid => 0x90,
+        C::PacketIdentifierInUse => 0x91,
+        C::QuotaExceeded => 0x97,
+        C::PayloadFormatInvalid => 0x99,
+    }
+}
+
+fn pubcomp_code_v5(code: &rumqttc::v5::mqttbytes::v5::PubCompReason) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::PubCompReason as C;
+    match code {
+        C::Success => 0x00,
+        C::PacketIdentifierNotFound => 0x92,
+    }
+}
+
+/// `mqttbytes` gives every ack packet its own properties struct with no shared
+/// trait, so the optional reason string is pulled out through this one seam.
+/// Capped because the value is broker-controlled and ends up in UI events.
+pub trait AckProperties {
+    fn reason_string(&self) -> Option<String>;
+}
+
+macro_rules! impl_ack_properties {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl AckProperties for $ty {
+                fn reason_string(&self) -> Option<String> {
+                    self.reason_string.as_ref().map(|s| {
+                        let cut = s.chars().take(200).collect::<String>();
+                        cut
+                    })
+                }
+            }
+        )+
+    };
+}
+
+impl_ack_properties!(
+    rumqttc::v5::mqttbytes::v5::SubAckProperties,
+    rumqttc::v5::mqttbytes::v5::UnsubAckProperties,
+    rumqttc::v5::mqttbytes::v5::PubAckProperties,
+    rumqttc::v5::mqttbytes::v5::PubRecProperties,
+    rumqttc::v5::mqttbytes::v5::PubCompProperties,
+);
+
+fn ack_reason_string<P: AckProperties>(props: Option<&P>) -> Option<String> {
+    props.and_then(|p| p.reason_string()).filter(|s| !s.trim().is_empty())
+}
+
 /// UI publish properties → the wire struct. Empty strings are dropped rather
 /// than sent, because a zero-length property is a different statement from an
 /// absent one.
@@ -192,13 +355,26 @@ fn v5_publish_properties(p: &PubProperties) -> rumqttc::v5::mqttbytes::v5::Publi
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string),
-        correlation_data: p
-            .correlation_data
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|s| Bytes::copy_from_slice(s.as_bytes())),
+        correlation_data: correlation_bytes(p),
         ..Default::default()
     }
+}
+
+/// Correlation bytes for the wire. The hex form wins when it is present, because
+/// it is how a non-UTF-8 correlation survives a bridge hop; otherwise the text
+/// field is sent as its own UTF-8 bytes.
+fn correlation_bytes(p: &PubProperties) -> Option<Bytes> {
+    if let Some(raw) = p.correlation_hex.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Ok(bytes) = hex::decode(raw) {
+            if !bytes.is_empty() {
+                return Some(Bytes::from(bytes));
+            }
+        }
+    }
+    p.correlation_data
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| Bytes::copy_from_slice(s.as_bytes()))
 }
 
 /// Reject a topic alias the broker would refuse. Sending one anyway is a
@@ -422,7 +598,21 @@ impl MqttEventLoop {
                 }
                 Ok(rumqttc::Event::Incoming(
                     rumqttc::Packet::PubAck(_) | rumqttc::Packet::PubComp(_),
-                )) => NetEvent::PublishAcked,
+                )) => NetEvent::PublishAcked {
+                    code: 0x00,
+                    reason_string: None,
+                },
+                Ok(rumqttc::Event::Incoming(rumqttc::Packet::SubAck(s))) => NetEvent::SubAck {
+                    codes: s.return_codes.iter().map(sub_code_v3).collect(),
+                    reason_string: None,
+                },
+                Ok(rumqttc::Event::Incoming(rumqttc::Packet::UnsubAck(_))) => NetEvent::UnsubAck {
+                    // One synthetic success byte per UNSUBSCRIBE sent: v3 carries
+                    // no reason payload, but the pending slot still has to be
+                    // drained or the attribution FIFO would drift.
+                    codes: vec![0x00],
+                    reason_string: None,
+                },
                 Ok(_) => NetEvent::Other,
                 Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
             },
@@ -442,9 +632,7 @@ impl MqttEventLoop {
                                 vp.content_type,
                                 vp.user_properties,
                                 vp.response_topic,
-                                vp.correlation_data
-                                    .as_deref()
-                                    .map(|b| String::from_utf8_lossy(b).to_string()),
+                                vp.correlation_data.map(|b| b.to_vec()),
                                 vp.payload_format_indicator,
                             ),
                             None => (None, Vec::new(), None, None, None),
@@ -461,15 +649,146 @@ impl MqttEventLoop {
                         payload_format,
                     })
                 }
-                Ok(rumqttc::v5::Event::Incoming(
-                    rumqttc::v5::mqttbytes::v5::Packet::PubAck(_)
-                    | rumqttc::v5::mqttbytes::v5::Packet::PubComp(_),
-                )) => NetEvent::PublishAcked,
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::PubAck(a))) => {
+                    NetEvent::PublishAcked {
+                        code: puback_code_v5(&a.reason),
+                        reason_string: ack_reason_string(a.properties.as_ref()),
+                    }
+                }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::PubComp(c))) => {
+                    NetEvent::PublishAcked {
+                        code: pubcomp_code_v5(&c.reason),
+                        reason_string: ack_reason_string(c.properties.as_ref()),
+                    }
+                }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::PubRec(r))) => {
+                    // A granted PUBREC is only the first half of the QoS2
+                    // handshake; PUBCOMP is the terminal ack, so this must not
+                    // count as one. A refused PUBREC has no later packet at all,
+                    // so it is reported now rather than going missing.
+                    let code = pubrec_code_v5(&r.reason);
+                    if code == 0x00 {
+                        NetEvent::Other
+                    } else {
+                        NetEvent::PublishAcked {
+                            code,
+                            reason_string: ack_reason_string(r.properties.as_ref()),
+                        }
+                    }
+                }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::SubAck(s))) => {
+                    NetEvent::SubAck {
+                        codes: s.return_codes.iter().map(sub_code_v5).collect(),
+                        reason_string: ack_reason_string(s.properties.as_ref()),
+                    }
+                }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::UnsubAck(u))) => {
+                    NetEvent::UnsubAck {
+                        codes: u.reasons.iter().map(unsub_code_v5).collect(),
+                        reason_string: ack_reason_string(u.properties.as_ref()),
+                    }
+                }
                 Ok(_) => NetEvent::Other,
-                Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
+                Err(e) => v5_error_event(&e),
             },
         }
     }
+}
+
+/// Split rumqttc's one error channel into what actually happened.
+///
+/// Every ack refusal arrives here rather than as a packet: `MqttState` treats a
+/// non-success reason code as fatal, closes the connection, and the eventloop
+/// reconnects. Without this split the app sees an opaque `MqttState(SubFail ..)`
+/// string and a session that flaps forever, because the offending filter is
+/// replayed on every CONNACK.
+fn v5_error_event(e: &rumqttc::v5::ConnectionError) -> NetEvent {
+    use rumqttc::v5::mqttbytes::v5::{PubCompReason, PubRecReason, PubRelReason, UnsubAckReason};
+    use rumqttc::v5::StateError as S;
+    use rumqttc::v5::ConnectionError as C;
+
+    if let C::MqttState(state) = e {
+        match state {
+            S::SubFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::Subscribe,
+                    code: sub_code_v5(reason),
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::UnsubFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::Unsubscribe,
+                    code: match reason {
+                        UnsubAckReason::Success => 0x00,
+                        UnsubAckReason::NoSubscriptionExisted => 0x11,
+                        UnsubAckReason::UnspecifiedError => 0x80,
+                        UnsubAckReason::ImplementationSpecificError => 0x83,
+                        UnsubAckReason::NotAuthorized => 0x87,
+                        UnsubAckReason::TopicFilterInvalid => 0x8F,
+                        UnsubAckReason::PacketIdentifierInUse => 0x91,
+                    },
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::PubAckFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::PublishAck,
+                    code: puback_code_v5(reason),
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::PubRecFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::PublishReceive,
+                    code: match reason {
+                        PubRecReason::Success => 0x00,
+                        PubRecReason::NoMatchingSubscribers => 0x10,
+                        PubRecReason::UnspecifiedError => 0x80,
+                        PubRecReason::ImplementationSpecificError => 0x83,
+                        PubRecReason::NotAuthorized => 0x87,
+                        PubRecReason::TopicNameInvalid => 0x90,
+                        PubRecReason::PacketIdentifierInUse => 0x91,
+                        PubRecReason::QuotaExceeded => 0x97,
+                        PubRecReason::PayloadFormatInvalid => 0x99,
+                    },
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::PubRelFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::PublishRelease,
+                    code: match reason {
+                        PubRelReason::Success => 0x00,
+                        PubRelReason::PacketIdentifierNotFound => 0x92,
+                    },
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::PubCompFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::PublishComplete,
+                    code: match reason {
+                        PubCompReason::Success => 0x00,
+                        PubCompReason::PacketIdentifierNotFound => 0x92,
+                    },
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::ServerDisconnect {
+                reason_code,
+                reason_string,
+            } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::ServerDisconnect,
+                    code: *reason_code as u8,
+                    text: reason_string.clone().unwrap_or_else(|| format!("{reason_code:?}")),
+                }
+            }
+            _ => {}
+        }
+    }
+    NetEvent::ConnectionError(format!("{:?}", e))
 }
 
 #[cfg(test)]
@@ -549,6 +868,47 @@ mod tests {
     }
 
     #[test]
+    fn correlation_bytes_prefer_the_lossless_hex_form() {
+        // The bridge uses hex to forward a correlation that is not text.
+        let p = PubProperties {
+            correlation_data: Some("stale".into()),
+            correlation_hex: Some("04d481f7".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            v5_publish_properties(&p).correlation_data,
+            Some(Bytes::from_static(&[0x04, 0xd4, 0x81, 0xf7]))
+        );
+
+        // No hex: the text goes out as its own UTF-8 bytes.
+        let p = PubProperties {
+            correlation_data: Some("req-7".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            v5_publish_properties(&p).correlation_data,
+            Some(Bytes::from_static(b"req-7"))
+        );
+
+        // Unparseable or empty hex is not a licence to send garbage; the text
+        // field still speaks.
+        let p = PubProperties {
+            correlation_data: Some("req-7".into()),
+            correlation_hex: Some("zz".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            v5_publish_properties(&p).correlation_data,
+            Some(Bytes::from_static(b"req-7"))
+        );
+        let p = PubProperties {
+            correlation_hex: Some("  ".into()),
+            ..Default::default()
+        };
+        assert_eq!(v5_publish_properties(&p).correlation_data, None);
+    }
+
+    #[test]
     fn will_properties_are_omitted_until_the_v5_fields_are_used() {
         let mut c = cfg();
         c.will_topic = Some("device/offline".into());
@@ -577,7 +937,8 @@ mod tests {
     }
 
     #[test]
-    fn plain_tcp_and_default_tls_stay_valid() {        // No TLS at all, and TLS trusting the system store, are both intentional.
+    fn plain_tcp_and_default_tls_stay_valid() {
+        // No TLS at all, and TLS trusting the system store, are both intentional.
         assert!(build_transport(&cfg()).unwrap().is_none());
         let mut tls = cfg();
         tls.use_tls = true;
@@ -626,5 +987,95 @@ mod tests {
         c.use_tls = true;
         c.tls_client_key_path = Some("Z:/client.key".into());
         assert!(connect_err(&c).contains("without a client certificate"));
+    }
+
+    /// (byte, variant) pairs straight from MQTT 5 §3.2.2.2.0, cross-checked
+    /// against the table mqtt.js ships in `mqtt-packet/constants.js`. If one of
+    /// these ever fails, the UI would be labelling a broker's refusal with the
+    /// wrong reason — which is the whole point of surfacing them.
+    #[test]
+    fn suback_reason_bytes_match_the_spec() {
+        use rumqttc::v5::mqttbytes::v5::SubscribeReasonCode as C;
+        let table: &[(u8, C)] = &[
+            (0x00, C::Success(rumqttc::v5::mqttbytes::QoS::AtMostOnce)),
+            (0x01, C::Success(rumqttc::v5::mqttbytes::QoS::AtLeastOnce)),
+            (0x02, C::Success(rumqttc::v5::mqttbytes::QoS::ExactlyOnce)),
+            (0x80, C::Unspecified),
+            (0x83, C::ImplementationSpecific),
+            (0x87, C::NotAuthorized),
+            (0x8F, C::TopicFilterInvalid),
+            (0x91, C::PkidInUse),
+            (0x97, C::QuotaExceeded),
+            (0x9E, C::SharedSubscriptionsNotSupported),
+            (0xA1, C::SubscriptionIdNotSupported),
+            (0xA2, C::WildcardSubscriptionsNotSupported),
+        ];
+        for (byte, variant) in table {
+            assert_eq!(&sub_code_v5(variant), byte, "variant {variant:?}");
+            // Every byte we can produce must have a label, and only the ≥0x80
+            // ones may be described as failures.
+            assert_ne!(
+                crate::acks::describe_sub(*byte),
+                "unrecognized reason code",
+                "byte {byte:#x}"
+            );
+            assert_eq!(crate::acks::is_error(*byte), *byte >= 0x80);
+        }
+    }
+
+    #[test]
+    fn unsuback_and_publish_reason_bytes_match_the_spec() {
+        use rumqttc::v5::mqttbytes::v5::{PubAckReason, PubCompReason, PubRecReason, UnsubAckReason};
+        assert_eq!(unsub_code_v5(&UnsubAckReason::Success), 0x00);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::NoSubscriptionExisted), 0x11);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::NotAuthorized), 0x87);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::TopicFilterInvalid), 0x8F);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::PacketIdentifierInUse), 0x91);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::UnspecifiedError), 0x80);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::ImplementationSpecificError), 0x83);
+
+        assert_eq!(puback_code_v5(&PubAckReason::Success), 0x00);
+        assert_eq!(puback_code_v5(&PubAckReason::NoMatchingSubscribers), 0x10);
+        assert_eq!(puback_code_v5(&PubAckReason::TopicNameInvalid), 0x90);
+        assert_eq!(puback_code_v5(&PubAckReason::PacketIdentifierInUse), 0x91);
+        assert_eq!(puback_code_v5(&PubAckReason::QuotaExceeded), 0x97);
+        assert_eq!(puback_code_v5(&PubAckReason::PayloadFormatInvalid), 0x99);
+        assert_eq!(pubrec_code_v5(&PubRecReason::NotAuthorized), 0x87);
+        assert_eq!(pubcomp_code_v5(&PubCompReason::Success), 0x00);
+        assert_eq!(pubcomp_code_v5(&PubCompReason::PacketIdentifierNotFound), 0x92);
+
+        // "No matching subscribers" is the case the UI must not call an error and
+        // must not call a delivery either.
+        assert!(!crate::acks::is_error(0x10));
+        assert!(!crate::acks::is_plain_success(0x10));
+        assert_eq!(crate::acks::describe_pub(0x10), "no matching subscribers");
+    }
+
+    #[test]
+    fn v3_suback_codes_use_the_same_byte_space() {
+        use rumqttc::mqttbytes::v4::SubscribeReasonCode as C;
+        assert_eq!(sub_code_v3(&C::Success(rumqttc::QoS::AtLeastOnce)), 0x01);
+        assert_eq!(sub_code_v3(&C::Success(rumqttc::QoS::ExactlyOnce)), 0x02);
+        assert_eq!(sub_code_v3(&C::Failure), 0x80);
+        assert!(crate::acks::is_error(sub_code_v3(&C::Failure)));
+    }
+
+    #[test]
+    fn reason_strings_are_capped_because_they_are_broker_controlled() {
+        let long = "x".repeat(5000);
+        let props = rumqttc::v5::mqttbytes::v5::SubAckProperties {
+            reason_string: Some(long.clone()),
+            user_properties: Vec::new(),
+        };
+        let got = ack_reason_string(Some(&props)).expect("present");
+        assert_eq!(got.chars().count(), 200);
+        assert_ne!(got, long);
+
+        let blank = rumqttc::v5::mqttbytes::v5::SubAckProperties {
+            reason_string: Some("   ".into()),
+            user_properties: Vec::new(),
+        };
+        assert_eq!(ack_reason_string(Some(&blank)), None);
+        assert_eq!(ack_reason_string(None::<&rumqttc::v5::mqttbytes::v5::SubAckProperties>), None);
     }
 }

@@ -21,6 +21,8 @@ test.beforeEach(async ({ page }) => {
         w.calls.push({ cmd, args });
         if (cmd === 'get_connection_status') return { connected: true, brokerHost: 'localhost', brokerPort: 1883, clientId: 'test' };
         if (cmd === 'get_default_download_dir') return 'D:/Downloads';
+        if (cmd === 'get_subscription_ack_state')
+          return { rejected: [], refusedUnsubscribes: [], capped: [], unattributed: 0 };
         if (cmd === 'history_stats') return { rows: 3, inbound: 3, outbound: 0, oldestTs: now - 60_000, newestTs: now - 1000 };
         if (cmd === 'query_history') return rows.filter((r) => r.topic.includes(args.search));
         if (cmd === 'history_series') return [{ bucket: Math.floor((now - 1000) / args.bucketMs) * args.bucketMs, count: 3 }];

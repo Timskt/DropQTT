@@ -34,6 +34,8 @@ const boot = async (page: any, protocolVersion: number) => {
         if (cmd === 'test_broker_connection') return 10;
         // Mirror the real contract: these always return collections, never null.
         if (cmd === 'get_subscription_stats') return {};
+        if (cmd === 'get_subscription_ack_state')
+          return w.ackState ?? { rejected: [], refusedUnsubscribes: [], capped: [], unattributed: 0 };
         if (cmd === 'schedule_list') return [];
         if (cmd === 'rpc_list') return [];
         if (cmd === 'get_topic_stats' || cmd === 'get_broker_sys') return [];

@@ -181,8 +181,14 @@ pub struct BenchProgress {
     pub qos: u8,
     pub retain: bool,
     pub sent: u64,
-    /// QoS1 PUBACK / QoS2 PUBCOMP received since the run started
+    /// QoS1 PUBACK / QoS2 PUBCOMP received since the run started, carrying a
+    /// plain success reason. A refused ack never lands here.
     pub acked: u64,
+    /// PUBACK/PUBREC refused with a reason code of 0x80 or above
+    pub nacked: u64,
+    /// PUBACK said "no matching subscribers": the broker took the packet and had
+    /// nowhere to put it. Not a failure, not a delivery.
+    pub no_subscribers: u64,
     /// Loopback copies we timed
     pub observed: u64,
     pub elapsed_ms: u64,
@@ -198,6 +204,8 @@ pub struct BenchRun {
     started_ms: i64,
     sent: AtomicU64,
     acked: AtomicU64,
+    nacked: AtomicU64,
+    no_subscribers: AtomicU64,
     inner: Mutex<RunInner>,
 }
 
@@ -247,6 +255,8 @@ impl BenchManager {
             started_ms: chrono::Utc::now().timestamp_millis(),
             sent: AtomicU64::new(0),
             acked: AtomicU64::new(0),
+            nacked: AtomicU64::new(0),
+            no_subscribers: AtomicU64::new(0),
             inner: Mutex::new(RunInner {
                 latency: LatencySamples::default(),
                 observed: 0,
@@ -276,6 +286,8 @@ impl BenchManager {
                     retain: r.spec.retain,
                     sent: r.sent.load(Ordering::SeqCst),
                     acked: r.acked.load(Ordering::SeqCst),
+                    nacked: r.nacked.load(Ordering::SeqCst),
+                    no_subscribers: r.no_subscribers.load(Ordering::SeqCst),
                     observed: inner.observed,
                     elapsed_ms: (inner
                         .finished_ms
@@ -353,6 +365,31 @@ impl BenchManager {
         for run in runs.values() {
             if run.status() == BenchStatus::Running {
                 run.acked.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// A refused PUBACK/PUBREC. Not credited to `acked`, because "the broker
+    /// answered" and "the broker accepted" are different claims — and a run that
+    /// shows 100% acked while every publish was refused is exactly the failure
+    /// this counter exists to make visible.
+    pub fn record_nack(&self) {
+        let runs = lock(&self.runs);
+        for run in runs.values() {
+            if run.status() == BenchStatus::Running {
+                run.nacked.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// PUBACK with reason 0x10: accepted, but nobody was subscribed. Typical when
+    /// the bench runs without the loopback subscription (or that subscription was
+    /// itself refused), and it must not be read as either a delivery or a failure.
+    pub fn record_no_subscribers(&self) {
+        let runs = lock(&self.runs);
+        for run in runs.values() {
+            if run.status() == BenchStatus::Running {
+                run.no_subscribers.fetch_add(1, Ordering::SeqCst);
             }
         }
     }
@@ -532,6 +569,20 @@ mod tests {
         assert_eq!(row.acked, 1, "a finished run stops accruing acks");
         assert_eq!(row.status, BenchStatus::Finished);
         assert!(!mgr.is_running("r2"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_publish_is_never_counted_as_acked() {
+        let mgr = BenchManager::new();
+        mgr.register(spec("r3"), Arc::new(AtomicBool::new(false)), park_handle());
+        mgr.record_sent("r3");
+        mgr.record_nack();
+        mgr.record_no_subscribers();
+        let row = &mgr.progress()[0];
+        assert_eq!(row.sent, 1);
+        assert_eq!(row.acked, 0, "a nack is not an ack");
+        assert_eq!(row.nacked, 1);
+        assert_eq!(row.no_subscribers, 1);
     }
 
     #[tokio::test]

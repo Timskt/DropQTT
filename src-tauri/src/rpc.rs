@@ -39,7 +39,10 @@ pub struct RpcReply {
     pub payload_len: usize,
     pub qos: u8,
     pub retain: bool,
-    pub correlation_data: Option<String>,
+    /// Correlation data exactly as it arrived, hex-encoded for display. It is an
+    /// opaque byte string on the wire, so decoding it as UTF-8 would be a claim
+    /// the bytes never made.
+    pub correlation_hex: Option<String>,
     pub content_type: Option<String>,
     pub timestamp_ms: i64,
 }
@@ -129,17 +132,18 @@ impl RpcRegistry {
 
     /// Pair an inbound message against a pending request.
     ///
-    /// A reply that carries correlation data must match it exactly; a reply
-    /// that carries none is paired with the oldest pending request on that
-    /// topic, because plenty of devices just answer on the response topic.
+    /// A reply that carries correlation data must match it **byte for byte**
+    /// against what we published; a reply that carries none (or a zero-length
+    /// value, which says nothing) is paired with the oldest pending request on
+    /// that topic, because plenty of devices just answer on the response topic.
     pub fn match_reply(
         &mut self,
         topic: &str,
-        correlation: Option<&str>,
+        correlation: Option<&[u8]>,
         now_ms: i64,
         reply: RpcReply,
     ) -> Option<RpcCall> {
-        let wanted = correlation.map(str::trim).filter(|s| !s.is_empty());
+        let wanted = correlation.filter(|b| !b.is_empty());
         let mut pick: Option<(usize, bool)> = None; // (order index, paired_by_position)
         for (idx, id) in self.order.iter().enumerate() {
             let Some(call) = self.calls.get(id) else { continue };
@@ -148,7 +152,9 @@ impl RpcRegistry {
             }
             match wanted {
                 Some(corr) => {
-                    if call.correlation == corr {
+                    // The request went out as the UTF-8 bytes of this text, so
+                    // that is the only fair comparison.
+                    if call.correlation.as_bytes() == corr {
                         pick = Some((idx, false));
                         break;
                     }
@@ -298,14 +304,15 @@ mod tests {
         }
     }
 
-    fn reply(topic: &str, correlation: Option<&str>) -> RpcReply {
+    /// Replies arrive as bytes, so the test helper speaks bytes too.
+    fn reply(topic: &str, correlation: Option<&[u8]>) -> RpcReply {
         RpcReply {
             topic: topic.to_string(),
             payload_base64: "cG9uZw==".to_string(),
             payload_len: 4,
             qos: 1,
             retain: false,
-            correlation_data: correlation.map(str::to_string),
+            correlation_hex: correlation.map(hex::encode),
             content_type: None,
             timestamp_ms: 0,
         }
@@ -324,7 +331,7 @@ mod tests {
         let mut reg = RpcRegistry::default();
         reg.record(call("a", "dev/resp", "corr-a", 1_000));
         let matched = reg
-            .match_reply("dev/resp", Some("corr-a"), 1_340, reply("dev/resp", Some("corr-a")))
+            .match_reply("dev/resp", Some(b"corr-a"), 1_340, reply("dev/resp", Some(b"corr-a")))
             .expect("pairs");
         assert_eq!(matched.state, RpcState::Resolved);
         assert_eq!(matched.rtt_ms, Some(340));
@@ -332,6 +339,63 @@ mod tests {
         assert_eq!(reg.pending(), 0);
         let stored = reg.get("a").expect("kept");
         assert_eq!(stored.reply.as_ref().unwrap().payload_base64, "cG9uZw==");
+        assert_eq!(
+            stored.reply.as_ref().unwrap().correlation_hex.as_deref(),
+            Some("636f72722d61"),
+            "the reply keeps what actually arrived, as hex"
+        );
+    }
+
+    #[test]
+    fn a_binary_reply_cannot_pair_through_a_lossy_text_decoding() {
+        // The bug this guards: correlation data is an opaque byte string, and the
+        // receiving side used to run it through `String::from_utf8_lossy` before
+        // comparing. A device echoing 0xFF 0x00 became "\u{FFFD}\u{0}" - which is
+        // precisely the text a user could paste back from an earlier log line, so
+        // the old code would pair a reply with a request it had never seen.
+        let mut reg = RpcRegistry::default();
+        reg.record(call("a", "dev/resp", "\u{fffd}\u{0}", 1_000));
+        let echoed = [0xffu8, 0x00];
+        assert_ne!(
+            "\u{fffd}\u{0}".as_bytes(),
+            &echoed[..],
+            "the replacement char encodes to EF BF BD, so these are different bytes"
+        );
+        assert!(
+            reg.match_reply("dev/resp", Some(&echoed), 1_200, reply("dev/resp", Some(&echoed)))
+                .is_none(),
+            "bytes must be compared to bytes"
+        );
+        assert_eq!(reg.pending(), 1);
+        // A reply that is genuinely not text still records what arrived.
+        let note = reply("dev/resp", Some(&echoed));
+        assert_eq!(note.correlation_hex.as_deref(), Some("ff00"));
+    }
+
+    #[test]
+    fn the_bytes_of_a_text_correlation_still_pair_exactly() {
+        // The positive half: the common case did not regress, because the request
+        // went out as these same UTF-8 bytes.
+        let mut reg = RpcRegistry::default();
+        reg.record(call("a", "dev/resp", "\u{fffd}\u{0}", 1_000));
+        let bytes = "\u{fffd}\u{0}".as_bytes();
+        let matched = reg
+            .match_reply("dev/resp", Some(bytes), 1_200, reply("dev/resp", Some(bytes)))
+            .expect("pairs");
+        assert!(!matched.paired_by_position);
+    }
+
+    #[test]
+    fn padding_in_the_reply_is_not_trimmed_away() {
+        // MQTT says correlation data is echoed verbatim. A device that pads it is
+        // broken, and the honest response is a visible timeout whose row shows the
+        // hex — not a pairing invented by trimming.
+        let mut reg = RpcRegistry::default();
+        reg.record(call("a", "dev/resp", "corr-a", 1_000));
+        assert!(reg
+            .match_reply("dev/resp", Some(b"corr-a "), 1_200, reply("dev/resp", Some(b"corr-a ")))
+            .is_none());
+        assert_eq!(reg.pending(), 1);
     }
 
     #[test]
@@ -340,12 +404,12 @@ mod tests {
         reg.record(call("old", "dev/resp", "corr-old", 1_000));
         reg.record(call("new", "dev/resp", "corr-new", 1_500));
         let first = reg
-            .match_reply("dev/resp", None, 1_800, reply("dev/resp", None))
+            .match_reply("dev/resp", None::<&[u8]>, 1_800, reply("dev/resp", None))
             .expect("pairs");
         assert_eq!(first.id, "old");
         assert!(first.paired_by_position);
         let second = reg
-            .match_reply("dev/resp", Some(""), 1_900, reply("dev/resp", Some("")))
+            .match_reply("dev/resp", Some(b""), 1_900, reply("dev/resp", Some(b"")))
             .expect("pairs");
         assert_eq!(second.id, "new");
         assert!(second.paired_by_position);
@@ -360,11 +424,11 @@ mod tests {
         let mut reg = RpcRegistry::default();
         reg.record(call("a", "dev/resp", "corr-a", 1_000));
         assert!(reg
-            .match_reply("dev/resp", Some("corr-zzz"), 1_200, reply("dev/resp", Some("corr-zzz")))
+            .match_reply("dev/resp", Some(b"corr-zzz"), 1_200, reply("dev/resp", Some(b"corr-zzz")))
             .is_none());
         assert_eq!(reg.pending(), 1);
         assert!(reg
-            .match_reply("dev/other", Some("corr-a"), 1_200, reply("dev/other", Some("corr-a")))
+            .match_reply("dev/other", Some(b"corr-a"), 1_200, reply("dev/other", Some(b"corr-a")))
             .is_none());
         assert_eq!(reg.pending(), 1);
     }
@@ -373,10 +437,10 @@ mod tests {
     fn the_first_reply_wins_a_double_answer() {
         let mut reg = RpcRegistry::default();
         reg.record(call("a", "dev/resp", "corr-a", 1_000));
-        reg.match_reply("dev/resp", Some("corr-a"), 1_100, reply("dev/resp", Some("corr-a")))
+        reg.match_reply("dev/resp", Some(b"corr-a"), 1_100, reply("dev/resp", Some(b"corr-a")))
             .unwrap();
         assert!(reg
-            .match_reply("dev/resp", Some("corr-a"), 9_000, reply("dev/resp", Some("corr-a")))
+            .match_reply("dev/resp", Some(b"corr-a"), 9_000, reply("dev/resp", Some(b"corr-a")))
             .is_none());
         assert_eq!(reg.snapshot()[0].rtt_ms, Some(100));
     }
@@ -386,7 +450,7 @@ mod tests {
         let mut reg = RpcRegistry::default();
         reg.record(call("a", "dev/resp", "corr-a", 1_000));
         reg.record(call("b", "dev/resp", "corr-b", 1_000));
-        reg.match_reply("dev/resp", Some("corr-b"), 1_200, reply("dev/resp", Some("corr-b")))
+        reg.match_reply("dev/resp", Some(b"corr-b"), 1_200, reply("dev/resp", Some(b"corr-b")))
             .unwrap();
         assert!(reg.expire("b").is_none(), "a resolved call must not also time out");
         let timed = reg.expire("a").expect("pending call expires");
@@ -401,7 +465,7 @@ mod tests {
         let mut reg = RpcRegistry::default();
         reg.record(call("a", "dev/resp", "corr-a", 1_000));
         reg.record(call("b", "dev/resp", "corr-b", 1_000));
-        reg.match_reply("dev/resp", Some("corr-b"), 1_200, reply("dev/resp", Some("corr-b")))
+        reg.match_reply("dev/resp", Some(b"corr-b"), 1_200, reply("dev/resp", Some(b"corr-b")))
             .unwrap();
         let gone = reg.expire_all();
         assert_eq!(gone.len(), 1, "only the still-pending call is reported");
@@ -416,7 +480,7 @@ mod tests {
         let mut reg = RpcRegistry::default();
         reg.record(call("a", "dev/resp", "corr-a", 1_000));
         reg.record(call("b", "dev/resp", "corr-b", 1_000));
-        reg.match_reply("dev/resp", Some("corr-b"), 1_200, reply("dev/resp", Some("corr-b")))
+        reg.match_reply("dev/resp", Some(b"corr-b"), 1_200, reply("dev/resp", Some(b"corr-b")))
             .unwrap();
         assert_eq!(reg.clear_finished(), 1);
         assert_eq!(reg.snapshot().len(), 1);
@@ -480,7 +544,7 @@ mod tests {
         for i in 0..(MAX_FINISHED_KEPT + 40) {
             let id = format!("f{i}");
             reg.record(call(&id, "dev/resp", &id, 2_000));
-            reg.match_reply("dev/resp", Some(&id), 2_100, reply("dev/resp", Some(&id)))
+            reg.match_reply("dev/resp", Some(id.as_bytes()), 2_100, reply("dev/resp", Some(id.as_bytes())))
                 .unwrap();
         }
         let rows = reg.snapshot();

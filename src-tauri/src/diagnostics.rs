@@ -47,6 +47,16 @@ pub struct MqttDiagnostics {
     pub rpc_pending: usize,
     /// Request/response calls that were never answered, this session
     pub rpc_timeouts: u64,
+    /// Subscriptions the broker refuses right now (SUBACK >= 0x80). Non-zero means
+    /// the console is showing a subscription that receives nothing.
+    pub subscriptions_rejected: usize,
+    /// Unsubscribes the broker refuses. The app already dropped them locally, so
+    /// the broker may still be delivering on them.
+    pub unsubscribes_rejected: usize,
+    /// Ack reason bytes with no filter of ours waiting for them
+    pub acks_unattributed: u64,
+    /// Publishes answered with a refusal this session (PUBACK/PUBREC/PUBCOMP)
+    pub publish_rejected: u64,
     pub topic_stats_count: usize,
     /// Backend-scheduled publishes still running
     pub scheduled_runs: usize,
@@ -285,6 +295,34 @@ fn build_checks(mqtt: &MqttDiagnostics, bridge: &BridgeDiagnostics) -> Vec<Diagn
     };
     checks.push(check("rpc_activity", rpc_level, rpc_detail));
 
+    // The ack verdicts: a refused SUBSCRIBE is the one protocol answer that turns
+    // a green subscription into a silent nothing, so it has its own line even when
+    // everything else looks healthy.
+    let ack_total = mqtt.subscriptions_rejected + mqtt.unsubscribes_rejected;
+    let (ack_level, ack_detail) = if ack_total > 0 {
+        (
+            "warn",
+            format!(
+                "{} subscription(s) refused, {} unsubscribe(s) refused (see the subscriptions bar)",
+                mqtt.subscriptions_rejected, mqtt.unsubscribes_rejected
+            ),
+        )
+    } else if mqtt.publish_rejected > 0 {
+        (
+            "warn",
+            format!("{} publish(es) refused by the broker", mqtt.publish_rejected),
+        )
+    } else {
+        (
+            "ok",
+            format!(
+                "{} subscription(s) registered, {} publish(es) refused",
+                mqtt.subscriptions, mqtt.publish_rejected
+            ),
+        )
+    };
+    checks.push(check("ack_verdicts", ack_level, ack_detail));
+
     let bridge_level =
         if (bridge.enabled_rules > 0 && bridge.connected_connections == 0) || bridge.errors > 0 {
             "warn"
@@ -358,6 +396,10 @@ mod tests {
             confirm_timeouts: 0,
             rpc_pending: 0,
             rpc_timeouts: 0,
+            subscriptions_rejected: 0,
+            unsubscribes_rejected: 0,
+            acks_unattributed: 0,
+            publish_rejected: 0,
             topic_stats_count: 4,
             scheduled_runs: 0,
             bench_runs: 0,

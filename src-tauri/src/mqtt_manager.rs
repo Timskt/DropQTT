@@ -152,6 +152,38 @@ pub struct SysRow {
     pub last_seen: u64,
 }
 
+/// A publish the broker refused (or dropped with "no matching subscribers"),
+/// reported with the reason byte it sent. Carries no topic or payload: those are
+/// the user's own, and the reason is what identifies the problem.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishRejection {
+    pub code: u8,
+    pub meaning: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_string: Option<String>,
+}
+
+/// Machine-readable form of a broker ack refusal, for the ops panel.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AckRejectedEvent {
+    pub stage: String,
+    pub code: u8,
+    pub meaning: String,
+}
+
+/// The broker granted a subscription at a lower QoS than we asked for. That is
+/// legal (MQTT 5 §3.2.2.2.0) and silently changes delivery semantics, so it is
+/// reported rather than smoothed over.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QosDowngrade {
+    pub filter: String,
+    pub asked: u8,
+    pub granted: u8,
+}
+
 pub struct MqttManager {
     client: RwLock<Option<MqttClient>>,
     loop_control: Mutex<Option<(JoinHandle<()>, Arc<AtomicBool>)>>,
@@ -160,6 +192,9 @@ pub struct MqttManager {
     subscriptions: Mutex<HashMap<String, crate::protocol::SubOptions>>,
     /// Topic filter -> number of matched inbound publishes (resettable stats)
     subscription_hits: Mutex<HashMap<String, u64>>,
+    /// SUBACK/UNSUBACK attribution: which registered filter each reason byte
+    /// belonged to, and which of them the broker refused.
+    sub_acks: Mutex<crate::acks::AckTracker>,
     /// Actual topic -> live traffic meter (resettable)
     topic_stats: Mutex<HashMap<String, TopicTraffic>>,
     /// Broker `$SYS/*` metrics: topic -> (latest value, last-seen epoch secs)
@@ -193,6 +228,8 @@ pub struct MqttManager {
     is_connected: AtomicBool,
     /// Sends whose peer never confirmed, cumulative for this session
     confirm_timeouts: std::sync::atomic::AtomicU64,
+    /// Publishes the broker refused outright (PUBACK/PUBREC/PUBCOMP >= 0x80)
+    publish_rejected: std::sync::atomic::AtomicU64,
     /// `topic-alias-maximum` from the latest CONNACK; 0 means the broker takes no
     /// aliases, so an alias on a publish would be a protocol violation.
     broker_alias_max: AtomicU16,
@@ -213,6 +250,7 @@ impl MqttManager {
             current_config: RwLock::new(None),
             subscriptions: Mutex::new(HashMap::new()),
             subscription_hits: Mutex::new(HashMap::new()),
+            sub_acks: Mutex::new(crate::acks::AckTracker::default()),
             topic_stats: Mutex::new(HashMap::new()),
             sys_metrics: Mutex::new(HashMap::new()),
             silence_watchdog: Arc::new(SilenceWatchdog::default()),
@@ -234,6 +272,7 @@ impl MqttManager {
             is_connected: AtomicBool::new(false),
             broker_alias_max: AtomicU16::new(0),
             confirm_timeouts: std::sync::atomic::AtomicU64::new(0),
+            publish_rejected: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -301,6 +340,15 @@ impl MqttManager {
             let reg = self.rpc.lock().await;
             (reg.pending(), reg.timeouts())
         };
+        let ack_stats = {
+            let tracker = self.sub_acks.lock().await;
+            let (un_sub, un_unsub) = tracker.unattributed();
+            (
+                tracker.rejections().len(),
+                tracker.unsubscribe_rejections().len(),
+                un_sub + un_unsub,
+            )
+        };
 
         crate::diagnostics::MqttDiagnostics {
             configured,
@@ -321,6 +369,10 @@ impl MqttManager {
             confirm_timeouts: self.confirm_timeouts.load(Ordering::SeqCst),
             rpc_pending: rpc_stats.0,
             rpc_timeouts: rpc_stats.1,
+            subscriptions_rejected: ack_stats.0,
+            unsubscribes_rejected: ack_stats.1,
+            acks_unattributed: ack_stats.2,
+            publish_rejected: self.publish_rejected.load(Ordering::SeqCst),
             topic_stats_count,
             scheduled_runs: self.scheduler.running_count(),
             bench_runs: self.bench.running_count(),
@@ -398,13 +450,29 @@ impl MqttManager {
                         // (Re)apply every registered subscription after CONNACK,
                         // including automatic reconnects.
                         if let Some(client) = this.client.read().await.clone() {
-                            let subs: Vec<(String, crate::protocol::SubOptions)> = this
-                                .subscriptions
-                                .lock()
-                                .await
-                                .iter()
-                                .map(|(t, o)| (t.clone(), *o))
-                                .collect();
+                            let subs: Vec<(String, crate::protocol::SubOptions)> = {
+                                let tracker = this.sub_acks.lock().await;
+                                this.subscriptions
+                                    .lock()
+                                    .await
+                                    .iter()
+                                    // A quarantined filter is one the broker refused;
+                                    // rumqttc treats that as fatal, so replaying it
+                                    // would drop the session again on every reconnect.
+                                    .filter(|(t, _)| !tracker.is_quarantined(t))
+                                    .map(|(t, o)| (t.clone(), *o))
+                                    .collect()
+                            };
+                            // One SUBSCRIBE packet per filter, so each SUBACK's
+                            // single reason byte can be attributed by order.
+                            {
+                                let mut tracker = this.sub_acks.lock().await;
+                                tracker.reset_pending();
+                                for (topic, _) in &subs {
+                                    tracker.expect_sub(topic);
+                                }
+                                tracker.expect_sub("$SYS/#");
+                            }
                             for (topic, opts) in subs {
                                 let _ = client.subscribe(&topic, &opts).await;
                             }
@@ -421,6 +489,8 @@ impl MqttManager {
                         let _ = app_handle.emit("broker-status", this.get_connection_status().await);
                     }
                     NetEvent::ConnectionError(e) => {
+                        // Those packet ids are gone with the session.
+                        this.sub_acks.lock().await.reset_pending();
                         if this.is_connected.swap(false, Ordering::SeqCst) {
                             let _ = app_handle.emit("broker-status", this.get_connection_status().await);
                         }
@@ -430,10 +500,40 @@ impl MqttManager {
                     NetEvent::Publish(publish) => {
                         this.route_message(&app_handle, publish).await;
                     }
-                    NetEvent::PublishAcked => {
+                    NetEvent::PublishAcked { code, reason_string } => {
                         // Only the bench lab cares, and it compares this against
-                        // `sent` to show client-side backpressure.
-                        this.bench.record_ack();
+                        // `sent` to show client-side backpressure — which is only
+                        // meaningful if a refused PUBACK is not counted as one.
+                        match code {
+                            0x00 => this.bench.record_ack(),
+                            // The broker accepted the packet and had nowhere to
+                            // put it. Not a failure, not a delivery: its own bucket.
+                            0x10 => this.bench.record_no_subscribers(),
+                            c => {
+                                this.publish_rejected.fetch_add(1, Ordering::SeqCst);
+                                this.bench.record_nack();
+                                let _ = app_handle.emit(
+                                    "publish-rejected",
+                                    PublishRejection {
+                                        code: c,
+                                        meaning: crate::acks::describe_pub(c).to_string(),
+                                        reason_string,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    NetEvent::SubAck { codes, reason_string } => {
+                        this.apply_sub_ack(&app_handle, &codes, reason_string, true)
+                            .await;
+                    }
+                    NetEvent::UnsubAck { codes, reason_string } => {
+                        this.apply_sub_ack(&app_handle, &codes, reason_string, false)
+                            .await;
+                    }
+                    NetEvent::AckRejected { stage, code, text } => {
+                        this.handle_ack_rejected(&app_handle, stage, code, &text)
+                            .await;
                     }
                     NetEvent::Other => {}
                 }
@@ -564,6 +664,9 @@ impl MqttManager {
 
         // Drop the previous broker's $SYS snapshot so a reconnect starts clean
         self.sys_metrics.lock().await.clear();
+        // In-flight SUBACK/UNSUBACK slots die with this eventloop; leaving them
+        // would let a later answer be blamed on a filter we never asked about.
+        self.sub_acks.lock().await.reset_pending();
     }
 
     pub async fn subscribe_topic(&self, topic: String, opts: crate::protocol::SubOptions) -> Result<(), String> {
@@ -593,17 +696,189 @@ impl MqttManager {
                 .subscribe(&topic, &opts)
                 .await
                 .map_err(|e| format!("Subscribe failed for {topic}: {e}"))?;
+            // Only a SUBSCRIBE that reached the wire can be attributed: queueing
+            // a slot for a packet that was never sent would mis-pair the next
+            // broker's answer onto this filter.
+            self.sub_acks.lock().await.expect_sub(&topic);
         }
         Ok(())
     }
 
     pub async fn unsubscribe_topic(&self, topic: String) -> Result<(), String> {
+        let topic = topic.trim().to_string();
         self.subscriptions.lock().await.remove(&topic);
         self.subscription_hits.lock().await.remove(&topic);
+        {
+            let mut tracker = self.sub_acks.lock().await;
+            // Our own verdict on it is finished business; anything still awaiting
+            // a SUBACK for it must not consume the next unrelated answer.
+            tracker.forget(&topic);
+            if self.client.read().await.is_some() {
+                tracker.expect_unsub(&topic);
+            }
+        }
         if let Some(client) = self.client.read().await.clone() {
             client.unsubscribe(&topic).await;
         }
         Ok(())
+    }
+
+    /// Pair SUBACK/UNSUBACK reason bytes with the filters they answered, then
+    /// make the result visible: a refusal is emitted as an event, and a granted
+    /// QoS lower than requested is recorded as a downgrade.
+    ///
+    /// `is_sub` selects the queue; the two ack kinds share the shape but not the
+    /// FIFO, so a burst of unsubs cannot corrupt subscription attribution.
+    async fn apply_sub_ack(
+        &self,
+        app: &AppHandle,
+        codes: &[u8],
+        reason_string: Option<String>,
+        is_sub: bool,
+    ) {
+        if codes.is_empty() {
+            return;
+        }
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        // The asked-for QoS comes from the registry, not from the SUBACK.
+        let registered: HashMap<String, crate::protocol::SubOptions> =
+            self.subscriptions.lock().await.clone();
+        let outcomes = {
+            let mut tracker = self.sub_acks.lock().await;
+            let outcomes = if is_sub {
+                tracker.apply_sub(codes, reason_string, now_ms)
+            } else {
+                tracker.apply_unsub(codes, reason_string, now_ms)
+            };
+            for outcome in &outcomes {
+                if let crate::acks::Outcome::Granted { filter, granted_qos } = outcome {
+                    if let (Some(granted), Some(asked)) = (*granted_qos, registered.get(filter)) {
+                        tracker.note_granted_qos(filter, asked.qos, granted);
+                    }
+                }
+            }
+            outcomes
+        };
+        for outcome in outcomes {
+            match outcome {
+                crate::acks::Outcome::Rejected(r) => {
+                    // The chip goes red and the reason is named; the counter and
+                    // the list are additionally visible in the ops panel.
+                    let _ = app.emit(
+                        if is_sub {
+                            "subscription-rejected"
+                        } else {
+                            "unsubscribe-rejected"
+                        },
+                        &r,
+                    );
+                }
+                crate::acks::Outcome::Granted { filter, granted_qos } => {
+                    let asked = registered.get(&filter).map(|o| o.qos);
+                    if let (Some(asked), Some(granted)) = (asked, granted_qos) {
+                        if granted < asked {
+                            let _ = app.emit(
+                                "subscription-downgraded",
+                                &QosDowngrade {
+                                    filter,
+                                    asked,
+                                    granted,
+                                },
+                            );
+                        }
+                    }
+                }
+                // Counted by the tracker and reported through diagnostics; there
+                // is no filter to blame and no user action to name.
+                crate::acks::Outcome::Unattributed { .. } => {}
+            }
+        }
+    }
+
+    /// Turn a broker ack refusal into a report. The session has already been
+    /// dropped by rumqttc at this point, so this is also the only place the user
+    /// learns *why* the connection went away.
+    async fn handle_ack_rejected(
+        &self,
+        app: &AppHandle,
+        stage: crate::transport::AckStage,
+        code: u8,
+        text: &str,
+    ) {
+        use crate::transport::AckStage as A;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let meaning = match stage {
+            A::Subscribe | A::Unsubscribe => crate::acks::describe_sub(code),
+            _ => crate::acks::describe_pub(code),
+        };
+        match stage {
+            A::Subscribe => {
+                let rejection = self
+                    .sub_acks
+                    .lock()
+                    .await
+                    .refuse_oldest_pending_sub(code, text, now_ms);
+                if let Some(r) = rejection {
+                    let _ = app.emit("subscription-rejected", &r);
+                }
+            }
+            A::Unsubscribe => {
+                let rejection = self
+                    .sub_acks
+                    .lock()
+                    .await
+                    .refuse_oldest_pending_unsub(code, text, now_ms);
+                if let Some(r) = rejection {
+                    let _ = app.emit("unsubscribe-rejected", &r);
+                }
+            }
+            A::PublishAck | A::PublishReceive | A::PublishComplete | A::PublishRelease => {
+                self.publish_rejected.fetch_add(1, Ordering::SeqCst);
+                self.bench.record_nack();
+                let _ = app.emit(
+                    "publish-rejected",
+                    PublishRejection {
+                        code,
+                        meaning: meaning.to_string(),
+                        reason_string: Some(text.to_string()),
+                    },
+                );
+            }
+            A::Connect | A::ServerDisconnect => {}
+        }
+        // The link really did go down; say so in terms the UI can render instead of
+        // leaking `MqttState(SubFail { .. })` into a banner.
+        if self.is_connected.swap(false, Ordering::SeqCst) {
+            let _ = app.emit("broker-status", self.get_connection_status().await);
+        }
+        let _ = app.emit(
+            "broker-disconnected",
+            format!("{:?} refused by the broker: {} (0x{:02X})", stage, meaning, code),
+        );
+        let _ = app.emit(
+            "ack-rejected",
+            AckRejectedEvent {
+                stage: format!("{:?}", stage),
+                code,
+                meaning: meaning.to_string(),
+            },
+        );
+    }
+
+    /// Filters the broker currently refuses, for the UI and the ops panel.
+    pub async fn get_rejected_subscriptions(&self) -> Vec<crate::acks::Rejection> {
+        self.sub_acks.lock().await.rejections()
+    }
+
+    /// All ack verdicts the console shows: refused subscriptions, refused
+    /// unsubscribes, and subscriptions the broker capped at a lower QoS.
+    pub async fn sub_ack_state(&self) -> crate::acks::AckState {
+        self.sub_acks.lock().await.state()
+    }
+
+    /// `(unattributed SUBACK, unattributed UNSUBACK)` reason bytes.
+    pub async fn unattributed_acks(&self) -> (u64, u64) {
+        self.sub_acks.lock().await.unattributed()
     }
 
     /// Latest broker `$SYS` metrics, sorted by topic (hottest health first).
@@ -1060,6 +1335,11 @@ impl MqttManager {
             user_properties: params.properties.user_properties.clone(),
             response_topic: params.properties.response_topic.clone(),
             correlation_data: params.properties.correlation_data.clone(),
+            correlation_hex: params
+                .properties
+                .correlation_data
+                .as_deref()
+                .map(|s| hex::encode(s.as_bytes())),
             payload_format: params.properties.payload_format,
             qos: params.qos,
             retain: params.retain,
@@ -1125,6 +1405,7 @@ impl MqttManager {
                 message_expiry: spec.message_expiry,
                 response_topic: Some(response_topic.clone()),
                 correlation_data: Some(correlation.clone()),
+                correlation_hex: None,
                 payload_format: spec.payload_format,
                 topic_alias: spec.topic_alias,
             },
@@ -1210,7 +1491,7 @@ impl MqttManager {
         &self,
         app: &AppHandle,
         topic: &str,
-        correlation: Option<&str>,
+        correlation: Option<&[u8]>,
         payload: &[u8],
         qos: u8,
         retain: bool,
@@ -1226,7 +1507,7 @@ impl MqttManager {
             payload_len: payload.len(),
             qos,
             retain,
-            correlation_data: correlation.map(str::to_string),
+            correlation_hex: correlation.map(hex::encode),
             content_type: content_type.map(str::to_string),
             timestamp_ms: now_ms,
         };
@@ -1419,6 +1700,11 @@ impl MqttManager {
             } else {
                 publish.payload.to_vec()
             };
+            let (corr_text, corr_hex) = publish
+                .correlation_data
+                .as_deref()
+                .map(crate::protocol::correlation_forms)
+                .unwrap_or((None, None));
             let msg = MqttGenericMessage {
                 id: uuid::Uuid::new_v4().to_string(),
                 topic: topic.clone(),
@@ -1429,7 +1715,8 @@ impl MqttManager {
                 content_type: publish.content_type.clone(),
                 user_properties: publish.user_properties.clone(),
                 response_topic: publish.response_topic.clone(),
-                correlation_data: publish.correlation_data.clone(),
+                correlation_data: corr_text,
+                correlation_hex: corr_hex,
                 payload_format: publish.payload_format,
                 qos: publish.qos,
                 retain: publish.retain,

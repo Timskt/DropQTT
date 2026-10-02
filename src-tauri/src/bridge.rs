@@ -538,7 +538,25 @@ impl BridgeManager {
                         this.route(&app_handle, &conn_id, publish).await;
                     }
                     // Bridge links forward; nothing here waits on a publish ack.
-                    NetEvent::PublishAcked => {}
+                    NetEvent::PublishAcked { .. } => {}
+                    NetEvent::SubAck { .. } | NetEvent::UnsubAck { .. } => {
+                        // Attribution needs the filter each ack answers, which is
+                        // the console's registry, not a bridge link's. A refused
+                        // bridge subscription surfaces as its own dropped traffic.
+                    }
+                    NetEvent::AckRejected { stage, code, text } => {
+                        // rumqttc drops the link on a refusal, so the bridge status
+                        // has to carry the reason or the link just looks unstable.
+                        let message = format!(
+                            "{stage:?} refused by the broker: {text} (0x{code:02X})"
+                        );
+                        if connected.swap(false, Ordering::SeqCst) {
+                            this.emit_status(&app_handle).await;
+                        }
+                        this.set_conn_error(&conn_id, Some(message)).await;
+                        this.emit_status(&app_handle).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                    }
                     NetEvent::Other => {}
                 }
             }
@@ -717,7 +735,18 @@ impl BridgeManager {
                     user_properties: publish.user_properties.clone(),
                     message_expiry: None,
                     response_topic: publish.response_topic.clone(),
-                    correlation_data: publish.correlation_data.clone(),
+                    // Bytes in, bytes out: text only when the device's correlation
+                    // actually is text, hex when it is not.
+                    correlation_data: publish
+                        .correlation_data
+                        .as_deref()
+                        .and_then(|b| std::str::from_utf8(b).ok())
+                        .map(str::to_string),
+                    correlation_hex: publish
+                        .correlation_data
+                        .as_deref()
+                        .filter(|b| std::str::from_utf8(b).is_err())
+                        .map(hex::encode),
                     // The payload-format flag describes the bytes themselves, so it
                     // survives a hop. A topic alias is only meaningful within the
                     // connection that registered it, so it is deliberately not
