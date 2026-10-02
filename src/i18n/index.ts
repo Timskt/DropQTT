@@ -45,6 +45,12 @@ export interface Translations {
   sysMsgReceived: string;
   sysMsgSent: string;
   sysLoad: string;
+  sysRetained: string;
+  sysSubscriptions: string;
+  sysBytesIn: string;
+  sysBytesOut: string;
+  sysNoDialect: string;
+  sysUnknownVendor: string;
   sysFilter: string;
   sysClear: string;
   sysEmptyWaiting: string;
@@ -640,6 +646,12 @@ export const translations: Record<Language, Translations> = {
     sysMsgReceived: '接收消息',
     sysMsgSent: '发送消息',
     sysLoad: '负载',
+    sysRetained: '保留消息',
+    sysSubscriptions: '订阅数',
+    sysBytesIn: '接收字节',
+    sysBytesOut: '发送字节',
+    sysNoDialect: '未识别该 broker 的 $SYS 布局（{vendor}），只显示原始树',
+    sysUnknownVendor: '未知厂商',
     sysFilter: '筛选 $SYS 主题…',
     sysClear: '清空指标',
     sysEmptyWaiting: '等待 Broker 上报 $SYS 指标（部分 Broker 需授权后才开放）',
@@ -1233,6 +1245,12 @@ export const translations: Record<Language, Translations> = {
     sysMsgReceived: 'Msgs Received',
     sysMsgSent: 'Msgs Sent',
     sysLoad: 'Load',
+    sysRetained: 'Retained',
+    sysSubscriptions: 'Subscriptions',
+    sysBytesIn: 'Bytes in',
+    sysBytesOut: 'Bytes out',
+    sysNoDialect: 'No verified $SYS layout for this broker ({vendor}) — showing the raw tree',
+    sysUnknownVendor: 'unknown vendor',
     sysFilter: 'Filter $SYS topics…',
     sysClear: 'Clear metrics',
     sysEmptyWaiting: 'Waiting for broker $SYS metrics (some brokers require authorization)',
@@ -1826,6 +1844,12 @@ export const translations: Record<Language, Translations> = {
     sysMsgReceived: '接收訊息',
     sysMsgSent: '發送訊息',
     sysLoad: '負載',
+    sysRetained: '保留訊息',
+    sysSubscriptions: '訂閱數',
+    sysBytesIn: '接收位元組',
+    sysBytesOut: '發送位元組',
+    sysNoDialect: '未識別該 broker 的 $SYS 佈局（{vendor}），只顯示原始樹',
+    sysUnknownVendor: '未知廠商',
     sysFilter: '篩選 $SYS 主題…',
     sysClear: '清空指標',
     sysEmptyWaiting: '等待 Broker 上報 $SYS 指標（部分 Broker 需授權後才開放）',
@@ -2419,6 +2443,12 @@ export const translations: Record<Language, Translations> = {
     sysMsgReceived: '受信メッセージ',
     sysMsgSent: '送信メッセージ',
     sysLoad: '負荷',
+    sysRetained: 'retained',
+    sysSubscriptions: 'サブスクリプション',
+    sysBytesIn: '受信バイト',
+    sysBytesOut: '送信バイト',
+    sysNoDialect: 'このブローカー ({vendor}) の $SYS 配置は未検証です — 生のツリーを表示',
+    sysUnknownVendor: 'ベンダー不明',
     sysFilter: '$SYS トピックを絞り込み…',
     sysClear: '指標をクリア',
     sysEmptyWaiting: 'Broker の $SYS 指標を待機中（認可が必要な Broker があります）',

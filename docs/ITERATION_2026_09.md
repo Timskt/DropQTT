@@ -871,6 +871,26 @@ localStorage（应用在挂载时会把内存里的旧 profile 写回去，覆�
 Playwright **61/61**、`tsc`/`clippy` 干净、ESLint 预算不变。
 这三块新指标**没有 UI 测试**（现有 mock 不提供 `get_diagnostics_snapshot`），只有 Rust 侧与类型对齐为证。
 
+### 4.31 $SYS 面板：读过的布局才用，没读过的就直说（§2 E9）
+
+原来是 `topic.includes('received')` 这类子串猜测 —— 两个主题都含同一个词就会挑错行，
+换一个 $SYS 树不同的 broker 就什么都不显示（而表头仍然是绿的）。现在：
+
+- `src/utils/sysDialect.ts` 是一张**显式命名表**。**Mosquitto 的 10 个指标全部来自本机
+  真实抓取的 38 个主题**（`mosquitto_sub -V mqttv5 -t '$SYS/#' -F '%t'`，临时实例 18834，用完即停），
+  不是照文档抄的 —— 单测里那份主题清单就是那次抓取的原文。
+- **认领要证据**：signature 里至少两个主题存在才算命中（`uptime` 故意不在 signature 里，
+  因为几乎所有 broker 都有 uptime 行，它什么也证明不了）。
+- **EMQX / HiveMQ / VerneMQ / NanoMQ 刻意不做表**：这台机器上没有可读的实例，
+  凭文档编一张表只是把猜测换了个更自信的外衣。面板改为明说
+  "No verified $SYS layout for this broker (EMQX) — showing the raw tree"，原始树照常可展开。
+  要补哪一家，得有一个能连的实例。
+- 新增 4 张卡（retained / subscriptions / 字节进出），标签在 memo 内部构造，
+  所以不需要 `exhaustive-deps` 抑制。
+
+门：vitest **41/41**（新增 6 项，含"只有一个巧合主题不得认领"与"未知厂商不得编名字"）、
+Playwright **64/64**（新增 `tests/ui/sys-dialect.spec.ts` 3 项）、`tsc`/`eslint` 干净（warn 预算 10 不变）。
+
 ### 5.10 本轮（A1/A2）没有做到的三件事
 
 1. **PUBACK 拒绝没能在桌面应用里跑通**。同样适用于 §4.28 的遗嘱属性上线编码。代码路径有 harness 测试、有真实 mosquitto 的 `PUBACK rc135` 证据、
