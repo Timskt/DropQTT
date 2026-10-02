@@ -13,6 +13,7 @@ import { SubscriptionsBar } from './components/mqttx/SubscriptionsBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MessageStream } from './components/mqttx/MessageStream';
 import { MessagePublisher } from './components/mqttx/MessagePublisher';
+import { useBrokerCapabilities } from './hooks/useBrokerCapabilities';
 import { TopicTrafficPanel } from './components/mqttx/TopicTrafficPanel';
 import { BrokerSysPanel } from './components/mqttx/BrokerSysPanel';
 import { BridgePanel } from './components/bridge/BridgePanel';
@@ -108,6 +109,8 @@ export function App() {
 
   // Broker $SYS health metrics (console + connected only)
   const brokerSys = useBrokerSys(broker.isConnected && activeMode === 'mqttx');
+  // The broker's own account of its limits, read from the CONNACK.
+  const brokerCaps = useBrokerCapabilities(broker.isConnected);
 
   const handleClearRetained = async (topics: string[]) => {
     for (const topic of topics) {
@@ -254,6 +257,7 @@ export function App() {
           {activeMode === 'ops' ? (
             <OpsPanel
               t={t}
+              caps={brokerCaps}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onOpenConsole={() => setModeStr('mqttx')}
               onOpenHistory={() => setModeStr('history')}
@@ -329,6 +333,7 @@ export function App() {
                 onRemoveSubscription={mqtt.removeSubscription}
                 hitStats={subStats.stats}
                 ack={subStats.ack}
+                caps={brokerCaps}
                 onResetStats={subStats.resetStats}
                 connected={broker.isConnected}
                 isV5={isV5}
@@ -387,6 +392,7 @@ export function App() {
                 onRpcRequest={isV5 && broker.isConnected ? rpc.request : undefined}
                 connected={broker.isConnected}
                 isV5={isV5}
+                caps={brokerCaps}
                 t={t}
               />
 

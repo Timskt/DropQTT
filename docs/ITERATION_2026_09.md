@@ -788,6 +788,33 @@ error: linking with `link.exe` failed
 
 报告里剩下的 P2（`MessageStream` 虚拟化、`{n}` 手工插值统一、`BridgePanel` 防连点、`spawn_blocking`、`useTransfers` 去轮询、bridge 事件上限常量、诊断构造迂回、`$SYS` 关键词识别）**仍然成立**，已并入 §6 的候选池。
 
+### 4.27 CONNACK 不再只读一个字段（A3，§1.4）
+
+以前只从 CONNACK 里取 `topic-alias-maximum`，其余通告全部丢弃。现在 `transport::ConnCapabilities`
+按 MQTT5 §3.2.2.3.0 的**缺省语义**收下全部通告（"没发这个属性"与"发了 0"是两件事，
+`retain-available` 缺省是"支持"，`topic-alias-max` 缺省才是 0），并把它变成三处行为：
+
+- **发布前置门**（`publish_console`）：QoS 高于 `maximum-qos`、retain 撞上 `retain-available = 0`、
+  估算报文超过 `maximum-packet-size`，都在本地拒绝并给出可读原因。理由与别名门一样：
+  rumqttc 不会替我们协商降级，它照发，broker 决定多不客气。
+- **订阅前置门**（`subscribe_topic`）：broker 通告不支持通配符/共享订阅时本地直接拒。
+  这跟 §4.25 是一对 —— 那种 SUBACK 拒绝会把会话拆掉，最好的处理是**根本不发出这个请求**。
+- **表单跟随通告**：QoS 下拉里超限项 `disabled` 并带 ✕，retain 复选框禁用，共享订阅开关禁用；
+  而"为什么点不动"必须可见，所以超限的**已存草稿**会在发布区显式给一行红字警告
+  （`broker accepts up to QoS 1 · this broker has retain unavailable`）。
+  未通告（v3 或尚未连接）时一律不加限制 —— 猜出来的能力比没有更糟。
+- 运维面板新增"broker 通告的能力"表。
+
+真机（探针 broker 通告 maxQos 1 / retain 0 / shared 0 / alias 10 / receive 5 / packet 1 MB /
+keep-alive 45 / session-expiry 120 / assigned-client-id）：QoS 选项渲染为
+`QoS 2 ✕(disabled)`，retain 与共享开关 `disabled`，开关 title 给出原因，
+草稿警告行两句话都在；运维表 12 行全部如实显示。门：harness **123/123**、vitest 35、
+Playwright **58/58**（新增 `tests/ui/broker-caps.spec.ts` 6 项）、`tsc`/`clippy` 干净、
+ESLint 0 error / warn 预算仍是 10（新 hook 用**派生**而不是在 effect 里清空状态，避免再加一条告警）。
+
+一个顺带发现，**没有在本轮修**：broker 指派 `assigned-client-identifier` 时我们显示了它，
+但重连仍用回自己的 clientId —— MQTT5 要求此后用服务端指派的那个。它改的是重连语义，单独排期。
+
 ### 5.10 本轮（A1/A2）没有做到的三件事
 
 1. **PUBACK 拒绝没能在桌面应用里跑通**。代码路径有 harness 测试、有真实 mosquitto 的 `PUBACK rc135` 证据、

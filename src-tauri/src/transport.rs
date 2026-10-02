@@ -125,9 +125,11 @@ pub enum AckStage {
 /// Normalized eventloop notifications.
 #[derive(Debug)]
 pub enum NetEvent {
-    /// CONNACK received (initial connect or automatic reconnect). Carries the
-    /// broker's `topic-alias-maximum`, which bounds the aliases we may send.
-    Connected(u16),
+    /// CONNACK received (initial connect or automatic reconnect), reduced to the
+    /// capabilities the broker announced. Anything we send outside that set is a
+    /// protocol violation the broker may answer by dropping the connection, so it
+    /// is refused here instead.
+    Connected(ConnCapabilities),
     /// Transport-level failure; rumqttc keeps retrying on the next poll
     ConnectionError(String),
     /// Incoming publish packet
@@ -169,6 +171,135 @@ pub enum NetEvent {
     },
     /// Any other packet we intentionally ignore (AUTH, PINGRESP, ...)
     Other,
+}
+
+/// What the broker said it supports, with MQTT 5 §3.2.2.3.0 / §3.2.2.2.0 defaults
+/// applied to whatever it did not send. `None` means "absent on the wire", which
+/// is a different fact from "zero" only where the spec says so.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnCapabilities {
+    /// 0 means the broker takes no topic aliases at all.
+    pub topic_alias_max: u16,
+    /// Highest QoS accepted for a publish. Default 2.
+    pub max_qos: u8,
+    /// `retain-available`, default true.
+    pub retain_available: bool,
+    pub wildcard_available: bool,
+    pub shared_available: bool,
+    pub subscription_ids_available: bool,
+    /// `receive-maximum`: in-flight publishes we may leave unacked. Default 65535.
+    pub receive_max: u16,
+    /// `maximum-packet-size`, `None` = no limit announced.
+    pub max_packet_size: Option<u32>,
+    /// `server-keep-alive`, in seconds, when the broker overrode ours.
+    pub server_keep_alive: Option<u16>,
+    pub session_expiry: Option<u32>,
+    pub assigned_client_id: Option<String>,
+    pub response_information: Option<String>,
+    pub server_reference: Option<String>,
+}
+
+impl Default for ConnCapabilities {
+    /// The values a v5 broker gets by *not* sending the property.
+    fn default() -> Self {
+        Self {
+            topic_alias_max: 0,
+            max_qos: 2,
+            retain_available: true,
+            wildcard_available: true,
+            shared_available: true,
+            subscription_ids_available: true,
+            receive_max: 65_535,
+            max_packet_size: None,
+            server_keep_alive: None,
+            session_expiry: None,
+            assigned_client_id: None,
+            response_information: None,
+            server_reference: None,
+        }
+    }
+}
+
+impl ConnCapabilities {
+    /// v3.1.1 has no capability negotiation. Aliases, shared and wildcard
+    /// *availability flags* do not exist either, but the topic-alias limit does
+    /// effectively: no alias may be sent, which is also `Default`'s 0.
+    pub fn v3() -> Self {
+        Self {
+            topic_alias_max: 0,
+            ..Default::default()
+        }
+    }
+
+    pub fn from_v5(props: Option<&rumqttc::v5::mqttbytes::v5::ConnAckProperties>) -> Self {
+        let Some(p) = props else {
+            return Self::default();
+        };
+        let byte_flag = |v: &Option<u8>| v.map(|x| x != 0).unwrap_or(true);
+        Self {
+            topic_alias_max: p.topic_alias_max.unwrap_or(0),
+            max_qos: p.max_qos.unwrap_or(2).min(2),
+            retain_available: byte_flag(&p.retain_available),
+            wildcard_available: byte_flag(&p.wildcard_subscription_available),
+            shared_available: byte_flag(&p.shared_subscription_available),
+            subscription_ids_available: byte_flag(&p.subscription_identifiers_available),
+            receive_max: p.receive_max.unwrap_or(65_535).max(1),
+            max_packet_size: p.max_packet_size.filter(|v| *v > 0),
+            server_keep_alive: p.server_keep_alive.filter(|v| *v > 0),
+            session_expiry: p.session_expiry_interval,
+            assigned_client_id: p.assigned_client_identifier.clone(),
+            response_information: p.response_information.clone(),
+            server_reference: p.server_reference.clone(),
+        }
+    }
+}
+
+/// Reject a QoS the broker said it does not accept. Publishing above
+/// `maximum-qos` is a protocol violation, so the choice is between telling the
+/// user and letting the broker drop the session.
+pub fn qos_rejection(requested: u8, max: u8) -> Option<String> {
+    (requested > max).then(|| {
+        format!("broker accepts QoS up to {max}, not {requested} (lower it to publish)")
+    })
+}
+
+/// Retain is refused the same way: `retain-available = 0` means the broker will
+/// not store it, and sending the flag anyway risks a disconnect.
+pub fn retain_rejection(retain: bool, available: bool) -> Option<String> {
+    (retain && !available)
+        .then(|| "broker has retain unavailable (retain-available = 0); clear retain to publish".to_string())
+}
+
+/// The broker's `maximum-packet-size` covers the whole CONTROL packet, so the
+/// payload alone is not the number to compare — this is the conservative check
+/// the app can make without a full encoder: payload plus a fixed overhead budget.
+pub fn packet_size_rejection(
+    payload_len: usize,
+    topic_len: usize,
+    max: Option<u32>,
+) -> Option<String> {
+    let max = max?;
+    // 2 (topic len) + topic + 5 (fixed header + property-length + id slack)
+    let estimate = payload_len + topic_len + 16;
+    (estimate > max as usize).then(|| {
+        format!(
+            "packet would be ~{estimate} bytes, over the broker's maximum-packet-size of {max} (shorten it)"
+        )
+    })
+}
+
+/// A subscribe the broker announced it cannot serve. Refusing locally is strictly
+/// better than sending it: the refusal would come back as a SUBACK reason code,
+/// which rumqttc treats as fatal and tears the session down over.
+pub fn subscribe_capability_error(filter: &str, caps: &ConnCapabilities) -> Option<String> {
+    if !caps.wildcard_available && (filter.contains('#') || filter.contains('+')) {
+        return Some("broker does not support wildcard subscriptions (wildcard-subscription-available = 0)".to_string());
+    }
+    if !caps.shared_available && crate::topic::parse_shared(filter).is_some() {
+        return Some("broker does not support shared subscriptions (shared-subscription-available = 0)".to_string());
+    }
+    None
 }
 
 pub enum MqttClient {
@@ -582,7 +713,9 @@ impl MqttEventLoop {
     pub async fn poll(&mut self) -> NetEvent {
         match self {
             MqttEventLoop::V3(loop3) => match loop3.poll().await {
-                Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => NetEvent::Connected(0),
+                Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
+                    NetEvent::Connected(ConnCapabilities::v3())
+                }
                 Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(p))) => {
                     NetEvent::Publish(NormalizedPublish {
                         topic: p.topic,
@@ -618,12 +751,7 @@ impl MqttEventLoop {
             },
             MqttEventLoop::V5(loop5) => match loop5.poll().await {
                 Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(a))) => {
-                    NetEvent::Connected(
-                        a.properties
-                            .as_ref()
-                            .and_then(|p| p.topic_alias_max)
-                            .unwrap_or(0),
-                    )
+                    NetEvent::Connected(ConnCapabilities::from_v5(a.properties.as_ref()))
                 }
                 Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(p))) => {
                     let (content_type, user_properties, response_topic, correlation_data, payload_format) =
@@ -865,6 +993,71 @@ mod tests {
             .topic_alias,
             None
         );
+    }
+
+    #[test]
+    fn absent_connack_properties_mean_the_specs_defaults_not_zeros() {
+        use rumqttc::v5::mqttbytes::v5::ConnAckProperties;
+        let bare = ConnCapabilities::from_v5(None);
+        assert_eq!(bare.max_qos, 2);
+        assert!(bare.retain_available && bare.wildcard_available && bare.shared_available);
+        assert_eq!(bare.receive_max, 65_535);
+        assert_eq!(bare.topic_alias_max, 0, "alias support really is opt-in");
+        assert_eq!(bare.max_packet_size, None);
+
+        // A property present with 0 is a statement: "not available".
+        let no = ConnAckProperties {
+            retain_available: Some(0),
+            wildcard_subscription_available: Some(0),
+            shared_subscription_available: Some(0),
+            subscription_identifiers_available: Some(0),
+            max_qos: Some(3), // above the protocol ceiling
+            receive_max: Some(0), // 0 is not a usable credit
+            max_packet_size: Some(0),
+            session_expiry_interval: None,
+            assigned_client_identifier: None,
+            topic_alias_max: None,
+            reason_string: None,
+            user_properties: Vec::new(),
+            server_keep_alive: None,
+            response_information: None,
+            server_reference: None,
+            authentication_method: None,
+            authentication_data: None,
+        };
+        let caps = ConnCapabilities::from_v5(Some(&no));
+        assert!(!caps.retain_available);
+        assert!(!caps.wildcard_available);
+        assert!(!caps.shared_available);
+        assert!(!caps.subscription_ids_available);
+        assert_eq!(caps.max_qos, 2, "an out-of-range announcement cannot raise the ceiling");
+        assert_eq!(caps.receive_max, 1, "zero receive credit would deadlock the session");
+        assert_eq!(caps.max_packet_size, None, "0 means no limit, not a zero-byte limit");
+    }
+
+    #[test]
+    fn packets_outside_the_announced_capability_set_are_refused_locally() {
+        assert_eq!(qos_rejection(2, 2), None);
+        assert!(qos_rejection(2, 1).unwrap().contains("up to 1"));
+        assert_eq!(retain_rejection(false, false), None, "not asking for retain is fine");
+        assert!(retain_rejection(true, false).unwrap().contains("retain unavailable"));
+        assert_eq!(retain_rejection(true, true), None);
+
+        // 1 KiB payload on a 4096-byte limit fits; on a 512-byte limit it does not.
+        assert_eq!(packet_size_rejection(1024, 20, Some(4096)), None);
+        assert!(packet_size_rejection(1024, 20, Some(512)).unwrap().contains("maximum-packet-size"));
+        assert_eq!(packet_size_rejection(10_000_000, 20, None), None, "no limit announced");
+
+        let mut caps = ConnCapabilities::default();
+        assert_eq!(subscribe_capability_error("a/#", &caps), None);
+        caps.wildcard_available = false;
+        assert!(subscribe_capability_error("a/#", &caps).unwrap().contains("wildcard"));
+        assert_eq!(subscribe_capability_error("a/b", &caps), None, "an exact filter is not a wildcard");
+        caps.wildcard_available = true;
+        caps.shared_available = false;
+        assert!(subscribe_capability_error("$share/g/a/b", &caps)
+            .unwrap()
+            .contains("shared"));
     }
 
     #[test]

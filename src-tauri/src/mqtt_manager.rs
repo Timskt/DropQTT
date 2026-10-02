@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -230,9 +230,10 @@ pub struct MqttManager {
     confirm_timeouts: std::sync::atomic::AtomicU64,
     /// Publishes the broker refused outright (PUBACK/PUBREC/PUBCOMP >= 0x80)
     publish_rejected: std::sync::atomic::AtomicU64,
-    /// `topic-alias-maximum` from the latest CONNACK; 0 means the broker takes no
-    /// aliases, so an alias on a publish would be a protocol violation.
-    broker_alias_max: AtomicU16,
+    /// Everything the latest CONNACK announced. Sending outside it is a protocol
+    /// violation the broker answers by dropping the session, so the forms and the
+    /// publish path both consult this.
+    broker_caps: RwLock<crate::transport::ConnCapabilities>,
 }
 
 impl Default for MqttManager {
@@ -270,7 +271,7 @@ impl MqttManager {
             incoming_transfers: Mutex::new(HashMap::new()),
             outgoing_transfers: Mutex::new(HashMap::new()),
             is_connected: AtomicBool::new(false),
-            broker_alias_max: AtomicU16::new(0),
+            broker_caps: RwLock::new(crate::transport::ConnCapabilities::default()),
             confirm_timeouts: std::sync::atomic::AtomicU64::new(0),
             publish_rejected: std::sync::atomic::AtomicU64::new(0),
         }
@@ -441,8 +442,8 @@ impl MqttManager {
             // runs on its own task so batch serialization never blocks keepalive.
             while !flag.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
-                    NetEvent::Connected(alias_max) => {
-                        this.broker_alias_max.store(alias_max, Ordering::SeqCst);
+                    NetEvent::Connected(caps) => {
+                        *this.broker_caps.write().await = caps;
                         // Start every silence timer from now: a gap while we were
                         // disconnected is our own outage, not the device's.
                         this.silence_watchdog
@@ -614,7 +615,7 @@ impl MqttManager {
 
     pub async fn disconnect(&self) {
         self.is_connected.store(false, Ordering::SeqCst);
-        self.broker_alias_max.store(0, Ordering::SeqCst);
+        *self.broker_caps.write().await = crate::transport::ConnCapabilities::default();
         // Disarm so the outage we are about to cause is not reported as the
         // device having gone quiet.
         self.silence_watchdog.set_connected(false, 0);
@@ -677,6 +678,13 @@ impl MqttManager {
             return Err(err);
         }
         if let Some(err) = crate::topic::filter_topic_error(topic.trim()) {
+            return Err(err);
+        }
+        if let Some(err) = crate::transport::subscribe_capability_error(
+            topic.trim(),
+            &self.broker_caps.read().await.clone(),
+        ) {
+            // Better a refusal now than a SUBACK the client library treats as fatal.
             return Err(err);
         }
         if crate::topic::parse_shared(topic.trim()).is_some() && opts.no_local {
@@ -863,6 +871,11 @@ impl MqttManager {
                 meaning: meaning.to_string(),
             },
         );
+    }
+
+    /// What the connected broker announced about itself (v5 CONNACK properties).
+    pub async fn broker_capabilities(&self) -> crate::transport::ConnCapabilities {
+        self.broker_caps.read().await.clone()
     }
 
     /// Filters the broker currently refuses, for the UI and the ops panel.
@@ -1284,20 +1297,32 @@ impl MqttManager {
             .await
             .clone()
             .ok_or_else(|| "MQTT client not connected".to_string())?;
-        // Check the broker's advertised limit first: rumqttc treats an oversized
-        // alias as a protocol violation and drops the whole connection for it.
-        if let Some(err) = crate::transport::alias_rejection(
-            params.properties.topic_alias,
-            self.broker_alias_max.load(Ordering::SeqCst),
-        ) {
-            return Err(err);
-        }
-
         let payload = base64::engine::general_purpose::STANDARD
             .decode(params.payload_base64.as_bytes())
             .map_err(|e| format!("Invalid base64 payload: {}", e))?;
         let payload_len = payload.len();
         let payload: Bytes = Bytes::from(payload);
+        // Check the broker's advertised limits first: rumqttc treats an oversized
+        // alias as a protocol violation and drops the whole connection for it.
+        let caps = self.broker_caps.read().await.clone();
+        if let Some(err) = crate::transport::alias_rejection(params.properties.topic_alias, caps.topic_alias_max) {
+            return Err(err);
+        }
+        // Same reasoning as the alias gate: rumqttc does not negotiate these down,
+        // it sends what it is told and the broker decides how unkind to be.
+        if let Some(err) = crate::transport::qos_rejection(params.qos, caps.max_qos) {
+            return Err(err);
+        }
+        if let Some(err) = crate::transport::retain_rejection(params.retain, caps.retain_available) {
+            return Err(err);
+        }
+        if let Some(err) = crate::transport::packet_size_rejection(
+            payload_len,
+            params.topic.len(),
+            caps.max_packet_size,
+        ) {
+            return Err(err);
+        }
 
         let props = if params.properties.content_type.is_some()
             || !params.properties.user_properties.is_empty()

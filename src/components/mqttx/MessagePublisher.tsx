@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatBytes } from '../../utils/format';
 import { Send, Trash2, Sparkles, Code2, CheckCircle2, Sliders, Eye, Columns2, Eraser, Timer, Square, Play } from 'lucide-react';
-import { ConsolePublishParams, PubProperties, RpcCall, RpcSpec, RunStatus } from '../../types';
+import { BrokerCapabilities, ConsolePublishParams, PubProperties, RpcCall, RpcSpec, RunStatus } from '../../types';
 import { Translations } from '../../i18n';
 import { PAYLOAD_FORMATS, PayloadError, PayloadFormat, payloadToBytes } from '../../utils/payload';
 import { renderTemplate, TEMPLATE_TOKENS } from '../../utils/template';
@@ -17,6 +17,8 @@ interface MessagePublisherProps {
   onRpcRequest?: (spec: RpcSpec) => Promise<RpcCall>;
   connected: boolean;
   isV5: boolean;
+  /** What the connected broker announced; null until a CONNACK says so. */
+  caps?: BrokerCapabilities | null;
   t: Translations;
 }
 
@@ -88,6 +90,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   onRpcRequest,
   connected,
   isV5,
+  caps,
   t,
 }) => {
   // Draft survives restarts; recent topics feed the autocomplete dropdown
@@ -437,10 +440,15 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
             value={qos}
             onChange={(e) => setQos(Number(e.target.value))}
             className="field-input"
+            aria-label={t.qosLevel}
+            title={caps ? t.capQosCeiling.replace('{n}', String(caps.maxQos)) : undefined}
           >
-            <option value={0}>QoS 0</option>
-            <option value={1}>QoS 1</option>
-            <option value={2}>QoS 2</option>
+            {[0, 1, 2].map((q) => (
+              <option key={q} value={q} disabled={!!caps && q > caps.maxQos}>
+                QoS {q}
+                {caps && q > caps.maxQos ? ' ✕' : ''}
+              </option>
+            ))}
           </select>
 
           <label
@@ -451,12 +459,25 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               type="checkbox"
               checked={retain}
               onChange={(e) => setRetain(e.target.checked)}
+              disabled={caps ? !caps.retainAvailable : false}
               className="rounded focus:ring-0"
               style={{ accentColor: 'var(--accent)' }}
               aria-label={`${t.publisher} ${t.retain}`}
             />
             <span>{t.retain}</span>
           </label>
+          {/* "Why is this greyed out" has to be visible, not discoverable. */}
+          {caps && (qos > caps.maxQos || (retain && !caps.retainAvailable)) && (
+            <div
+              className="w-full text-[11px]"
+              data-testid="cap-warning"
+              style={{ color: 'var(--danger)' }}
+            >
+              {qos > caps.maxQos ? t.capQosCeiling.replace('{n}', String(caps.maxQos)) : ''}
+              {qos > caps.maxQos && retain && !caps.retainAvailable ? ' · ' : ''}
+              {retain && !caps.retainAvailable ? t.capRetainOff : ''}
+            </div>
+          )}
         </div>
 
         {/* Scheduled publish: parameters for the next backend run + live registry */}

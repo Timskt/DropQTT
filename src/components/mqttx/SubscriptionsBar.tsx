@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, Radio, X, RotateCcw, SlidersHorizontal, Users } from 'lucide-react';
-import { SubOptions, TopicSubscription, subOptionsDefaults } from '../../types';
+import { BrokerCapabilities, SubOptions, TopicSubscription, subOptionsDefaults } from '../../types';
 import { Translations } from '../../i18n';
 import { ackHex, describeAck } from '../../utils/ackReason';
 import type { SubscriptionAck } from '../../hooks/useSubscriptionStats';
@@ -14,6 +14,8 @@ interface SubscriptionsBarProps {
   hitStats: Record<string, number>;
   /** What the broker actually said about each filter (SUBACK verdicts) */
   ack: SubscriptionAck;
+  /** CONNACK capabilities: a filter the broker cannot serve is refused here. */
+  caps?: BrokerCapabilities | null;
   onResetStats: () => void;
   connected: boolean;
   /** v5 subscription options have no v3.1.1 wire equivalent. */
@@ -29,6 +31,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   onRemoveSubscription,
   hitStats,
   ack,
+  caps,
   onResetStats,
   connected,
   isV5,
@@ -143,17 +146,25 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           value={qos}
           onChange={(e) => setQos(Number(e.target.value))}
           className="field-input px-2.5"
+          aria-label={t.qosLevel}
+          title={caps ? t.capQosCeiling.replace('{n}', String(caps.maxQos)) : undefined}
         >
-          <option value={0}>QoS 0</option>
-          <option value={1}>QoS 1</option>
-          <option value={2}>QoS 2</option>
+          {[0, 1, 2].map((q) => (
+            <option key={q} value={q} disabled={!!caps && q > caps.maxQos}>
+              QoS {q}
+              {caps && q > caps.maxQos ? ' ✕' : ''}
+            </option>
+          ))}
         </select>
 
         {isV5 && (
           <label
             className="flex items-center gap-1.5 text-[11px] cursor-pointer"
-            style={{ color: sharedOn ? 'var(--accent)' : 'var(--text-muted)' }}
-            title={t.subShareHint}
+            style={{
+              color: sharedOn ? 'var(--accent)' : 'var(--text-muted)',
+              opacity: caps && !caps.sharedAvailable ? 0.45 : 1,
+            }}
+            title={caps && !caps.sharedAvailable ? t.capSharedOff : t.subShareHint}
             htmlFor="dropqtt-sub-share"
           >
             <Users className="w-3.5 h-3.5" />
@@ -161,6 +172,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
             <input
               type="checkbox"
               id="dropqtt-sub-share"
+              disabled={caps ? !caps.sharedAvailable : false}
               checked={sharedOn}
               onChange={(e) => setSharedOn(e.target.checked)}
               className="w-3 h-3"
@@ -224,6 +236,12 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           <span>{t.subscribe}</span>
         </button>
       </form>
+
+      {caps && (!caps.wildcardAvailable || !caps.subscriptionIdsAvailable) && (
+        <div className="text-[11px]" data-testid="sub-cap-note" style={{ color: 'var(--warn)' }}>
+          {!caps.wildcardAvailable ? t.capWildcardOff : ''}
+        </div>
+      )}
 
       {isV5 && showOptions && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-md border text-[11px]" style={{ borderColor: 'var(--border-panel)', background: 'var(--bg-inset)' }}>

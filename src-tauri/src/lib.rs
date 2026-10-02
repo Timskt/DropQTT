@@ -152,6 +152,17 @@ async fn unsubscribe_topic(
     state.mqtt.unsubscribe_topic(topic).await
 }
 
+/// What the connected broker announced in its CONNACK (v5): QoS ceiling, retain
+/// availability, alias limit, packet-size limit, subscription kinds. The forms
+/// gate themselves on this so an unsupported request is refused before it can
+/// cost the session.
+#[tauri::command]
+async fn get_broker_capabilities(
+    state: State<'_, AppState>,
+) -> Result<crate::transport::ConnCapabilities, String> {
+    Ok(state.mqtt.broker_capabilities().await)
+}
+
 /// Ack verdicts for the subscriptions bar: which filters the broker refuses,
 /// which unsubscribes it refused, and which grants it capped at a lower QoS.
 #[tauri::command]
@@ -522,6 +533,7 @@ pub fn run() {
             subscribe_topic,
             unsubscribe_topic,
             get_subscription_ack_state,
+            get_broker_capabilities,
             get_subscription_stats,
             reset_subscription_stats,
             get_topic_stats,

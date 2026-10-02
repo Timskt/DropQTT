@@ -473,6 +473,26 @@ export interface Translations {
   hitTotal: string;
   subRejectedChip: string;
   subQuarantinedHint: string;
+  capQosCeiling: string;
+  capRetainOff: string;
+  capSharedOff: string;
+  capWildcardOff: string;
+  capAliasMax: string;
+  capPacketSize: string;
+  capReceiveMax: string;
+  capSessionExpiry: string;
+  capServerKeepAlive: string;
+  capAssignedClientId: string;
+  capResponseInfo: string;
+  capServerRef: string;
+  opsBrokerCapabilities: string;
+  capAnnouncedAfterConnect: string;
+  capAvailable: string;
+  capUnavailable: string;
+  capRowWildcard: string;
+  capRowAlias: string;
+  capRowReceive: string;
+  capRowPacket: string;
   subRejectedToast: string;
   subDowngradedToast: string;
   unsubRejectedToast: string;
@@ -1035,6 +1055,26 @@ export const translations: Record<Language, Translations> = {
     sendHint: '⌘/Ctrl + Enter 发送',
     subRejectedChip: '被拒：{reason}',
     subQuarantinedHint: '在重新订阅前不会重试（被拒的 SUBACK 会中断会话）',
+    capQosCeiling: 'broker 最高支持 QoS {n}',
+    capRetainOff: '该 broker 不支持 retain（retain-available = 0）',
+    capSharedOff: '该 broker 不支持共享订阅',
+    capWildcardOff: '该 broker 不支持通配符订阅',
+    capAliasMax: '主题别名上限 {n}',
+    capPacketSize: '报文上限 {n} B',
+    capReceiveMax: '接收上限 {n}',
+    capSessionExpiry: '会话过期 {n} s',
+    capServerKeepAlive: '服务端 keep-alive {n} s',
+    capAssignedClientId: '服务端指派的 clientId',
+    capResponseInfo: '响应信息',
+    capServerRef: '服务端引用',
+    opsBrokerCapabilities: 'broker 通告的能力',
+    capAnnouncedAfterConnect: '连接后由 CONNACK 通告',
+    capAvailable: '支持',
+    capUnavailable: '不支持',
+    capRowWildcard: '通配符订阅',
+    capRowAlias: '主题别名',
+    capRowReceive: '接收上限',
+    capRowPacket: '报文大小',
     subRejectedToast: 'broker 拒绝订阅 {topic}：{reason}',
     subDowngradedToast: 'broker 将 {topic} 降为 QoS {qos}',
     unsubRejectedToast: 'broker 拒绝取消订阅 {topic}：{reason} —— 它可能仍在投递',
@@ -1595,6 +1635,26 @@ export const translations: Record<Language, Translations> = {
     preview: 'Preview',
     subRejectedChip: 'refused: {reason}',
     subQuarantinedHint: 'not retried until you subscribe again (a refused SUBACK drops the session)',
+    capQosCeiling: 'broker accepts up to QoS {n}',
+    capRetainOff: 'this broker has retain unavailable (retain-available = 0)',
+    capSharedOff: 'this broker does not support shared subscriptions',
+    capWildcardOff: 'this broker does not support wildcard subscriptions',
+    capAliasMax: 'topic aliases up to {n}',
+    capPacketSize: 'packet limit {n} B',
+    capReceiveMax: 'receive maximum {n}',
+    capSessionExpiry: 'session expiry {n} s',
+    capServerKeepAlive: 'server keep-alive {n} s',
+    capAssignedClientId: 'assigned by server',
+    capResponseInfo: 'response information',
+    capServerRef: 'server reference',
+    opsBrokerCapabilities: 'Broker-announced capabilities',
+    capAnnouncedAfterConnect: 'announced by CONNACK once connected',
+    capAvailable: 'supported',
+    capUnavailable: 'not supported',
+    capRowWildcard: 'wildcards',
+    capRowAlias: 'topic aliases',
+    capRowReceive: 'receive maximum',
+    capRowPacket: 'packet size',
     subRejectedToast: 'Broker refused {topic}: {reason}',
     subDowngradedToast: 'Broker capped {topic} at QoS {qos}',
     unsubRejectedToast: 'Broker refused to unsubscribe {topic}: {reason} — it may still be delivering',
@@ -2155,6 +2215,26 @@ export const translations: Record<Language, Translations> = {
     flushPending: '釋放 {count} 條緩衝訊息',
     subRejectedChip: '被拒：{reason}',
     subQuarantinedHint: '在重新訂閱前不會重試（被拒的 SUBACK 會中斷工作階段）',
+    capQosCeiling: 'broker 最高支援 QoS {n}',
+    capRetainOff: '該 broker 不支援 retain（retain-available = 0）',
+    capSharedOff: '該 broker 不支援共享訂閱',
+    capWildcardOff: '該 broker 不支援萬用字元訂閱',
+    capAliasMax: '主題別名上限 {n}',
+    capPacketSize: '報表上限 {n} B',
+    capReceiveMax: '接收上限 {n}',
+    capSessionExpiry: '工作階段逾期 {n} 秒',
+    capServerKeepAlive: '伺服器 keep-alive {n} 秒',
+    capAssignedClientId: '由伺服器指派',
+    capResponseInfo: '回應資訊',
+    capServerRef: '伺服器引用',
+    opsBrokerCapabilities: 'broker 通告的能力',
+    capAnnouncedAfterConnect: '連線後由 CONNACK 通告',
+    capAvailable: '支援',
+    capUnavailable: '不支援',
+    capRowWildcard: '萬用字元訂閱',
+    capRowAlias: '主題別名',
+    capRowReceive: '接收上限',
+    capRowPacket: '報表大小',
     subRejectedToast: 'broker 拒絕訂閱 {topic}：{reason}',
     subDowngradedToast: 'broker 將 {topic} 降為 QoS {qos}',
     unsubRejectedToast: 'broker 拒絕取消訂閱 {topic}：{reason} —— 它可能仍在投递',
@@ -2715,6 +2795,26 @@ export const translations: Record<Language, Translations> = {
     feedPaused: 'フィード凍結中 — 新メッセージはバッファに保留',
     subRejectedChip: '拒否: {reason}',
     subQuarantinedHint: '再購読するまで再試行しません（拒否された SUBACK はセッションを切断します）',
+    capQosCeiling: 'ブローカーは QoS {n} まで',
+    capRetainOff: 'このブローカーは retain 不可 (retain-available = 0)',
+    capSharedOff: 'このブローカーは共有サブスクリプション未対応',
+    capWildcardOff: 'このブローカーはワイルドカード購読未対応',
+    capAliasMax: 'トピックエイリアス上限 {n}',
+    capPacketSize: 'パケット上限 {n} B',
+    capReceiveMax: '受信上限 {n}',
+    capSessionExpiry: 'セッション有効期限 {n} 秒',
+    capServerKeepAlive: 'サーバー keep-alive {n} 秒',
+    capAssignedClientId: 'サーバー割当の clientId',
+    capResponseInfo: '応答情報',
+    capServerRef: 'サーバー参照',
+    opsBrokerCapabilities: 'ブローカーが通告した機能',
+    capAnnouncedAfterConnect: '接続後に CONNACK が通告',
+    capAvailable: '対応',
+    capUnavailable: '非対応',
+    capRowWildcard: 'ワイルドカード',
+    capRowAlias: 'トピックエイリアス',
+    capRowReceive: '受信上限',
+    capRowPacket: 'パケットサイズ',
     subRejectedToast: 'ブローカーが {topic} を拒否しました: {reason}',
     subDowngradedToast: 'ブローカーが {topic} を QoS {qos} に下げました',
     unsubRejectedToast: 'ブローカーが {topic} の解除を拒否しました: {reason} — 配信が続く可能性があります',

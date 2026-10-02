@@ -17,7 +17,8 @@ import {
   Terminal,
   Wifi,
 } from 'lucide-react';
-import { DiagnosticLevel } from '../../types';
+import { BrokerCapabilities, DiagnosticLevel } from '../../types';
+import { formatBytes } from '../../utils/format';
 import { Translations } from '../../i18n';
 import { useDiagnostics } from '../../hooks/useDiagnostics';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -26,6 +27,8 @@ import { toast } from '../../utils/toast';
 
 interface OpsPanelProps {
   t: Translations;
+  /** What the connected broker announced in its CONNACK. */
+  caps?: BrokerCapabilities | null;
   onOpenSettings: () => void;
   onOpenConsole: () => void;
   onOpenHistory: () => void;
@@ -34,6 +37,53 @@ interface OpsPanelProps {
   onTestLatency: () => void;
   isTestingLatency: boolean;
 }
+
+/**
+ * The broker's own account of its limits. Everything the publish and subscribe
+ * forms refuse to send is derived from this, so it has to be readable somewhere
+ * that is not a tooltip — "the broker said no" is the sentence that settles a
+ * support conversation.
+ */
+const CapsCard: React.FC<{ caps: BrokerCapabilities | null | undefined; t: Translations }> = ({ caps, t }) => {
+  const row = (label: string, value: string, ok = true) => (
+    <div key={label} className="flex items-baseline justify-between gap-2 text-[11px]">
+      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+      <span
+        className="font-mono"
+        style={{ color: ok ? 'var(--text-primary)' : 'var(--danger)' }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+  return (
+    <div className="panel p-3">
+      <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+        {t.opsBrokerCapabilities}
+      </div>
+      {!caps ? (
+        <div className="text-[11px] italic" style={{ color: 'var(--text-muted)' }}>
+          {t.capAnnouncedAfterConnect}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1" data-testid="broker-caps">
+          {row(t.qosLevel, String(caps.maxQos))}
+          {row(t.retain, caps.retainAvailable ? t.capAvailable : t.capUnavailable, caps.retainAvailable)}
+          {row(t.subShareToggle, caps.sharedAvailable ? t.capAvailable : t.capUnavailable, caps.sharedAvailable)}
+          {row(t.capRowWildcard, caps.wildcardAvailable ? t.capAvailable : t.capUnavailable, caps.wildcardAvailable)}
+          {row(t.capRowAlias, String(caps.topicAliasMax))}
+          {row(t.capRowReceive, String(caps.receiveMax))}
+          {caps.maxPacketSize ? row(t.capRowPacket, formatBytes(caps.maxPacketSize)) : null}
+          {caps.serverKeepAlive ? row('keep-alive', `${caps.serverKeepAlive} s`) : null}
+          {caps.sessionExpiry ? row('session-expiry', `${caps.sessionExpiry} s`) : null}
+          {caps.assignedClientId ? row(t.capAssignedClientId, caps.assignedClientId) : null}
+          {caps.responseInformation ? row(t.capResponseInfo, caps.responseInformation) : null}
+          {caps.serverReference ? row(t.capServerRef, caps.serverReference) : null}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const levelChip = (level: DiagnosticLevel) =>
   level === 'ok' ? 'chip-ok' : level === 'warn' ? 'chip-warn' : 'chip-bad';
@@ -87,6 +137,7 @@ const Section: React.FC<{
 
 export const OpsPanel: React.FC<OpsPanelProps> = ({
   t,
+  caps,
   onOpenSettings,
   onOpenConsole,
   onOpenHistory,
@@ -169,6 +220,10 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
           <Metric label={t.opsLastUpdated} value={snapshot ? new Date(snapshot.runtime.generatedAt).toLocaleTimeString() : t.opsNever} />
           <Metric label={t.opsSubscriptions} value={snapshot?.mqtt.subscriptions ?? '—'} hint={`${snapshot?.mqtt.topicStatsCount ?? 0} ${t.opsTrackedTopics}`} />
           <Metric label={t.opsBridgeConnections} value={`${snapshot?.bridge.connectedConnections ?? 0}/${snapshot?.bridge.totalConnections ?? 0}`} hint={`${snapshot?.bridge.enabledRules ?? 0} ${t.opsEnabledRules}`} />
+        </div>
+
+        <div className="px-3 pb-3">
+          <CapsCard caps={caps} t={t} />
         </div>
       </div>
 

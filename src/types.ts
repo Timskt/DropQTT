@@ -262,6 +262,23 @@ export interface TopicSubscription {
   options?: SubOptions;
 }
 
+/** What the connected broker announced in its CONNACK (v5 properties). */
+export interface BrokerCapabilities {
+  topicAliasMax: number;
+  maxQos: number;
+  retainAvailable: boolean;
+  wildcardAvailable: boolean;
+  sharedAvailable: boolean;
+  subscriptionIdsAvailable: boolean;
+  receiveMax: number;
+  maxPacketSize?: number | null;
+  serverKeepAlive?: number | null;
+  sessionExpiry?: number | null;
+  assignedClientId?: string | null;
+  responseInformation?: string | null;
+  serverReference?: string | null;
+}
+
 /** One broker $SYS health metric line */
 export interface SysRow {
   topic: string;
