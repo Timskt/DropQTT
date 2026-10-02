@@ -1596,7 +1596,9 @@ impl MqttManager {
                         entry.meta.total_chunks,
                         0.0,
                         "failed",
-                        Some(format!("写入失败 (chunk {chunk_idx}): {detail}")),
+                        // An OS error is data, not UI copy: keep it language-neutral so
+                        // an English interface does not suddenly show one Chinese sentence.
+                        Some(format!("write failed (chunk {chunk_idx}): {detail}")),
                         &entry.meta.sha256,
                         Some(save_path),
                     );

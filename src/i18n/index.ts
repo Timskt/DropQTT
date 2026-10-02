@@ -522,6 +522,9 @@ export interface Translations {
   subscribeFailedAtConnect: string;
   batchSummaryAll: string;
   batchSummaryPartial: string;
+  trafficFilterPh: string;
+  deleteConfirmAgain: string;
+  testRunning: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -1047,6 +1050,9 @@ export const translations: Record<Language, Translations> = {
     subscribeFailedAtConnect: '{count} 个订阅注册失败：{detail}',
     batchSummaryAll: '{count} 个文件已送达并对端校验通过',
     batchSummaryPartial: '{delivered} 个已送达，{other} 个未确认或失败',
+    trafficFilterPh: '按主题名过滤',
+    deleteConfirmAgain: '再点一次确认删除',
+    testRunning: '试运行中…',
   },
   'en': {
     appName: 'DropQTT',
@@ -1570,6 +1576,9 @@ export const translations: Record<Language, Translations> = {
     subscribeFailedAtConnect: '{count} subscription(s) failed to register: {detail}',
     batchSummaryAll: '{count} file(s) delivered and confirmed by the peer',
     batchSummaryPartial: '{delivered} delivered, {other} unconfirmed or failed',
+    trafficFilterPh: 'filter topics',
+    deleteConfirmAgain: 'click again to confirm',
+    testRunning: 'Testing…',
   },
   'zh-TW': {
     appName: 'DropQTT',
@@ -2093,6 +2102,9 @@ export const translations: Record<Language, Translations> = {
     subscribeFailedAtConnect: '{count} 個訂閱註冊失敗：{detail}',
     batchSummaryAll: '{count} 個檔案已送達並對端驗證通過',
     batchSummaryPartial: '{delivered} 個已送達，{other} 個未確認或失敗',
+    trafficFilterPh: '依主題名過濾',
+    deleteConfirmAgain: '再點一次確認刪除',
+    testRunning: '試運行中…',
   },
   'ja': {
     appName: 'DropQTT',
@@ -2616,6 +2628,9 @@ export const translations: Record<Language, Translations> = {
     subscribeFailedAtConnect: '{count} 件の購読の登録に失敗しました：{detail}',
     batchSummaryAll: '{count} 件の送信と対端確認が完了しました',
     batchSummaryPartial: '{delivered} 件完了、{other} 件は未確認または失敗',
+    trafficFilterPh: 'テーマを絞り込み',
+    deleteConfirmAgain: 'もう一度クリックで削除確定',
+    testRunning: '試行中…',
   },
 };
 

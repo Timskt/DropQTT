@@ -19,6 +19,8 @@ interface TopicTrafficPanelProps {
 }
 
 /** Snapshot row for delta comparison ("who ramped up since I looked") */
+const MAX_VISIBLE_ROWS = 80;
+
 interface SnapRow {
   count: number;
   bytes: number;
@@ -70,6 +72,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
   const [sortBy, setSortBy] = useState<SortKey>('rate');
   const [alertThreshold, setAlertThreshold] = usePersistentState<number>('dropqtt_traffic_alert', 100);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [topicFilter, setTopicFilter] = useState('');
 
   const sortedRows = useMemo(() => {
     const cmp: Record<SortKey, (a: TopicStatRow, b: TopicStatRow) => number> = {
@@ -80,6 +83,16 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
     };
     return [...rows].sort(cmp[sortBy]);
   }, [rows, sortBy]);
+
+  // The backend can track up to 200k topics; the table only ever drew the first
+  // 80, so the long tail was unreachable. Filter first, then cap the view -- and
+  // count only what the cap hides, not what the filter deliberately left out.
+  const filteredRows = useMemo(() => {
+    const needle = topicFilter.trim().toLowerCase();
+    return needle ? sortedRows.filter((r) => r.topic.toLowerCase().includes(needle)) : sortedRows;
+  }, [sortedRows, topicFilter]);
+
+  const visibleRows = useMemo(() => filteredRows.slice(0, MAX_VISIBLE_ROWS), [filteredRows]);
 
   const maxRate = useMemo(() => Math.max(1, ...rows.map((r) => r.rate)), [rows]);
   const hotRows = useMemo(
@@ -105,7 +118,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
 
   const exportCsv = async () => {
     const head = 'topic,rate_msgs_s,peak_msgs_s,count,bytes,bytes_s,last_seen';
-    const lines = sortedRows.map((r) =>
+    const lines = filteredRows.map((r) =>
       csvRow([
         r.topic,
         r.rate, r.peakRate, r.count, r.bytes, r.bytesRate,
@@ -329,6 +342,18 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
         </div>
       ) : (
         <div className="max-h-72 overflow-y-auto">
+          {sortedRows.length > MAX_VISIBLE_ROWS && (
+            <div className="sticky top-0 z-20 px-2 py-1" style={{ background: 'var(--bg-panel-solid)' }}>
+              <input
+                type="search"
+                value={topicFilter}
+                onChange={(e) => setTopicFilter(e.target.value)}
+                placeholder={t.trafficFilterPh}
+                aria-label={t.trafficFilterPh}
+                className="field-input !py-0.5 text-[10px] w-full font-mono"
+              />
+            </div>
+          )}
           <table className="w-full text-[11px] font-mono" style={{ color: 'var(--text-secondary)' }}>
             <thead>
               <tr className="text-left sticky top-0 z-10" style={{ background: 'var(--bg-inset)', color: 'var(--text-muted)' }}>
@@ -350,7 +375,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
               </tr>
             </thead>
             <tbody>
-              {sortedRows.slice(0, 80).map((r, i) => {
+              {visibleRows.map((r, i) => {
                 const hot = r.rate >= alertThreshold && r.rate > 0;
                 const d = deltaOf(r);
                 return (
@@ -396,9 +421,9 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
               })}
             </tbody>
           </table>
-          {sortedRows.length > 80 && (
+          {filteredRows.length > visibleRows.length && (
             <div className="px-3 py-1.5 text-[10px] border-t" style={{ color: 'var(--text-muted)', borderColor: 'var(--border-inset)' }}>
-              {t.trafficMore.replace('{n}', String(sortedRows.length - 80))}
+              {t.trafficMore.replace('{n}', String(filteredRows.length - visibleRows.length))}
             </div>
           )}
           <div className="px-3 py-1.5 text-[10px] border-t flex items-center justify-between gap-2 flex-wrap" style={{ color: 'var(--text-muted)', borderColor: 'var(--border-inset)' }}>

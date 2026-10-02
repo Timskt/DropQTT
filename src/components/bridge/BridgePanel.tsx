@@ -283,9 +283,15 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   // Script dry-run state
   const [testPayload, setTestPayload] = useState('{"temp":23.5}');
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  // Two-step delete: one click should never destroy a rule the user spent
+  // time writing, and a modal would be heavier than this needs.
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [testOk, setTestOk] = useState<boolean | null>(null);
 
   const runScriptTest = async () => {
+    if (testing) return;
+    setTesting(true);
     const firstFilter = draft.sourceFilter.split('\n').map((s) => s.trim()).filter(Boolean)[0] || 'test/topic';
     try {
       const res = await invoke<{ action: string; payload?: string; bytes?: number }>('bridge_test_transform', {
@@ -304,6 +310,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       setTestOk(false);
       setTestResult(String(e));
     }
+    setTesting(false);
   };
 
   const handleExportRules = async () => {
@@ -765,11 +772,11 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     <button
                       type="button"
                       onClick={runScriptTest}
-                      disabled={!draft.transformScript.trim()}
+                      disabled={!draft.transformScript.trim() || testing}
                       className="btn-ghost flex items-center gap-1 text-[11px] shrink-0"
                     >
                       <Play className="w-3 h-3" />
-                      {t.runTest}
+                      {testing ? t.testRunning : t.runTest}
                     </button>
                   </div>
                   {testResult !== null && (
@@ -918,10 +925,22 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => removeRule(r.id)}
+                    onClick={() => {
+                      if (pendingDelete === r.id) {
+                        setPendingDelete(null);
+                        void removeRule(r.id);
+                        return;
+                      }
+                      setPendingDelete(r.id);
+                      setTimeout(() => setPendingDelete((cur) => (cur === r.id ? null : cur)), 4000);
+                    }}
                     className="p-1.5 rounded border transition"
-                    style={{ borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }}
-                    title={t.deleteRule}
+                    style={{
+                      borderColor: pendingDelete === r.id ? 'var(--danger)' : 'var(--border-inset)',
+                      color: pendingDelete === r.id ? 'var(--danger)' : 'var(--text-muted)',
+                    }}
+                    title={pendingDelete === r.id ? t.deleteConfirmAgain : t.deleteRule}
+                    aria-label={pendingDelete === r.id ? t.deleteConfirmAgain : t.deleteRule}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
