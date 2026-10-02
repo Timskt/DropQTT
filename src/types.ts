@@ -268,6 +268,16 @@ export interface TopicSubscription {
   options?: SubOptions;
 }
 
+/** Rolling timing for one repeating operation inside the app. */
+export interface DurationStats {
+  /** Samples inside the window (grows to 256, then stays) */
+  window: number;
+  /** Calls recorded since start, never trimmed */
+  totalCalls: number;
+  avgMs: number;
+  maxMs: number;
+}
+
 /** What the connected broker announced in its CONNACK (v5 properties). */
 export interface BrokerCapabilities {
   topicAliasMax: number;
@@ -420,6 +430,10 @@ export interface MqttDiagnostics {
   acksUnattributed?: number;
   /** Publishes refused by the broker this session */
   publishRejected?: number;
+  /** Our own timings, over the last 256 calls of each operation */
+  feedFlush?: DurationStats;
+  feedLag?: DurationStats;
+  historyWrite?: DurationStats;
   historyAvailable: boolean;
   history: HistoryStats;
   downloadDir: string;

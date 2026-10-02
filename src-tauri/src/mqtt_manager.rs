@@ -216,6 +216,8 @@ pub struct MqttManager {
     base_topic: RwLock<String>,
     download_dir: RwLock<PathBuf>,
     auto_receive: AtomicBool,
+    /// The app's own timings: flush cost, flush lateness, history write cost.
+    self_timing: Mutex<crate::diagnostics::SelfTiming>,
     /// Console feed staging buffer, drained to the UI in batches
     feed_buffer: Arc<Mutex<std::collections::VecDeque<MqttGenericMessage>>>,
     feed_dropped: Arc<std::sync::atomic::AtomicU64>,
@@ -264,6 +266,7 @@ impl MqttManager {
             base_topic: RwLock::new("dropqtt".to_string()),
             download_dir: RwLock::new(def_download),
             auto_receive: AtomicBool::new(true),
+            self_timing: Mutex::new(crate::diagnostics::SelfTiming::default()),
             feed_buffer: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             feed_dropped: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             feed_archive_only: Arc::new(Mutex::new(Vec::new())),
@@ -341,6 +344,14 @@ impl MqttManager {
             let reg = self.rpc.lock().await;
             (reg.pending(), reg.timeouts())
         };
+        let timings = {
+            let t = self.self_timing.lock().await;
+            (
+                t.flush.snapshot(),
+                t.lag.snapshot(),
+                t.history.snapshot(),
+            )
+        };
         let ack_stats = {
             let tracker = self.sub_acks.lock().await;
             let (un_sub, un_unsub) = tracker.unattributed();
@@ -382,6 +393,9 @@ impl MqttManager {
             download_dir: download_dir.to_string_lossy().to_string(),
             download_dir_writable: false,
             download_dir_error: None,
+            feed_flush: timings.0,
+            feed_lag: timings.1,
+            history_write: timings.2,
         }
     }
 
@@ -1010,6 +1024,11 @@ impl MqttManager {
     /// Drain staged messages into batched `mqtt-messages` events, capped by
     /// both message count and serialized size so emits stay cheap.
     async fn flush_feed(self: &Arc<Self>, app: &AppHandle) {
+        let tick = Instant::now();
+        {
+            let mut t = self.self_timing.lock().await;
+            t.note_flush_start(tick, std::time::Duration::from_millis(FEED_FLUSH_MILLIS));
+        }
         let batch: Vec<MqttGenericMessage> = {
             let mut buf = self.feed_buffer.lock().await;
             let mut bytes = 0usize;
@@ -1037,14 +1056,20 @@ impl MqttManager {
         // sub-millisecond at our batch sizes; if it ever becomes visible, the
         // fix is fewer/larger writes, not a thread hop.
         if let Some(h) = self.history.read().await.as_ref() {
+            let wrote = !archive.is_empty() || !batch.is_empty();
+            let wrote_started = Instant::now();
             if !archive.is_empty() {
                 h.append(&archive);
             }
             if !batch.is_empty() {
                 h.append(&batch);
             }
+            if wrote {
+                self.self_timing.lock().await.note_history(wrote_started);
+            }
         }
         if batch.is_empty() {
+            self.self_timing.lock().await.note_flush_end(tick);
             return;
         }
         let dropped = self.feed_dropped.load(Ordering::SeqCst);
@@ -1052,6 +1077,9 @@ impl MqttManager {
             "mqtt-messages",
             FeedBatch { messages: batch, dropped },
         );
+        // Timed last on purpose: this is the cost the UI thread pays per tick,
+        // serialization and emit included, which is what a rising number points at.
+        self.self_timing.lock().await.note_flush_end(tick);
     }
 
     pub async fn get_subscription_stats(&self) -> HashMap<String, u64> {

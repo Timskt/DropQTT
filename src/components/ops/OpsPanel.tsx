@@ -297,6 +297,23 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                   color={snapshot.mqtt.publishRejected ? 'var(--danger)' : 'var(--text-primary)'}
                 />
                 <Metric
+                  label={t.opsFeedFlushMs}
+                  value={`${snapshot.mqtt.feedFlush?.avgMs ?? 0} / ${snapshot.mqtt.feedFlush?.maxMs ?? 0}`}
+                  hint={`${snapshot.mqtt.feedFlush?.totalCalls ?? 0} ${t.opsCalls}`}
+                  color={(snapshot.mqtt.feedFlush?.maxMs ?? 0) >= 500 ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsFeedLagMs}
+                  value={`${snapshot.mqtt.feedLag?.avgMs ?? 0} / ${snapshot.mqtt.feedLag?.maxMs ?? 0}`}
+                  hint={t.opsLagHint}
+                  color={(snapshot.mqtt.feedLag?.maxMs ?? 0) >= 500 ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsHistoryWriteMs}
+                  value={`${snapshot.mqtt.historyWrite?.avgMs ?? 0} / ${snapshot.mqtt.historyWrite?.maxMs ?? 0}`}
+                  hint={`${snapshot.mqtt.historyWrite?.totalCalls ?? 0} ${t.opsCalls}`}
+                />
+                <Metric
                   label={t.opsAcksUnattributed}
                   value={snapshot.mqtt.acksUnattributed ?? 0}
                   color={snapshot.mqtt.acksUnattributed ? 'var(--warn)' : 'var(--text-primary)'}

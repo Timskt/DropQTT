@@ -856,6 +856,21 @@ localStorage（应用在挂载时会把内存里的旧 profile 写回去，覆�
 门：harness **124/124**、Playwright **61/61**（新增 2 项：两段式清空、空共享组的可见错误）、
 `tsc`/`clippy` 干净、ESLint 0 error / warn 预算 10 不变。
 
+### 4.30 给自己装上计时器（§7 T9）
+
+这几轮排查吞吐时最大的缺口是"应用自己慢不慢"没有数：Windows 的定时器粒度把压测和定时发布都坑过一次，
+而事后只能猜。现在运维面板多了三组 avg/max（近 256 次窗口）：
+**进料刷新耗时**、**刷新相对 100 ms 节拍的迟到量**、**历史批量写入耗时**，并新增 `self_timing` 健康检查
+（max ≥ 500 ms 转 warn 并直说"应用自己跟不上了"）。
+
+`diagnostics::Timing` 是固定环 + 累计调用数：**窗口外的早期尖峰会被挤出去**（否则一次冷启动抖动会永久
+霸占 max，让"现在怎么样"再也读不出来），而 `totalCalls` 不裁剪，所以"样本够不够"仍然可判断。
+`note_flush_start` 用 `saturating_sub(cadence)`，节拍刚好命中时记 0 而不是负数。
+
+门：harness **126/126**（新增窗口老化、尖峰挤出、u32 饱和、迟到量四条断言）、
+Playwright **61/61**、`tsc`/`clippy` 干净、ESLint 预算不变。
+这三块新指标**没有 UI 测试**（现有 mock 不提供 `get_diagnostics_snapshot`），只有 Rust 侧与类型对齐为证。
+
 ### 5.10 本轮（A1/A2）没有做到的三件事
 
 1. **PUBACK 拒绝没能在桌面应用里跑通**。同样适用于 §4.28 的遗嘱属性上线编码。代码路径有 harness 测试、有真实 mosquitto 的 `PUBACK rc135` 证据、

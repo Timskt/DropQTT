@@ -509,6 +509,11 @@ export interface Translations {
   opsRefusedUnsubs: string;
   opsPublishRejected: string;
   opsAcksUnattributed: string;
+  opsFeedFlushMs: string;
+  opsFeedLagMs: string;
+  opsHistoryWriteMs: string;
+  opsCalls: string;
+  opsLagHint: string;
   benchNoSubscribers: string;
   corrHexHint: string;
   corrHexBadge: string;
@@ -1098,6 +1103,11 @@ export const translations: Record<Language, Translations> = {
     opsRefusedUnsubs: '被拒取消订阅',
     opsPublishRejected: '被拒发布',
     opsAcksUnattributed: '无法对应的应答码',
+    opsFeedFlushMs: '进料刷新 均值/最大 (ms)',
+    opsFeedLagMs: '刷新迟到 均值/最大 (ms)',
+    opsHistoryWriteMs: '历史写入 均值/最大 (ms)',
+    opsCalls: '次调用',
+    opsLagHint: '相对 100ms 节拍',
     benchNoSubscribers: '无订阅者',
     corrHexHint: '以原始字节的十六进制显示关联数据',
     corrHexBadge: '十六进制',
@@ -1685,6 +1695,11 @@ export const translations: Record<Language, Translations> = {
     opsRefusedUnsubs: 'Refused unsubscribes',
     opsPublishRejected: 'Refused publishes',
     opsAcksUnattributed: 'Unmatched ack codes',
+    opsFeedFlushMs: 'Feed flush avg/max (ms)',
+    opsFeedLagMs: 'Flush lateness avg/max (ms)',
+    opsHistoryWriteMs: 'History write avg/max (ms)',
+    opsCalls: 'calls',
+    opsLagHint: 'against the 100 ms cadence',
     benchNoSubscribers: 'no subscribers',
     corrHexHint: 'Correlation data shown as hex of the raw bytes',
     corrHexBadge: 'hex',
@@ -2272,6 +2287,11 @@ export const translations: Record<Language, Translations> = {
     opsRefusedUnsubs: '被拒取消訂閱',
     opsPublishRejected: '被拒發佈',
     opsAcksUnattributed: '無法對應的應答碼',
+    opsFeedFlushMs: '進料刷新 平均/最大 (ms)',
+    opsFeedLagMs: '刷新遲到 平均/最大 (ms)',
+    opsHistoryWriteMs: '歷史寫入 平均/最大 (ms)',
+    opsCalls: '次呼叫',
+    opsLagHint: '相對於 100ms 節拍',
     benchNoSubscribers: '無訂閱者',
     corrHexHint: '以原始位元組的十六進位顯示關聯資料',
     corrHexBadge: '十六進位',
@@ -2859,6 +2879,11 @@ export const translations: Record<Language, Translations> = {
     opsRefusedUnsubs: '拒否された解除',
     opsPublishRejected: '拒否された送信',
     opsAcksUnattributed: '対応できない応答コード',
+    opsFeedFlushMs: 'フィードフラッシュ 平均/最大 (ms)',
+    opsFeedLagMs: 'フラッチ遅延 平均/最大 (ms)',
+    opsHistoryWriteMs: '履歴書き込み 平均/最大 (ms)',
+    opsCalls: '回',
+    opsLagHint: '100 ms 周期に対して',
     benchNoSubscribers: '購読者なし',
     corrHexHint: '相関データを生のバイト列の16進で表示',
     corrHexBadge: '16進',
