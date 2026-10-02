@@ -28,6 +28,7 @@ import {
 } from '../../types';
 import { Translations } from '../../i18n';
 import { useBridge } from '../../hooks/useBridge';
+import { EVENT_LOG_CAP } from '../../hooks/useBridge';
 import { saveTextFile } from '../../utils/exportMessages';
 import { useSilence } from '../../hooks/useSilence';
 import { SilencePanel } from './SilencePanel';
@@ -960,7 +961,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               {t.logSummary
                 .replace('{sent}', String(totalSent))
                 .replace('{kept}', String(events.length))
-                .replace('{cap}', '150')
+                .replace('{cap}', String(EVENT_LOG_CAP))
                 .replace('{shown}', '80')}
             </span>
           </div>

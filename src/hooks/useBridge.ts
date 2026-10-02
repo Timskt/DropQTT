@@ -11,7 +11,10 @@ import {
 } from '../types';
 import { usePersistentState } from './usePersistentState';
 
-const EVENT_LOG_CAP = 150;
+// The panel quotes this number in its own truncation notice, so it is
+// exported rather than duplicated: a changed cap must not leave a message
+// claiming a different length.
+export const EVENT_LOG_CAP = 150;
 type BridgeRole = 'src' | 'dst';
 
 /** What each bridge role last connected to, for quick reconnect / autostart */
