@@ -11,14 +11,25 @@ import { prefersReducedMotion } from '../utils/motion';
  * Transfer queue state: progress events from the backend, send/receive
  * controls, and the receiver approval flow.
  */
+// Send-side states that end a batch wait. `completed` is an inbound-only
+// status, so it deliberately does not appear here.
+const SEND_TERMINAL = new Set<TransferProgress['status']>([
+  'delivered',
+  'failed',
+  'cancelled',
+  'confirm_timeout',
+]);
+
 export function useTransfers() {
   const [transfers, setTransfers] = useState<Record<string, TransferProgress>>({});
   const transfersRef = useRef(transfers);
+  const waitersRef = useRef<Map<string, (t: TransferProgress) => void>>(new Map());
   useEffect(() => { transfersRef.current = transfers; }, [transfers]);
 
   // Same key and the same encoding as before (JSON booleans stringify to
   // 'true'/'false'), so existing settings are read without a migration.
-  const [autoReceive, setAutoReceiveState] = usePersistentState<boolean>('dropqtt_auto_receive', true);
+  
+const [autoReceive, setAutoReceiveState] = usePersistentState<boolean>('dropqtt_auto_receive', true);
 
   // Sync persisted approval mode to the backend once at startup
   useEffect(() => {
@@ -121,40 +132,42 @@ export function useTransfers() {
     });
   }, []);
 
-  /** Resolves when the given transfer reaches a terminal observation state. */
+  /**
+   * Resolves when the given transfer reaches a terminal observation state.
+   *
+   * Settled from committed state in an effect, not from a timer: the previous
+   * version polled every 250 ms, which added up to a quarter second of dead
+   * time per file in a batch and kept a live timer for the whole transfer. The
+   * backend still owns the "peer never confirmed" decision -- this only waits.
+   */
   const waitForSendComplete = useCallback((transferId: string): Promise<TransferProgress> => {
+    const now = transfersRef.current[transferId];
+    if (now && SEND_TERMINAL.has(now.status)) return Promise.resolve(now);
     return new Promise((resolve) => {
-      const started = Date.now();
-
-      const timer = setInterval(() => {
-        const t = transfersRef.current[transferId];
-        if (
-          t &&
-          (t.status === 'delivered' ||
-            t.status === 'failed' ||
-            t.status === 'cancelled' ||
-            // The backend owns the "peer never confirmed" decision, and its
-            // window scales with the file size. Duplicating a guess here is how
-            // a batch ends up calling an unacknowledged send a success.
-            t.status === 'confirm_timeout')
-        ) {
-          clearInterval(timer);
-          resolve(t);
-          return;
-        }
-        // Hard safety net: never block a batch forever
-        if (Date.now() - started > 30 * 60_000) {
-          clearInterval(timer);
-          resolve(
-            transfersRef.current[transferId] ?? {
-              transferId,
-              status: 'failed',
-            } as TransferProgress,
-          );
-        }
-      }, 250);
+      waitersRef.current.set(transferId, resolve);
+      // Safety net for a lost event, not the normal exit.
+      setTimeout(() => {
+        if (waitersRef.current.get(transferId) !== resolve) return;
+        waitersRef.current.delete(transferId);
+        resolve(
+          transfersRef.current[transferId] ??
+            ({ transferId, status: 'failed' } as TransferProgress),
+        );
+      }, 30 * 60_000);
     });
   }, []);
+
+  useEffect(() => {
+    const waiters = waitersRef.current;
+    if (waiters.size === 0) return;
+    for (const [id, settle] of Array.from(waiters.entries())) {
+      const t = transfers[id];
+      if (t && SEND_TERMINAL.has(t.status)) {
+        waiters.delete(id);
+        settle(t);
+      }
+    }
+  }, [transfers]);
 
   const awaitingApproval = Object.values(transfers).filter((t) => t.status === 'awaiting_approval');
 
