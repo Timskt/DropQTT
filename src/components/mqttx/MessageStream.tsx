@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Trash2, Copy, Check, ArrowDownRight, ArrowUpRight,
   Code2, AlignLeft, Binary, Braces, Box, Lock, FileText, Globe,
-  Pause, Play, Download, Eraser, Pin, RotateCcw, Activity, AlertCircle,
+  Pause, Play, Download, Eraser, Pin, RotateCcw, Activity, AlertCircle, GitCompare,
 } from 'lucide-react';
 import { MqttGenericMessage } from '../../types';
 import { usePersistentString } from '../../hooks/usePersistentState';
@@ -13,6 +13,7 @@ import {
   uint8ToBase64, uint8ToHexDump, uint8ToUtf8,
 } from '../../utils/cbor';
 import { ExportFormat, exportMessages } from '../../utils/exportMessages';
+import { diffFields, diffLines } from '../../utils/diff';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
 import { HtmlPreview, MarkdownView } from './RichText';
@@ -147,7 +148,8 @@ interface MessageRowProps {
 }
 
 const MessageRow = React.memo(function MessageRow({
-  msg, viewMode, copied, replayed, connected, codecScript, onCopy, onReplay, onQuickSubscribe, t,
+  msg, viewMode, copied, replayed, connected, codecScript, onCopy, onReplay, onQuickSubscribe,
+  t,
 }: MessageRowProps) {
   const [expanded, setExpanded] = useState(false);
   const isOut = msg.direction === 'out';
@@ -329,6 +331,11 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   const [clearingRetain, setClearingRetain] = useState(false);
   // Armed state for the destructive clear: the first click asks, the second does it.
   const [armClear, setArmClear] = useState(false);
+  // Field-level comparison of two feed rows. Firmware A/B and "what changed
+  // between these two heartbeats" are the same question, and reading two JSON
+  // blobs side by side is how people get it wrong.
+  const [compareOn, setCompareOn] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
   const retainRef = useRef<HTMLDivElement>(null);
 
   // Unique topics that currently hold a retained message (inbound or echoed outbound)
@@ -468,6 +475,26 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
             ) : (
               <span>{t.pauseFeed}</span>
             )}
+          </button>
+
+          <button
+            onClick={() => {
+              setCompareOn((v) => !v);
+              setPicked([]);
+            }}
+            aria-pressed={compareOn}
+            title={compareOn ? t.comparePickTwo : t.compareToggle}
+            aria-label={t.compareToggle}
+            data-testid="compare-toggle"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded text-[11px] border transition"
+            style={
+              compareOn
+                ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)', borderColor: 'var(--accent)', color: 'var(--accent)' }
+                : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-secondary)' }
+            }
+          >
+            <GitCompare className="w-3 h-3" />
+            <span>{t.compareToggle}</span>
           </button>
         </div>
 
@@ -666,9 +693,93 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
             {messages.length === 0 ? t.noMessages : t.noMessagesFiltered}
           </div>
         ) : (
-          filteredMessages.map((msg) => (
+          <>
+          {compareOn && picked.length < 2 && (
+            <div className="text-[11px] px-2 py-1.5 inset-box" style={{ color: 'var(--text-muted)' }} data-testid="compare-hint">
+              {t.comparePickTwo}
+            </div>
+          )}
+          {compareOn && picked.length === 2 && (() => {
+            const [left, right] = picked.map((id) => messages.find((m) => m.id === id)).filter(Boolean) as [typeof messages[number], typeof messages[number]];
+            const fields = diffFields(left, right, {
+              topic: t.cmpTopic,
+              direction: t.cmpDirection,
+              qos: t.qosLevel,
+              retain: t.retain,
+              contentType: t.contentTypeLabel,
+              payloadFormat: t.payloadFormat,
+              responseTopic: t.responseTopicLabel,
+              correlation: t.correlationDataLabel,
+              userProperties: t.cmpUserProps,
+              payload: t.cmpPayload,
+            });
+            const payload = fields[fields.length - 1];
+            const lines = payload.same ? null : diffLines(payload.left, payload.right);
+            return (
+              <div className="inset-box p-2.5 space-y-1.5 text-[11px] font-mono" data-testid="compare-panel">
+                {fields.slice(0, -1).map((f) => (
+                  <div key={f.field} className="flex gap-2">
+                    <span className="w-28 shrink-0" style={{ color: 'var(--text-muted)' }}>{f.field}</span>
+                    <span style={{ color: f.same ? 'var(--text-secondary)' : 'var(--danger)' }}>{f.left}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>→</span>
+                    <span style={{ color: f.same ? 'var(--text-secondary)' : 'var(--accent)' }}>{f.right}</span>
+                  </div>
+                ))}
+                <div className="pt-1" style={{ borderTop: '1px solid var(--border-inset)' }}>
+                  <div style={{ color: 'var(--text-muted)' }}>{t.cmpPayload}</div>
+                  {payload.same ? (
+                    <div style={{ color: 'var(--text-secondary)' }}>=</div>
+                  ) : lines ? (
+                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
+                      {lines.map((l, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            color:
+                              l.kind === 'same'
+                                ? 'var(--text-secondary)'
+                                : l.kind === 'added'
+                                  ? 'var(--success)'
+                                  : 'var(--danger)',
+                          }}
+                        >
+                          {l.kind === 'same' ? '  ' : l.kind === 'added' ? '+ ' : '- '}
+                          {l.text}
+                        </div>
+                      ))}
+                    </pre>
+                  ) : (
+                    <div style={{ color: 'var(--warn)' }}>{t.compareTooLarge}</div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+          {filteredMessages.map((msg) => (
+            <div key={msg.id} className="flex items-start gap-1.5">
+              {compareOn && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPicked((prev) =>
+                      prev.includes(msg.id) ? prev.filter((x) => x !== msg.id) : [...prev.slice(-1), msg.id],
+                    )
+                  }
+                  aria-pressed={picked.includes(msg.id)}
+                  aria-label={`${t.compareToggle} ${msg.topic}`}
+                  data-testid={`pick-${msg.id}`}
+                  className="mt-2 w-5 h-5 shrink-0 rounded border text-[10px] font-bold flex items-center justify-center"
+                  style={
+                    picked.includes(msg.id)
+                      ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'var(--accent-contrast)' }
+                      : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }
+                  }
+                >
+                  {picked.indexOf(msg.id) >= 0 ? picked.indexOf(msg.id) + 1 : '·'}
+                </button>
+              )}
+              <div className="min-w-0 flex-1">
             <MessageRow
-              key={msg.id}
               msg={msg}
               viewMode={viewMode}
               copied={copiedId === msg.id}
@@ -680,7 +791,10 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
               onQuickSubscribe={onQuickSubscribe}
               t={t}
             />
-          ))
+              </div>
+            </div>
+          ))}
+          </>
         )}
         {filteredMessages.some((m) => m.truncated) && (
           <div className="text-[11px] text-center pb-1" style={{ color: 'var(--text-muted)' }}>{t.truncatedNote}</div>

@@ -24,6 +24,11 @@ const boot = async (page: any, mode: string, extra: Record<string, any> = {}) =>
     const handlers = new Map<number, { event: string; cb: (e: any) => void }>();
     const byId = new Map<number, (e: any) => void>();
     let nextId = 1;
+    w.__fire = (event: string, payload: any) => {
+      handlers.forEach((h) => {
+        if (h.event === event) h.cb({ event, payload, id: 0 });
+      });
+    };
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     w.__TAURI_INTERNALS__ = {
       metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
@@ -152,4 +157,44 @@ test('an empty share group says what is missing instead of doing nothing', async
     return c ? c.args.topic : null;
   });
   expect(call).toBe('$share/workers/edge/telemetry');
+});
+
+test('two feed rows can be compared field by field', async ({ page }) => {
+  await boot(page, 'mqttx');
+  // The feed is event-driven, so the rows are delivered the way the real backend
+  // delivers them rather than by poking component state.
+  await page.evaluate(() => {
+    const mk = (id: string, topic: string, qos: number, body: string) => ({
+      id,
+      topic,
+      payload: body,
+      payloadLen: body.length,
+      payloadBase64: btoa(body),
+      truncated: false,
+      qos,
+      retain: false,
+      timestamp: '10:00:00.000',
+      timestampMs: Date.now(),
+      direction: 'in',
+    });
+    // __fire wraps the payload itself, so this is the FeedBatch shape directly.
+    (window as any).__fire('mqtt-messages', {
+      messages: [
+        mk('m1', 'edge/telemetry', 1, '{"temp":21,"fan":true}'),
+        mk('m2', 'edge/telemetry', 2, '{"temp":24,"fan":true}'),
+      ],
+      dropped: 0,
+    });
+  });
+  await expect(page.getByText('edge/telemetry').first()).toBeVisible();
+  await page.getByTestId('compare-toggle').click();
+  await expect(page.getByTestId('compare-hint')).toBeVisible();
+  await page.getByTestId('pick-m1').click();
+  await page.getByTestId('pick-m2').click();
+  const panel = page.getByTestId('compare-panel');
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('QoS');
+  // Only the payload line differs here, and it must be marked as such.
+  await expect(panel).toContainText('+ ');
+  await expect(panel).toContainText('- ');
 });

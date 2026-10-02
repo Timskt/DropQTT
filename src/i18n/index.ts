@@ -520,6 +520,13 @@ export interface Translations {
   opsHistoryWriteMs: string;
   opsCalls: string;
   opsLagHint: string;
+  cmpTopic: string;
+  cmpDirection: string;
+  cmpUserProps: string;
+  cmpPayload: string;
+  compareToggle: string;
+  comparePickTwo: string;
+  compareTooLarge: string;
   benchNoSubscribers: string;
   corrHexHint: string;
   corrHexBadge: string;
@@ -1120,6 +1127,13 @@ export const translations: Record<Language, Translations> = {
     opsHistoryWriteMs: '历史写入 均值/最大 (ms)',
     opsCalls: '次调用',
     opsLagHint: '相对 100ms 节拍',
+    cmpTopic: '主题',
+    cmpDirection: '方向',
+    cmpUserProps: '用户属性',
+    cmpPayload: '负载',
+    compareToggle: '对比',
+    comparePickTwo: '选中两条报文进行对比',
+    compareTooLarge: '负载过大，无法逐行对齐 —— 只显示原文',
     benchNoSubscribers: '无订阅者',
     corrHexHint: '以原始字节的十六进制显示关联数据',
     corrHexBadge: '十六进制',
@@ -1718,6 +1732,13 @@ export const translations: Record<Language, Translations> = {
     opsHistoryWriteMs: 'History write avg/max (ms)',
     opsCalls: 'calls',
     opsLagHint: 'against the 100 ms cadence',
+    cmpTopic: 'Topic',
+    cmpDirection: 'Direction',
+    cmpUserProps: 'User properties',
+    cmpPayload: 'Payload',
+    compareToggle: 'Compare',
+    comparePickTwo: 'pick two messages to compare',
+    compareTooLarge: 'payloads too large to align line by line — showing both verbatim',
     benchNoSubscribers: 'no subscribers',
     corrHexHint: 'Correlation data shown as hex of the raw bytes',
     corrHexBadge: 'hex',
@@ -2316,6 +2337,13 @@ export const translations: Record<Language, Translations> = {
     opsHistoryWriteMs: '歷史寫入 平均/最大 (ms)',
     opsCalls: '次呼叫',
     opsLagHint: '相對於 100ms 節拍',
+    cmpTopic: '主題',
+    cmpDirection: '方向',
+    cmpUserProps: '使用者屬性',
+    cmpPayload: '載入',
+    compareToggle: '對比',
+    comparePickTwo: '選取兩則報文進行對比',
+    compareTooLarge: '載入過大，無法逐行對齊 —— 只顯示原文',
     benchNoSubscribers: '無訂閱者',
     corrHexHint: '以原始位元組的十六進位顯示關聯資料',
     corrHexBadge: '十六進位',
@@ -2914,6 +2942,13 @@ export const translations: Record<Language, Translations> = {
     opsHistoryWriteMs: '履歴書き込み 平均/最大 (ms)',
     opsCalls: '回',
     opsLagHint: '100 ms 周期に対して',
+    cmpTopic: 'トピック',
+    cmpDirection: '方向',
+    cmpUserProps: 'ユーザー属性',
+    cmpPayload: 'ペイロード',
+    compareToggle: '比較',
+    comparePickTwo: '2 件のメッセージを選ぶと比較できます',
+    compareTooLarge: 'ペイロードが大きすぎて行単位で対応付けできません — 両方そのまま表示',
     benchNoSubscribers: '購読者なし',
     corrHexHint: '相関データを生のバイト列の16進で表示',
     corrHexBadge: '16進',
