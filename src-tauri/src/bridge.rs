@@ -736,13 +736,20 @@ impl BridgeManager {
 
             // JS transform wins over static payload edits when configured
             if !rule.transform_script.trim().is_empty() {
-                match apply_transform(
-                    rule.transform_script.trim(),
-                    &publish.topic,
-                    &payload_out,
-                    qos,
-                    retain,
-                ) {
+                // rquickjs is a synchronous interpreter. Running it inline would
+                // hold this tokio worker for the whole script deadline, so a
+                // single slow rule could stall every other subscription in the
+                // process. Offload it, but keep waiting for the result: the
+                // bridge's ordering per message must not change.
+                let script = rule.transform_script.trim().to_string();
+                let in_topic = publish.topic.clone();
+                let in_payload = payload_out.clone();
+                let outcome = tokio::task::spawn_blocking(move || {
+                    apply_transform(&script, &in_topic, &in_payload, qos, retain)
+                })
+                .await
+                .unwrap_or_else(|_| Err("transform worker panicked".to_string()));
+                match outcome {
                     Ok(TransformOutcome::Send(b)) => {
                         payload_len = b.len();
                         payload_out = b;

@@ -741,7 +741,13 @@ impl MqttManager {
         if batch.is_empty() && archive.is_empty() {
             return;
         }
-        // Mirror to SQLite before the batch is consumed by the emit.
+        // Mirror to SQLite before the batch reaches the UI. This stays on the
+        // current thread on purpose: measured A/B (bench lab, 6.10) showed the
+        // send loop caps at ~90-200 msg/s with *no* inbound traffic at all, so
+        // archiving is not the limiter, and moving it to the blocking pool bought
+        // nothing while costing a batch clone per tick. A transaction here is
+        // sub-millisecond at our batch sizes; if it ever becomes visible, the
+        // fix is fewer/larger writes, not a thread hop.
         if let Some(h) = self.history.read().await.as_ref() {
             if !archive.is_empty() {
                 h.append(&archive);
@@ -898,10 +904,17 @@ impl MqttManager {
         spec: BenchSpec,
         cancel: Arc<AtomicBool>,
     ) {
-        // Absolute grid, same reasoning as `run_schedule`: `rate` is a total across
-        // topics, so one message leaves every 1e6/rate microseconds.
-        let period = std::time::Duration::from_micros(1_000_000 / spec.rate as u64);
-        let mut next = tokio::time::Instant::now();
+        // Pacing is windowed, not one sleep per message. Windows only resolves
+        // timer wakeups every ~10-16 ms, so at the rates this lab exists for
+        // (1000/s => a 1 ms period) the loop spent its life waiting for a wake
+        // that could not arrive that fast: measured 90-170 msg/s delivered
+        // against 1000 requested. Each window now emits whatever the elapsed
+        // time says should already have gone out.
+        const WINDOW: std::time::Duration = std::time::Duration::from_millis(20);
+        let rate_per_window =
+            (WINDOW.as_micros() as u64 * spec.rate as u64 / 1_000_000).max(1);
+        let mut window = tokio::time::interval(WINDOW);
+        window.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let limit =
@@ -910,33 +923,46 @@ impl MqttManager {
         let mut seq: u32 = 0;
         loop {
             tokio::select! {
-                _ = tokio::time::sleep_until(next) => {
+                _ = window.tick() => {
                     if cancel.load(Ordering::SeqCst) {
                         return;
                     }
+                    let elapsed = started.elapsed();
                     if let Some(limit) = limit {
-                        if started.elapsed() >= limit {
+                        if elapsed >= limit {
                             self.bench.finish(&spec.id, BenchStatus::Finished, None);
                             self.emit_bench_progress(&app).await;
                             return;
                         }
                     }
-                    let topic = spec.topics[(seq as usize) % spec.topics.len()].clone();
-                    let payload = Bytes::from(bench::bench_payload(
-                        spec.size as usize,
-                        seq,
-                        chrono::Utc::now().timestamp_millis(),
-                    ));
-                    if let Err(e) = client.publish(&topic, spec.qos, spec.retain, payload, None).await {
-                        self.bench.finish(&spec.id, BenchStatus::Failed, Some(e.to_string()));
-                        self.emit_bench_progress(&app).await;
-                        return;
-                    }
-                    seq = seq.wrapping_add(1);
-                    self.bench.record_sent(&spec.id);
-                    next += period;
-                    if tokio::time::Instant::now() > next + period {
-                        next = tokio::time::Instant::now();
+                    // Catch-up is bounded: a starved task must not dump its whole
+                    // backlog in one burst the moment it is scheduled again.
+                    let target = (elapsed.as_micros() as u64 * spec.rate as u64 / 1_000_000)
+                        .min(seq as u64 + rate_per_window * 4);
+                    while (seq as u64) < target {
+                        if cancel.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        if let Some(limit) = limit {
+                            if started.elapsed() >= limit {
+                                self.bench.finish(&spec.id, BenchStatus::Finished, None);
+                                self.emit_bench_progress(&app).await;
+                                return;
+                            }
+                        }
+                        let topic = spec.topics[(seq as usize) % spec.topics.len()].clone();
+                        let payload = Bytes::from(bench::bench_payload(
+                            spec.size as usize,
+                            seq,
+                            chrono::Utc::now().timestamp_millis(),
+                        ));
+                        if let Err(e) = client.publish(&topic, spec.qos, spec.retain, payload, None).await {
+                            self.bench.finish(&spec.id, BenchStatus::Failed, Some(e.to_string()));
+                            self.emit_bench_progress(&app).await;
+                            return;
+                        }
+                        seq = seq.wrapping_add(1);
+                        self.bench.record_sent(&spec.id);
                     }
                 }
                 _ = ticker.tick() => {

@@ -116,8 +116,7 @@ impl HistoryStore {
     }
 
     /// Mirror one drained feed batch into the DB (transactional, cheap).
-    pub fn append(&self, batch: &[MqttGenericMessage]) {
-        if batch.is_empty() {
+    pub fn append(&self, batch: &[MqttGenericMessage]) {        if batch.is_empty() {
             return;
         }
         let fallback_ts = now_ms();

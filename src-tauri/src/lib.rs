@@ -436,7 +436,15 @@ async fn bridge_test_transform(
     let raw = base64::engine::general_purpose::STANDARD
         .decode(payload_base64.as_bytes())
         .map_err(|e| format!("invalid base64: {}", e))?;
-    match transform::apply_transform(trimmed, &topic, &Bytes::from(raw), 1, false) {
+    // Even a dry run gets the blocking pool: a runaway script is killed only at
+    // its deadline, and that time should not be borrowed from an async worker.
+    let script = trimmed.to_string();
+    match tokio::task::spawn_blocking(move || {
+        transform::apply_transform(&script, &topic, &Bytes::from(raw), 1, false)
+    })
+    .await
+    .map_err(|_| "transform worker panicked".to_string())?
+    {
         Ok(transform::TransformOutcome::Send(b)) => Ok(serde_json::json!({
             "action": "send",
             "payload": String::from_utf8_lossy(&b).to_string(),
