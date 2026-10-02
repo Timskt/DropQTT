@@ -529,22 +529,34 @@ fn will_properties(
     config: &BrokerConfig,
 ) -> Option<rumqttc::v5::mqttbytes::v5::LastWillProperties> {
     let delay = config.will_delay_secs.filter(|d| *d > 0);
-    let content_type = config
-        .will_content_type
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned);
-    if delay.is_none() && content_type.is_none() {
+    let text = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let content_type = text(&config.will_content_type);
+    let response_topic = text(&config.will_response_topic);
+    let correlation = text(&config.will_correlation_data);
+    let expiry = config.will_message_expiry;
+    // 2 and above are undefined values, and sending one is a protocol error.
+    let format = config.will_payload_format.filter(|v| *v <= 1);
+    if delay.is_none()
+        && content_type.is_none()
+        && response_topic.is_none()
+        && correlation.is_none()
+        && expiry.is_none()
+        && format.is_none()
+    {
         return None;
     }
     Some(rumqttc::v5::mqttbytes::v5::LastWillProperties {
         delay_interval: delay,
-        payload_format_indicator: None,
-        message_expiry_interval: None,
+        payload_format_indicator: format,
+        message_expiry_interval: expiry,
         content_type,
-        response_topic: None,
-        correlation_data: None,
+        response_topic,
+        correlation_data: correlation.map(|s| Bytes::copy_from_slice(s.as_bytes())),
         user_properties: Vec::new(),
     })
 }
@@ -1127,6 +1139,41 @@ mod tests {
             will_properties(&c).expect("both set").content_type.as_deref(),
             Some("application/json")
         );
+    }
+
+    #[test]
+    fn a_will_can_carry_the_request_context_a_peer_needs() {
+        // The two will uses that a plain v3.1.1 will cannot express: "expire this
+        // death notice after a minute" and "answer about it on this topic".
+        let mut c = cfg();
+        c.will_topic = Some("device/offline".into());
+        c.will_payload = Some("{}".into());
+        c.will_response_topic = Some("ops/alarm".into());
+        c.will_correlation_data = Some("gate-7".into());
+        c.will_message_expiry = Some(60);
+        c.will_payload_format = Some(1);
+        let w = will_properties(&c).expect("v5 will properties");
+        assert_eq!(w.response_topic.as_deref(), Some("ops/alarm"));
+        assert_eq!(w.message_expiry_interval, Some(60));
+        assert_eq!(w.payload_format_indicator, Some(1));
+        assert_eq!(
+            w.correlation_data,
+            Some(Bytes::from_static(b"gate-7")),
+            "the text field travels as its own UTF-8 bytes"
+        );
+
+        // An out-of-range format stays off the wire rather than corrupting it.
+        c.will_payload_format = Some(9);
+        assert_eq!(
+            will_properties(&c).expect("still has the rest").payload_format_indicator,
+            None
+        );
+        // Blank strings are not statements; a will with nothing left stays bare.
+        let mut bare = cfg();
+        bare.will_topic = Some("device/offline".into());
+        bare.will_response_topic = Some("   ".into());
+        bare.will_correlation_data = Some("".into());
+        assert!(will_properties(&bare).is_none());
     }
 
     #[test]

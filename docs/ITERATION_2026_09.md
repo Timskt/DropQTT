@@ -815,9 +815,30 @@ ESLint 0 error / warn 预算仍是 10（新 hook 用**派生**而不是在 effec
 一个顺带发现，**没有在本轮修**：broker 指派 `assigned-client-identifier` 时我们显示了它，
 但重连仍用回自己的 clientId —— MQTT5 要求此后用服务端指派的那个。它改的是重连语义，单独排期。
 
+### 4.28 遗嘱也能带请求上下文了（A4，§1.3）
+
+`will_properties()` 里 message-expiry / response-topic / correlation-data 三项一直硬编码 `None`，
+而 IoT 现场最常用的两个遗嘱场景恰好是"这条死亡通告 N 秒后作废"和"有事来这个主题找我"。
+现在四项（含 Payload Format）都通了：`BrokerConfig` 加字段 → 设置面板在 v5 分支里渲染
+（v3 分支不出现，Playwright 有一条负向测试钉住）→ `LastWill::new(.., will_properties(config))`。
+
+两处刻意的不平滑：`will_message_expiry = Some(0)` **照发**（0 在规范里是"立即过期"，是一个真实请求，
+不是"没填"），而 `will_delay_secs = Some(0)` 仍然当作没填 —— 因为 delay 的协议缺省就是 0，
+把 0 发出去只是浪费一个属性；格式指示位 >1 一律不上线（那是协议错误，会让包变形）。
+空字符串按"没填"处理，所以一个只有空白字段的遗嘱仍然是裸的 v3 形状遗嘱。
+
+门：harness **124/124**（新增 `a_will_can_carry_the_request_context_a_peer_needs`，
+断言 correlation 以 UTF-8 字节上线、越界 PFI 被丢弃、空白不产生属性）、
+Playwright **59/59**（v5 表单四个新字段确实进入 `connect_broker` 的 config；v3 表单不提供它们）、
+`tsc`/`clippy` 干净、ESLint 0 error / warn 预算 10 不变。
+**未做实机取证**：探针 broker 已能打印 CONNECT 的 will 属性，但我在真机上没能把新配置稳定种进
+localStorage（应用在挂载时会把内存里的旧 profile 写回去，覆盖掉脚本刚写的值），
+所以"字段确实编码上线"这一环目前只有 Rust 侧断言 + rumqttc 的 `LastWill::new(.., props)` 接线为证。
+下次做桌面回归时顺手补，或者按 §5.10 的方式用 UI 填表。
+
 ### 5.10 本轮（A1/A2）没有做到的三件事
 
-1. **PUBACK 拒绝没能在桌面应用里跑通**。代码路径有 harness 测试、有真实 mosquitto 的 `PUBACK rc135` 证据、
+1. **PUBACK 拒绝没能在桌面应用里跑通**。同样适用于 §4.28 的遗嘱属性上线编码。代码路径有 harness 测试、有真实 mosquitto 的 `PUBACK rc135` 证据、
    有 Playwright 的合并 toast 测试，但我用 CDP 驱动发布表单时 QoS1 的 PUBLISH 始终没到线上
    （填进去的 topic 没能进 React 状态）。这是**我的驱动不精确**，不是已证明的产品缺陷，也没有被证明不存在。
 2. **桥接链路上的拒绝仍然会重放**。`bridge.rs` 只把 `AckRejected` 转成链路错误文案（不再是 debug 串）+ 1.5 s 退避，

@@ -21,6 +21,12 @@ export interface BrokerConfig {
   willRetain?: boolean;
   /** MQTT5 Will Delay Interval (seconds); absent keeps the property off the wire */
   willDelaySecs?: number;
+  /** v5 will Payload Format Indicator: 0 = bytes, 1 = UTF-8 */
+  willPayloadFormat?: number;
+  /** v5 will Message-Expiry-Interval; 0 is a real value, not "unset" */
+  willMessageExpiry?: number;
+  willResponseTopic?: string;
+  willCorrelationData?: string;
   /** MQTT5 content type declared by the will message */
   willContentType?: string;
   /** MQTT5 Session-Expiry-Interval on CONNECT (seconds) */

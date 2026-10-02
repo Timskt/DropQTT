@@ -59,6 +59,19 @@ pub struct BrokerConfig {
     /// MQTT5 content type declared by the will message
     #[serde(default)]
     pub will_content_type: Option<String>,
+    /// MQTT5 will Payload Format Indicator: 0 = bytes, 1 = UTF-8.
+    #[serde(default)]
+    pub will_payload_format: Option<u8>,
+    /// MQTT5 will Message-Expiry-Interval (seconds). `Some(0)` really does mean
+    /// "expire at once", which is why this is not filtered to non-zero.
+    #[serde(default)]
+    pub will_message_expiry: Option<u32>,
+    /// MQTT5 will Response Topic, for the "call me about my death" pattern.
+    #[serde(default)]
+    pub will_response_topic: Option<String>,
+    /// MQTT5 will Correlation Data (text in the UI, its UTF-8 bytes on the wire)
+    #[serde(default)]
+    pub will_correlation_data: Option<String>,
     /// MQTT5 Session-Expiry-Interval on CONNECT (seconds). `None` keeps the
     /// protocol default, which is 0 when clean start is used.
     #[serde(default)]
@@ -101,6 +114,10 @@ impl Default for BrokerConfig {
             will_retain: false,
             will_delay_secs: None,
             will_content_type: None,
+            will_payload_format: None,
+            will_message_expiry: None,
+            will_response_topic: None,
+            will_correlation_data: None,
             session_expiry_secs: None,
             tls_ca_path: None,
             tls_client_cert_path: None,

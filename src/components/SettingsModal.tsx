@@ -412,6 +412,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onChange={(e) => setForm({ ...form, willContentType: e.target.value || undefined })}
                     />
                   </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-expiry" className={LABEL} style={LABEL_COLOR}>{t.messageExpiryLabel}</label>
+                    <input
+                      id="dropqtt-will-expiry"
+                      type="number" min={0} className="field-input w-full"
+                      value={form.willMessageExpiry ?? ''}
+                      placeholder="—"
+                      onChange={(e) => setForm({ ...form, willMessageExpiry: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-format" className={LABEL} style={LABEL_COLOR}>{t.payloadFormat}</label>
+                    <select
+                      id="dropqtt-will-format"
+                      className="field-input w-full"
+                      value={form.willPayloadFormat ?? ''}
+                      onChange={(e) => setForm({ ...form, willPayloadFormat: e.target.value === '' ? undefined : Number(e.target.value) })}
+                    >
+                      <option value="">{t.payloadFormatUnset}</option>
+                      <option value={1}>PFI · UTF-8</option>
+                      <option value={0}>PFI · Bytes</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-response-topic" className={LABEL} style={LABEL_COLOR}>{t.responseTopicLabel}</label>
+                    <input
+                      id="dropqtt-will-response-topic"
+                      type="text" className="field-input w-full font-mono"
+                      value={form.willResponseTopic || ''}
+                      placeholder="ops/alarm"
+                      onChange={(e) => setForm({ ...form, willResponseTopic: e.target.value || undefined })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-correlation" className={LABEL} style={LABEL_COLOR}>{t.correlationDataLabel}</label>
+                    <input
+                      id="dropqtt-will-correlation"
+                      type="text" className="field-input w-full font-mono"
+                      value={form.willCorrelationData || ''}
+                      placeholder="—"
+                      onChange={(e) => setForm({ ...form, willCorrelationData: e.target.value || undefined })}
+                    />
+                  </div>
                 </div>
               )}
             </div>

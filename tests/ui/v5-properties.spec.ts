@@ -139,6 +139,12 @@ test('session expiry and will properties only exist on a v5 profile', async ({ p
   await page.getByLabel('Session expiry (s)').fill('120');
   await page.getByLabel('Will delay (s)').fill('30');
   await page.getByLabel('Will content type').fill('application/json');
+  // A will is a message like any other, so it needs the same four properties:
+  // without them "answer about my death" and "this notice expires" are impossible.
+  await page.locator('#dropqtt-will-expiry').fill('60');
+  await page.locator('#dropqtt-will-format').selectOption('1');
+  await page.locator('#dropqtt-will-response-topic').fill('ops/alarm');
+  await page.locator('#dropqtt-will-correlation').fill('gate-7');
   await page.getByRole('button', { name: 'Save & Connect' }).click();
 
   await expect
@@ -147,6 +153,17 @@ test('session expiry and will properties only exist on a v5 profile', async ({ p
       sessionExpirySecs: 120,
       willDelaySecs: 30,
       willContentType: 'application/json',
+      willMessageExpiry: 60,
+      willPayloadFormat: 1,
+      willResponseTopic: 'ops/alarm',
+      willCorrelationData: 'gate-7',
       protocolVersion: 5,
     });
+});
+
+test('a v3.1.1 profile does not offer will properties it cannot send', async ({ page }) => {
+  await boot(page, 3);
+  await page.getByRole('button', { name: 'MQTT Broker Settings' }).click();
+  await expect(page.locator('#dropqtt-will-response-topic')).toHaveCount(0);
+  await expect(page.locator('#dropqtt-will-expiry')).toHaveCount(0);
 });
