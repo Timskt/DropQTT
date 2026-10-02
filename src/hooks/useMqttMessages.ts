@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ConsolePublishParams, FeedBatch, MqttGenericMessage, SubOptions, TopicSubscription } from '../types';
 import { usePersistentState } from './usePersistentState';
+import { currentTranslations } from '../i18n';
 import { toast } from '../utils/toast';
 import { observeTopic } from '../utils/topicStore';
 
@@ -50,8 +51,15 @@ export function useMqttMessages(isConnected: boolean) {
           observeTopic(topic);
         }
         if (pausedRef.current) {
-          // Buffer while the feed is frozen; flush on resume (capped)
-          pendingRef.current = [...incoming, ...pendingRef.current].slice(0, MAX_MESSAGES);
+          // Buffer while the feed is frozen; flush on resume (capped). The cap is
+          // the same silent-loss mechanism as the live buffer, so overflow here
+          // joins the same dropped counter instead of vanishing quietly.
+          const merged = [...incoming, ...pendingRef.current];
+          pendingRef.current = merged.slice(0, MAX_MESSAGES);
+          const lostWhilePaused = merged.length - pendingRef.current.length;
+          if (lostWhilePaused > 0) {
+            setFeedDropped((n) => n + lostWhilePaused);
+          }
           setPendingCount(pendingRef.current.length);
           return;
         }
@@ -109,8 +117,10 @@ export function useMqttMessages(isConnected: boolean) {
     async (topic: string) => {
       setSubscriptions((prev) => prev.filter((s) => s.topic !== topic));
       if (connectedRef.current) {
+        // The local chip is already gone, so a failed UNSUBSCRIBE means the broker
+        // is still delivering on something the UI no longer lists.
         await invoke('unsubscribe_topic', { topic }).catch((e) => {
-          console.error('Unsubscribe error:', e);
+          toast.error(`${currentTranslations().unsubscribeFailed.replace('{topic}', topic)}: ${e}`);
         });
       }
     },

@@ -43,6 +43,9 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   const [showOptions, setShowOptions] = useState(false);
   const [sharedOn, setSharedOn] = useState(false);
   const [shareGroup, setShareGroup] = useState('');
+  // A submit that cannot build a filter has to say so: silently doing nothing is
+  // how the share-group case presented itself in testing — the button looked dead.
+  const [shareError, setShareError] = useState(false);
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
   const observedTopics = useObservedTopics();
   // Suggest live topics not already subscribed (drop trailing segment into a filter later)
@@ -72,7 +75,11 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
     e.preventDefault();
     const topic = composedTopic();
     if (!topicInput.trim()) return;
-    if (sharedOn && !shareGroup.trim()) return;
+    if (sharedOn && !shareGroup.trim()) {
+      setShareError(true);
+      return;
+    }
+    setShareError(false);
     onAddSubscription(topic, qos, selectedColor, isV5 ? { ...opts, qos } : undefined);
     setTopicInput('');
     // Cycle to next color
@@ -184,11 +191,18 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
             type="text"
             id="dropqtt-sub-share-group"
             value={shareGroup}
-            onChange={(e) => setShareGroup(e.target.value)}
+            onChange={(e) => {
+              setShareGroup(e.target.value);
+              if (e.target.value.trim()) setShareError(false);
+            }}
             placeholder="consumers"
             aria-label={t.subShareGroup}
             className="field-input w-28 text-[11px]"
-            style={{ color: 'var(--success)' }}
+            aria-invalid={shareError || undefined}
+            style={{
+              color: 'var(--success)',
+              borderColor: shareError ? 'var(--danger)' : undefined,
+            }}
           />
         )}
 
@@ -236,6 +250,12 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           <span>{t.subscribe}</span>
         </button>
       </form>
+
+      {shareError && (
+        <div className="text-[11px]" data-testid="sub-share-error" style={{ color: 'var(--danger)' }}>
+          {t.subShareGroupRequired}
+        </div>
+      )}
 
       {caps && (!caps.wildcardAvailable || !caps.subscriptionIdsAvailable) && (
         <div className="text-[11px]" data-testid="sub-cap-note" style={{ color: 'var(--warn)' }}>

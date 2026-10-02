@@ -10,6 +10,7 @@ import { BatchSender } from './components/file-transfer/BatchSender';
 import { ReceiverConfig } from './components/file-transfer/ReceiverConfig';
 import { TransferQueue } from './components/file-transfer/TransferQueue';
 import { SubscriptionsBar } from './components/mqttx/SubscriptionsBar';
+import { toast } from './utils/toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MessageStream } from './components/mqttx/MessageStream';
 import { MessagePublisher } from './components/mqttx/MessagePublisher';
@@ -144,14 +145,18 @@ export function App() {
   // ---- Connections & topics wiring ----
   const handleConnect = (cfg: BrokerConfig) => {
     broker.connect(cfg).catch((err) => {
-      console.error('Connection failed:', err);
+      // A connect that fails silently is indistinguishable from one that never
+      // was asked for; the status dot says "disconnected" either way.
+      toast.error(`${t.connectFailed}: ${err instanceof Error ? err.message : String(err)}`);
     });
   };
 
   const handleApplySubscribeTopic = async (top: string) => {
     setSubscribeTopic(top);
     if (broker.isConnected) {
-      await broker.registerTopic(top.trim(), 1).catch((e) => console.error('registerTopic:', e));
+      await broker.registerTopic(top.trim(), 1).catch((e) => {
+        toast.error(`${t.subscribeFailed.replace('{topic}', top.trim())}: ${e}`);
+      });
     }
   };
 
@@ -181,8 +186,11 @@ export function App() {
         setUpdateStatusText(t.upToDate);
       }
     } catch (err) {
+      // "Already up to date" is a claim about the release channel, and a failed
+      // request says nothing of the kind. Say what actually happened.
       console.error(err);
-      setUpdateStatusText(t.upToDate);
+      setUpdateStatusText(t.updateCheckFailed);
+      toast.error(`${t.updateCheckFailed}: ${err instanceof Error ? err.message : String(err)}`);
     }
     setTimeout(() => setUpdateStatusText(null), 4000);
   };
@@ -273,7 +281,9 @@ export function App() {
               connected={broker.isConnected}
               onPublish={(params) => mqtt.publish(params)}
               onSubscribe={(topic) => {
-                mqtt.addSubscription(topic, 1).catch((e) => console.error('subscribe:', e));
+                mqtt.addSubscription(topic, 1).catch((e) => {
+                  toast.error(`${t.subscribeFailed.replace('{topic}', topic)}: ${e}`);
+                });
               }}
             />
           ) : activeMode === 'bridge' ? (
@@ -374,11 +384,16 @@ export function App() {
                       // address and the responder's correlation never matches.
                       responseTopic: m.responseTopic,
                       correlationData: m.correlationData,
+                      // The lossless form travels with it, so replaying a stored
+                      // binary correlation does not turn it into replacement chars.
+                      correlationHex: m.correlationHex,
                     },
                   })
                 }
                 onQuickSubscribe={(topic) => {
-                  mqtt.addSubscription(topic, 1).catch((e) => console.error('subscribe:', e));
+                  mqtt.addSubscription(topic, 1).catch((e) => {
+                    toast.error(`${t.subscribeFailed.replace('{topic}', topic)}: ${e}`);
+                  });
                 }}
                 paused={mqtt.paused}
                 pendingCount={mqtt.pendingCount}

@@ -126,7 +126,15 @@ impl HistoryStore {
         };
         // Best-effort: a failed history write must never break the live feed.
         let mut inserted = 0u64;
-        let _ = conn.execute("BEGIN IMMEDIATE", []);
+        if conn.execute("BEGIN IMMEDIATE", []).is_err() {
+            // Without the transaction every INSERT would autocommit, so a later
+            // failure would leave part of the batch written while the accounting
+            // below claims the whole thing was lost. Skip the batch instead and
+            // let `lost_rows` state exactly how much history is missing.
+            drop(conn);
+            self.lost_rows.fetch_add(batch.len() as u64, Ordering::SeqCst);
+            return;
+        }
         for m in batch {
             let ts = if m.timestamp_ms > 0 { m.timestamp_ms } else { fallback_ts };
             let properties = PubProperties {

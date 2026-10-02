@@ -14,6 +14,7 @@ import {
 } from '../../utils/cbor';
 import { ExportFormat, exportMessages } from '../../utils/exportMessages';
 import { copyToClipboard } from '../../utils/clipboard';
+import { toast } from '../../utils/toast';
 import { HtmlPreview, MarkdownView } from './RichText';
 import { looksLikeSenml, parseSenmlPack, senmlFromDecoded, senmlToTable } from '../../utils/senml';
 import { JsonTree } from './JsonTree';
@@ -326,6 +327,8 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   const [exportNote, setExportNote] = useState<string | null>(null);
   const [retainOpen, setRetainOpen] = useState(false);
   const [clearingRetain, setClearingRetain] = useState(false);
+  // Armed state for the destructive clear: the first click asks, the second does it.
+  const [armClear, setArmClear] = useState(false);
   const retainRef = useRef<HTMLDivElement>(null);
 
   // Unique topics that currently hold a retained message (inbound or echoed outbound)
@@ -368,10 +371,14 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
     try {
       await onClearRetained(retainedTopics);
       setRetainOpen(false);
+    } catch (e) {
+      // Clearing retained messages is a broker-side write; a swallowed failure
+      // here means stale retained state stays published while the UI says it went.
+      toast.error(`${t.clearRetainFailed}: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setClearingRetain(false);
     }
-  }, [retainedTopics, onClearRetained]);
+  }, [retainedTopics, onClearRetained, t]);
 
   const handleCopy = useCallback(async (id: string, text: string) => {
     const ok = await copyToClipboard(text);
@@ -577,11 +584,26 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
           </div>
 
           <button
-            onClick={onClearMessages}
-            title={t.clearMessages}
-            aria-label={t.clearMessages}
+            onClick={() => {
+              // Two deliberate clicks: this throws away the whole visible feed, and
+              // the same pattern already protects bridge-rule deletion.
+              if (!armClear) {
+                setArmClear(true);
+                window.setTimeout(() => setArmClear(false), 4000);
+                return;
+              }
+              setArmClear(false);
+              onClearMessages();
+            }}
+            title={armClear ? t.clearMessagesConfirm : t.clearMessages}
+            aria-label={armClear ? t.clearMessagesConfirm : t.clearMessages}
+            data-testid="clear-messages"
             className="p-2 rounded border transition hover:opacity-100 opacity-60"
-            style={{ background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--danger)' }}
+            style={
+              armClear
+                ? { background: 'var(--danger)', borderColor: 'var(--danger)', color: 'var(--accent-contrast)' }
+                : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--danger)' }
+            }
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>

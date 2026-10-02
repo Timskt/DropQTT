@@ -496,6 +496,13 @@ export interface Translations {
   subRejectedToast: string;
   subDowngradedToast: string;
   unsubRejectedToast: string;
+  clearRetainFailed: string;
+  clearMessagesConfirm: string;
+  unsubscribeFailed: string;
+  subscribeFailed: string;
+  connectFailed: string;
+  updateCheckFailed: string;
+  subShareGroupRequired: string;
   publishRejectedToast: string;
   publishRejectedManyToast: string;
   opsRejectedSubs: string;
@@ -1078,6 +1085,13 @@ export const translations: Record<Language, Translations> = {
     subRejectedToast: 'broker 拒绝订阅 {topic}：{reason}',
     subDowngradedToast: 'broker 将 {topic} 降为 QoS {qos}',
     unsubRejectedToast: 'broker 拒绝取消订阅 {topic}：{reason} —— 它可能仍在投递',
+    clearRetainFailed: '清除 retained 消息失败',
+    clearMessagesConfirm: '再点一次以清空当前列表',
+    unsubscribeFailed: '取消订阅 {topic} 失败',
+    subscribeFailed: '订阅 {topic} 失败',
+    connectFailed: '连接失败',
+    updateCheckFailed: '检查更新失败',
+    subShareGroupRequired: '请先填写共享组名',
     publishRejectedToast: 'broker 拒绝了这条发布：{reason}',
     publishRejectedManyToast: 'broker 拒绝了 {n} 条发布：{reason}',
     opsRejectedSubs: '被拒订阅',
@@ -1658,6 +1672,13 @@ export const translations: Record<Language, Translations> = {
     subRejectedToast: 'Broker refused {topic}: {reason}',
     subDowngradedToast: 'Broker capped {topic} at QoS {qos}',
     unsubRejectedToast: 'Broker refused to unsubscribe {topic}: {reason} — it may still be delivering',
+    clearRetainFailed: 'Failed to clear retained messages',
+    clearMessagesConfirm: 'click again to clear this list',
+    unsubscribeFailed: 'Failed to unsubscribe {topic}',
+    subscribeFailed: 'Failed to subscribe {topic}',
+    connectFailed: 'Connection failed',
+    updateCheckFailed: 'Update check failed',
+    subShareGroupRequired: 'enter a share group name first',
     publishRejectedToast: 'Broker refused a publish: {reason}',
     publishRejectedManyToast: 'Broker refused {n} publishes: {reason}',
     opsRejectedSubs: 'Refused subscriptions',
@@ -2238,6 +2259,13 @@ export const translations: Record<Language, Translations> = {
     subRejectedToast: 'broker 拒絕訂閱 {topic}：{reason}',
     subDowngradedToast: 'broker 將 {topic} 降為 QoS {qos}',
     unsubRejectedToast: 'broker 拒絕取消訂閱 {topic}：{reason} —— 它可能仍在投递',
+    clearRetainFailed: '清除 retained 訊息失敗',
+    clearMessagesConfirm: '再點一次以清空目前清單',
+    unsubscribeFailed: '取消訂閱 {topic} 失敗',
+    subscribeFailed: '訂閱 {topic} 失敗',
+    connectFailed: '連線失敗',
+    updateCheckFailed: '檢查更新失敗',
+    subShareGroupRequired: '請先填寫共享組名',
     publishRejectedToast: 'broker 拒絕了這則發佈：{reason}',
     publishRejectedManyToast: 'broker 拒絕了 {n} 則發佈：{reason}',
     opsRejectedSubs: '被拒訂閱',
@@ -2818,6 +2846,13 @@ export const translations: Record<Language, Translations> = {
     subRejectedToast: 'ブローカーが {topic} を拒否しました: {reason}',
     subDowngradedToast: 'ブローカーが {topic} を QoS {qos} に下げました',
     unsubRejectedToast: 'ブローカーが {topic} の解除を拒否しました: {reason} — 配信が続く可能性があります',
+    clearRetainFailed: 'retained メッセージの消去に失敗',
+    clearMessagesConfirm: 'もう一度クリックでこの一覧を消去',
+    unsubscribeFailed: '{topic} の解除に失敗',
+    subscribeFailed: '{topic} の購読に失敗',
+    connectFailed: '接続に失敗',
+    updateCheckFailed: '更新確認に失敗',
+    subShareGroupRequired: '先に共有グループ名を入力してください',
     publishRejectedToast: 'ブローカーが publish を拒否しました: {reason}',
     publishRejectedManyToast: 'ブローカーが {n} 件の publish を拒否しました: {reason}',
     opsRejectedSubs: '拒否された購読',

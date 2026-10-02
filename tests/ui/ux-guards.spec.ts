@@ -122,3 +122,34 @@ test('the arm state lapses so a stale second click cannot delete an unrelated ru
   await page.getByLabel('Delete rule').first().click();
   await expect(page.getByLabel('click again to confirm')).toHaveCount(1, { timeout: 6000 });
 });
+
+test('throwing away the feed takes two deliberate clicks', async ({ page }) => {
+  await boot(page, 'mqttx');
+  const clear = page.getByTestId('clear-messages');
+  await expect(clear).toHaveAttribute('aria-label', 'Clear Messages');
+  await clear.click();
+  // The first click only arms: the label changes so the state is readable, not
+  // just coloured.
+  await expect(clear).toHaveAttribute('aria-label', 'click again to clear this list');
+  await clear.click();
+  await expect(clear).toHaveAttribute('aria-label', 'Clear Messages');
+});
+
+test('an empty share group says what is missing instead of doing nothing', async ({ page }) => {
+  await boot(page, 'mqttx');
+  await page.getByPlaceholder(/Topic Pattern/).fill('edge/telemetry');
+  await page.getByLabel('Shared subscription').check();
+  await page.getByRole('button', { name: /Subscribe/ }).first().click();
+  await expect(page.getByTestId('sub-share-error')).toBeVisible();
+  await expect(page.getByTestId('sub-share-error')).toHaveText('enter a share group name first');
+  // Nothing may have been sent to the backend while the filter was incomplete.
+  expect(await page.evaluate(() => (window as any).calls.filter((c) => c.cmd === 'subscribe_topic').length)).toBe(0);
+  await page.getByLabel('Shared group').fill('workers');
+  await expect(page.getByTestId('sub-share-error')).toHaveCount(0);
+  await page.getByRole('button', { name: /Subscribe/ }).first().click();
+  const call = await page.evaluate(() => {
+    const c = (window as any).calls.filter((x) => x.cmd === 'subscribe_topic').pop();
+    return c ? c.args.topic : null;
+  });
+  expect(call).toBe('$share/workers/edge/telemetry');
+});
