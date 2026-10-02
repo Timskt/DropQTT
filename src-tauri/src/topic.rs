@@ -5,11 +5,57 @@
 //! which do not need a broker connection (notably `watchdog`) can depend on it
 //! without dragging the Tauri app handle along.
 
+/// MQTT5 shared subscription marker (spec §4.8.2): `$share/<ShareName>/<TopicFilter>`.
+pub const SHARE_PREFIX: &str = "$share";
+
+/// The two parts of a shared subscription filter.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SharedFilter<'a> {
+    pub share_name: &'a str,
+    pub filter: &'a str,
+}
+
+/// Recognise `$share/<name>/<filter>`. Anything else is an ordinary filter.
+pub fn parse_shared(filter: &str) -> Option<SharedFilter<'_>> {
+    let mut segs = filter.splitn(3, '/');
+    match (segs.next(), segs.next(), segs.next()) {
+        (Some(SHARE_PREFIX), Some(name), Some(inner)) if !name.is_empty() && !inner.is_empty() => {
+            Some(SharedFilter { share_name: name, filter: inner })
+        }
+        _ => None,
+    }
+}
+
+/// Why a shared filter is malformed. A share name that contains `/` would shift
+/// the boundary between group and topic filter, and a nested `$share` has no
+/// meaning any broker implements.
+pub fn shared_filter_error(filter: &str) -> Option<String> {
+    let shared = parse_shared(filter)?;
+    if shared.share_name.contains('+') || shared.share_name.contains('#') || shared.share_name.contains('/') {
+        return Some("a share name may not contain '/', '+' or '#'".to_string());
+    }
+    if shared.share_name.starts_with('$') {
+        // '$' leads are reserved for broker-defined system topics; a group
+        // named that way is either a typo or a doubled-up `$share/$share/...`.
+        return Some("a share name may not begin with '$' (reserved by brokers)".to_string());
+    }
+    if shared.filter.starts_with(&format!("{SHARE_PREFIX}/")) {
+        return Some("a shared subscription cannot wrap another shared subscription".to_string());
+    }
+    None
+}
+
 /// MQTT topic filter matching (RFC 3.1.1 §4.7 / RFC 8428 §4 for `$` topics):
 /// '+' matches exactly one level, '#' matches the remaining levels, and topics
 /// whose first level begins with '$' are never matched by a filter that does
 /// not itself begin with '$'.
+///
+/// A shared filter is matched on its **inner** filter: the broker strips
+/// `$share/<group>/` before delivering, so the subscriber sees ordinary topic
+/// names. Without that, a shared subscription would count zero hits while
+/// visibly receiving messages.
 pub fn wildcard_match(filter: &str, topic: &str) -> bool {
+    let filter = parse_shared(filter).map(|s| s.filter).unwrap_or(filter);
     let f: Vec<&str> = filter.split('/').collect();
     let t: Vec<&str> = topic.split('/').collect();
     // System topics ($...) are only matched by filters that name them explicitly
@@ -94,7 +140,57 @@ pub fn filter_topic_error(filter: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_topic_error, publish_topic_error, wildcard_match};
+    use super::{
+        filter_topic_error, parse_shared, publish_topic_error, shared_filter_error, wildcard_match,
+    };
+
+    #[test]
+    fn a_shared_filter_matches_on_its_inner_filter() {
+        // The broker delivers plain topic names to shared members, so hit
+        // accounting has to compare against what actually arrives.
+        assert!(wildcard_match("$share/g1/sensors/temp", "sensors/temp"));
+        assert!(wildcard_match("$share/g1/sensors/#", "sensors/room1/temp"));
+        assert!(wildcard_match("$share/consumers/edge/+/data", "edge/a/data"));
+        assert!(!wildcard_match("$share/g1/sensors/temp", "sensors/humidity"));
+        // The delivered topic still obeys the normal $ rule.
+        assert!(!wildcard_match("$share/g1/#", "$SYS/broker/uptime"));
+        assert!(wildcard_match("$share/g1/$SYS/broker/uptime", "$SYS/broker/uptime"));
+    }
+
+    #[test]
+    fn shared_filters_are_parsed_only_when_complete() {
+        assert_eq!(
+            parse_shared("$share/g1/a/b"),
+            Some(super::SharedFilter { share_name: "g1", filter: "a/b" })
+        );
+        assert_eq!(parse_shared("$share//a"), None, "empty share name");
+        assert_eq!(parse_shared("$share/g1/"), None, "empty topic filter");
+        assert_eq!(parse_shared("$share/g1"), None, "no topic filter at all");
+        assert_eq!(parse_shared("a/b"), None);
+    }
+
+    #[test]
+    fn share_names_may_not_re_enter_the_topic_tree() {
+        assert!(shared_filter_error("$share/g1/a/b").is_none());
+        assert!(shared_filter_error("$share/a+b/c").is_some(), "wildcard in share name");
+        assert!(shared_filter_error("$share/a#/#").is_some());
+        assert!(
+            shared_filter_error("$share/g/$share/x/#").is_some(),
+            "inner filter that is itself shared"
+        );
+        assert!(
+            shared_filter_error("$share/$share/x/#").is_some(),
+            "a $-led group is reserved, and here it is a doubled prefix"
+        );
+        // Ordinary filters are not this rule's business.
+        assert!(shared_filter_error("a/+").is_none());
+    }
+
+    #[test]
+    fn the_filter_validator_accepts_well_formed_shared_filters() {
+        assert!(filter_topic_error("$share/g1/sensors/#").is_none());
+        assert!(filter_topic_error("$share/g1/").is_some(), "trailing empty level");
+    }
 
     #[test]
     fn publish_topics_reject_wildcards_anywhere() {

@@ -403,6 +403,10 @@ export interface Translations {
   subRetainHandling0: string;
   subRetainHandling1: string;
   subRetainHandling2: string;
+  subShareToggle: string;
+  subShareGroup: string;
+  subShareHint: string;
+  subShareChip: string;
   messageStream: string;
   clearMessages: string;
   filterTopic: string;
@@ -931,6 +935,10 @@ export const translations: Record<Language, Translations> = {
     subRetainHandling0: '0 · 每次订阅都下发保留消息',
     subRetainHandling1: '1 · 仅新订阅时下发',
     subRetainHandling2: '2 · 从不下发保留消息',
+    subShareToggle: '共享订阅',
+    subShareGroup: '共享组',
+    subShareHint: '同一共享组内的多个实例由 broker 轮流派发，用于消费端水平扩展。组名不能含 / + #，不能与 No Local 同时使用，且只有 MQTT5 有这套机制。',
+    subShareChip: '共享组 {name}',
     messageStream: '实时报文监测流',
     clearMessages: '清空报文',
     filterTopic: '按主题或报文正文筛选...',
@@ -1457,6 +1465,10 @@ export const translations: Record<Language, Translations> = {
     subRetainHandling0: '0 · send retained on every subscribe',
     subRetainHandling1: '1 · send only on a new subscription',
     subRetainHandling2: '2 · never send retained',
+    subShareToggle: 'Shared subscription',
+    subShareGroup: 'Shared group',
+    subShareHint: 'Members of one shared group receive messages in rotation, which is how the consumer side scales out. The group name may not contain / + #, it cannot be combined with No Local, and the mechanism only exists in MQTT5.',
+    subShareChip: 'share group {name}',
     messageStream: 'Live Message Feed',
     clearMessages: 'Clear Messages',
     filterTopic: 'Search topic or payload content...',
@@ -1983,6 +1995,10 @@ export const translations: Record<Language, Translations> = {
     subRetainHandling0: '0 · 每次訂閱都下發保留訊息',
     subRetainHandling1: '1 · 僅新訂閱時下發',
     subRetainHandling2: '2 · 從不下發保留訊息',
+    subShareToggle: '共享訂閱',
+    subShareGroup: '共享群組',
+    subShareHint: '同一共享群組內的多個實例由 broker 輪流派發，用於消費端水平擴展。群組名不能含 / + #，不能與 No Local 同時使用，且只有 MQTT5 有此機制。',
+    subShareChip: '共享群組 {name}',
     messageStream: '即時封包監測流',
     clearMessages: '清空封包',
     filterTopic: '按主題或本文篩選...',
@@ -2509,6 +2525,10 @@ export const translations: Record<Language, Translations> = {
     subRetainHandling0: '0 · 購読ごとに保持メッセージを送る',
     subRetainHandling1: '1 · 新規購読のときだけ送る',
     subRetainHandling2: '2 · 保持メッセージを送らない',
+    subShareToggle: '共有サブスクライブ',
+    subShareGroup: '共有グループ',
+    subShareHint: '同一グループの複数インスタンスにはブローカーが順番に配信します（消費者側の水平スケール）。グループ名に / + # は使えず、No Local との併用は不可、この仕組みは MQTT5 のみです。',
+    subShareChip: '共有グループ {name}',
     messageStream: 'リアルタイム メッセージログ',
     clearMessages: 'ログクリア',
     filterTopic: 'トピックまたは内容で検索...',

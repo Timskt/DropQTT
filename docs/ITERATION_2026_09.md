@@ -206,6 +206,17 @@
 - **P2-20 → `auto_receive` 不再直读 localStorage**：改走 `usePersistentState<boolean>`；JSON 布尔序列化后恰好是 `true`/`false`，与旧值**字节兼容，无需迁移**。
 - **P2-4/5/7 → 死配置与死依赖清理**：`tailwind.config.js` 的 `pulse-slow`（零引用）、`themes/index.ts` 的 `themeBodyBg`（注释自称"legacy props"，实际零引用）、`Cargo.toml` 里从未使用的 `thiserror`。
 
+### 3.12 共享订阅：消费端的水平扩展（第九轮，2026-10-02）
+
+审计把"共享订阅"列在协议补齐的第一条（§7.1），它也是 IoT 里真实会撞到的一组需求：**上游是百万设备、下游是少量消费者**，一个消费者吃不下，就要多个实例共摊同一个主题族。MQTT5 的机制是 `$share/<ShareName>/<TopicFilter>`（[EMQX 的说明](https://www.emqx.com/en/blog/introduction-to-mqtt5-protocol-shared-subscription)：组内**轮流派发**，参与者必须用**同一组名 + 同一过滤器**才会进同一个池；同组内 QoS 要一致，否则投递质量不可预测；会话过期时间要小心，过长的 session-expiry 会把消息投给已离线的成员）。[HiveMQ 的 MQTT5 系列](https://www.hivemq.com/blog/mqtt5-essentials-part7-shared-subscriptions/) 也把它列为规范内的标准能力。这轮把它做成一等公民：
+
+- **订阅侧**：v5 连接上多出一个"共享订阅"开关与组名输入（v3.1.1 不显示——协议里没有这个机制）。打开后过滤器组合成 `$share/<组>/<主题>`；**组名为空时不允许提交**，否则会拼出半截的非法过滤器。列表里每条共享订阅带一个"共享组 X"的徽标。
+- **校验（后端权威）**：组名不能含 `/`、`+`、`#`（含 `/` 会移动组与过滤器的边界），不能以 `$` 开头（`$` 前缀是 broker 保留的），不能嵌套 `$share`。**并且先跑共享规则再跑通用过滤器规则** —— `$share/a+b/x` 的正确诊断是"组名不能含 +"，而不是"通配符必须独占一级"，后者会让用户去改一个他根本没写错的 topic filter。
+- **共享订阅 + No Local 直接拒绝**，理由有出处：[Mosquitto 2.1.0 变更记录](https://github.com/eclipse-mosquitto/mosquitto/blob/master/ChangeLog.txt)写明"客户端订阅共享主题又设置 no-local 时返回协议错误"。我们提前给出可读拒绝，而不是让用户去线上等一个 SUBACK 意外。No Local 在普通订阅上照旧可用。
+- **命中计数修的是隐蔽正确性问题**：broker 派发给组成员时**送的是原始主题名**（`$share/` 前缀被剥掉），而 `wildcard_match` 原本按字面比较，所以共享订阅**明明在收消息，命中数却永远是 0**，顺带让按主题过滤的规则/看门狗也匹配不上。现在 `wildcard_match` 先剥 `$share/<组>/` 再比对内层过滤器，`$` 开头主题仍走原有系统主题规则。
+
+**市场对标（这次不是凭感觉）**：MQTTX 的差异化在"多连接 GUI + 场景化数据模拟"——[1.9.3 起有 IoT scenario 数据仿真](https://www.emqx.com/en/blog/mqttx-v-1-9-3-release-notes)。我们在**协议深度**这一路继续拉开差距：共享订阅这类生产端扩展机制，MQTTX 的订阅表单并不暴露；而我们的部署场景（咖啡馆网关、边缘汇聚）恰好是"一个入口、多个下游 worker"。所以这个功能对我们的用户比"再画一个设备模拟器"更有价值，也符合 §6 既定的"按报文深度而不是客户端广度取胜"的路线。
+
 ## 4. 验证矩阵（哪些真跑过）
 
 | 项目 | 命令 | 结果 | 说明 |
@@ -538,6 +549,33 @@ P0-2 的计数**只有单元测试证明**（`storage_failure_is_not_reported_as
 顺带被真机逼出一个**可访问性缺陷**：暂停按钮在 paused 状态下把可及名换成了待读条数（`+3`），"继续接收"只活在 `title` 里，于是我的自动化定位不到它、屏幕阅读器也读不出它是干什么的。补了 `aria-label={paused ? t.resumeFeed : t.pauseFeed}`，徽标继续做视觉信息。
 
 **CI**：`frontend` job 在 typecheck 之后新增 `pnpm run lint --max-warnings=10`，阈值就是今天的告警数——**收紧要有人改代码，放宽要有人签字**。门：`eslint` 0 error / 10 warn、`tsc` 通过、vitest **29/29**、Playwright **42/42**、`vite build` 通过。
+
+### 4.20 共享订阅真机取证（第九轮，两个实例 + mosquitto 2.0.15）
+
+用本机 mosquitto 起一次性 lab broker（`127.0.0.1:18831`，`persistence false`）。它的 `$share` 至少自 2.0.12 可用（该版变更记录："Fix $share subscriptions not being recovered for durable clients that reconnect"），所以这条机制能在本机端到端证明，不需要外部系统。
+
+两个实例都订阅 `$share/g1/lab/shared/#`（QoS 1），A 另订阅 `lab/plain/#` 作为对照；外部 `mosquitto_pub -q 1` 打 24 条到 `lab/shared/telemetry`：
+
+```
+A hits: {"lab/plain/#":1,"$share/g1/lab/shared/#":12}
+B hits: {"$share/g1/lab/shared/#":12}
+```
+
+| 断言 | 结果 |
+| --- | --- |
+| 组内两个成员各收到一部分 | **12 / 12** ✓ 轮流派发真的发生了 |
+| 组内没有重复投递 | `12+12 = 24` 恰好等于发布数 ✓ |
+| 共享过滤器的命中数不是 0 | ✓ 这正是本轮修掉的正确性问题 |
+| 同客户端的普通订阅不受影响 | `lab/plain/#` = 1（发布 1 条）✓ |
+| 控制台只显示自己那一份 | 两侧各 13 行（命中 12，DOM 侧多算一个主题文本节点），**没有谁显示 24** ✓ |
+| `$share/a+b/x` 被拒 | `a share name may not contain '/', '+' or '#'` ✓ 由共享规则先给出（不是通用的通配符报错） |
+| `$share/g/$share/inner/x` 被拒 | `a shared subscription cannot wrap another shared subscription` ✓ |
+| 共享 + No Local 被拒 | `a shared subscription cannot also set No Local` ✓ |
+| No Local 在普通订阅仍可用 | 成功注册 `lab/ok/#` ✓ |
+
+**顺带排掉一个我自己的测量假象**：第二次跑这份脚本时数字变成"每个成员各收 24"，看着像派发失败或消息重复。真因是我把脚本跑在**上一轮已经连接并订阅过的活进程**上，前后两次的注册叠加了。为排除"同进程二次 `connect_broker` 是否留下两条事件循环、从而重复处理每条入站报文"这个真问题，我单独做了探针：先连一次打 5 条（命中 5），再对同一 clientId 打一次 connect 并打 5 条 → **命中 10（增量恰为 5），控制台新增 5 行**。二次连接没有双跑循环，应用是干净的；错的始终是取证脚本的进程卫生。**教训：多实例真机验证里，"上一轮的进程/订阅还在世"必须当作污染源排除，先看进程数与 clientId，再解读数字。**
+
+门：Rust harness **99/99**（新增 4 条共享订阅用例）、clippy 干净、`cargo build` 通过、`tsc` 通过、`eslint` **0 error / 10 warn**、vitest **29/29**、Playwright **46/46**（新增 4 条共享订阅 UI 用例）、`vite build` 通过。
 
 ## 5. 已知限制（必须如实告知）
 

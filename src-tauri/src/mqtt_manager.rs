@@ -567,8 +567,21 @@ impl MqttManager {
     }
 
     pub async fn subscribe_topic(&self, topic: String, opts: crate::protocol::SubOptions) -> Result<(), String> {
+        if let Some(err) = crate::topic::shared_filter_error(topic.trim()) {
+            // Before the general filter check: `$share/a+b/x` is a mistake about
+            // the *share name*, and saying so beats reporting a wildcard problem
+            // in a filter the user never wrote.
+            return Err(err);
+        }
         if let Some(err) = crate::topic::filter_topic_error(topic.trim()) {
             return Err(err);
+        }
+        if crate::topic::parse_shared(topic.trim()).is_some() && opts.no_local {
+            // No-local means "do not send me my own publishes"; a shared group
+            // already decides delivery among members. Mosquitto 2.1.0 made this
+            // combination a protocol error, so refusing here matches the broker
+            // the user will eventually meet instead of a silent SUBACK surprise.
+            return Err("a shared subscription cannot also set No Local".to_string());
         }
         let topic = topic.trim().to_string();
         self.subscriptions.lock().await.insert(topic.clone(), opts);

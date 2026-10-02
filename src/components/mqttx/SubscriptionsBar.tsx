@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Radio, X, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { Plus, Radio, X, RotateCcw, SlidersHorizontal, Users } from 'lucide-react';
 import { SubOptions, TopicSubscription, subOptionsDefaults } from '../../types';
 import { Translations } from '../../i18n';
 import { useObservedTopics } from '../../utils/topicStore';
@@ -33,6 +33,8 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   const [qos, setQos] = useState<number>(0);
   const [opts, setOpts] = useState<SubOptions>(subOptionsDefaults(0));
   const [showOptions, setShowOptions] = useState(false);
+  const [sharedOn, setSharedOn] = useState(false);
+  const [shareGroup, setShareGroup] = useState('');
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
   const observedTopics = useObservedTopics();
   // Suggest live topics not already subscribed (drop trailing segment into a filter later)
@@ -46,10 +48,24 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
 
   const totalHits = Object.values(hitStats).reduce((a, b) => a + b, 0);
 
+  /** `$share/<group>/<filter>` -> the group, for display only. */
+  const shareGroupOf = (topic: string): string | null => {
+    const m = /^\$share\/([^/]+)\/(.+)$/.exec(topic);
+    return m ? m[1] : null;
+  };
+
+  const composedTopic = (): string => {
+    const raw = topicInput.trim();
+    if (isV5 && sharedOn && shareGroup.trim()) return `$share/${shareGroup.trim()}/${raw}`;
+    return raw;
+  };
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
+    const topic = composedTopic();
     if (!topicInput.trim()) return;
-    onAddSubscription(topicInput.trim(), qos, selectedColor, isV5 ? { ...opts, qos } : undefined);
+    if (sharedOn && !shareGroup.trim()) return;
+    onAddSubscription(topic, qos, selectedColor, isV5 ? { ...opts, qos } : undefined);
     setTopicInput('');
     // Cycle to next color
     const nextIdx = (COLOR_PALETTE.indexOf(selectedColor) + 1) % COLOR_PALETTE.length;
@@ -112,6 +128,37 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           <option value={1}>QoS 1</option>
           <option value={2}>QoS 2</option>
         </select>
+
+        {isV5 && (
+          <label
+            className="flex items-center gap-1.5 text-[11px] cursor-pointer"
+            style={{ color: sharedOn ? 'var(--accent)' : 'var(--text-muted)' }}
+            title={t.subShareHint}
+            htmlFor="dropqtt-sub-share"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>{t.subShareToggle}</span>
+            <input
+              type="checkbox"
+              id="dropqtt-sub-share"
+              checked={sharedOn}
+              onChange={(e) => setSharedOn(e.target.checked)}
+              className="w-3 h-3"
+            />
+          </label>
+        )}
+        {isV5 && sharedOn && (
+          <input
+            type="text"
+            id="dropqtt-sub-share-group"
+            value={shareGroup}
+            onChange={(e) => setShareGroup(e.target.value)}
+            placeholder="consumers"
+            aria-label={t.subShareGroup}
+            className="field-input w-28 text-[11px]"
+            style={{ color: 'var(--success)' }}
+          />
+        )}
 
         {isV5 && (
           <button
@@ -203,6 +250,14 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
                 style={{ backgroundColor: sub.color || '#10b981' }}
               />
               <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{sub.topic}</span>
+              {shareGroupOf(sub.topic) && (
+                <span
+                  className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
+                  title={t.subShareHint}
+                >
+                  {t.subShareChip.replace('{name}', shareGroupOf(sub.topic) as string)}
+                </span>
+              )}
               <span className="text-[11px] px-1 py-0.5 inset-box font-mono" style={{ color: 'var(--text-muted)' }}>
                 QoS {sub.qos}
               </span>
