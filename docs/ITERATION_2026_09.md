@@ -505,6 +505,14 @@ P0-2 的计数**只有单元测试证明**（`storage_failure_is_not_reported_as
 
 门：clippy 干净、`cargo build` 通过、harness **95/95**、`npx tsc --noEmit` 通过、`npm test` **29/29**、`npx playwright test` **38/38**、`npx vite build` 通过。
 
+### 4.18 审计第三批（不需要你拍板的小项）与验证边界
+
+- **P2-15**：后端只有**一处**中文字面量（`写入失败 (chunk N)`），改成语言中性的 `write failed (chunk N)` —— OS 错误是数据，不是界面文案。全仓库扫描确认仅此一处。
+- **N-P2-1**：流量表原本写死只画 80 行，"另有 N 条"无法展开。现在 `MAX_VISIBLE_ROWS` 成常量，超限时才出现**主题名过滤框**（sticky 在表头上方）。第一版我把"被过滤掉"和"被上限截断"混在一起算，`{n} more` 会把 90 条全说成被截断 —— 用例 `a long traffic table can be filtered…` 钉住了正确语义：只对匹配集计截断。CSV 导出跟随过滤（导出所见）。
+- **P2-14**：删除桥接规则从一次点击改为**两段式确认**（4 秒内再点一次才删），armed 状态按规则 id 存，所以滞后的第二次点击不会删掉另一条规则；试运行加 `testing` 互斥，异步期间按钮禁用并显示"试运行中…"。
+
+**验证边界（如实说明）**：这批由新增 `tests/ui/ux-guards.spec.ts`（4 条）与全量门覆盖 —— UI **42/42**、单测 **29/29**、harness **95/95**、clippy 干净、`cargo build` 与 `npx vite build` 通过。**流量过滤没有做真机 92 主题取证**：我的冒烟脚本在 `connect_broker` 传了缺 `useTls` 的配置被后端直接拒绝（顺带说明后端参数校验是严格的），脚本在启动阶段就退了，所以这一项目前只有 mock 证据。
+
 ## 5. 已知限制（必须如实告知）
 
 ### 5.1 环境：本机 MSVC 不可用，但 gnu 可以完整跑起应用
@@ -579,7 +587,7 @@ error: linking with `link.exe` failed
 | --- | --- |
 | **P1-2 凭证明文存 localStorage** | 成立，且是报告里最重的安全项。但引入 `tauri-plugin-stronghold` 或 OS keyring 会改变你的**密钥生命周期模型**（首次启动迁移已有明文、keyring 不可用时是硬失败还是回落明文、打包新增依赖），这是产品决定不是清理。至少要配套 `usePersistentState` 的 schema 版本与迁移，那是独立一轮。 |
 | **P1-5 `releaseDraft: false`** | 成立。但它改的是**你的发布流程**：改成草稿后 updater 何时可见需要一个人工/CI 确认步骤。我不替你决定发布节奏。 |
-| **P1-4 capabilities `fs:default` 过宽** | 成立（代码里前端确实不直接调 fs）。但同一条报告还建议顺带声明 dialog 的范围，而我实测到 webview **连 `window.close` 都没有权限**（§4.17），说明这块的实际面比报告假设的更窄。收窄权限需要一次"关窗、选目录、拖文件、更新检查"全量回归，否则很容易把功能砍掉而没人发现。 |
+| **P1-4 capabilities `fs:default` 过宽** | 报告的前提**是错的**：它说"当前代码没有从前端直接调用 fs 读写"，实际 `src/utils/exportMessages.ts:61` 就在 `import('@tauri-apps/plugin-fs')` 里用 `writeTextFile` 落盘导出（CSV/JSON/规则导出都走这条路）。所以直接删 `fs:default` 会**静默砍掉导出功能**。真要收窄，得先把导出改成一条后端命令（`write_text_file`）再删权限，或用 `fs:scope` 精确列出允许落盘的目录 —— 而 scope 写错的表现正是"点了没反应"，需要**逐个目标目录人工验证**（下载/文档/桌面），本机无法脚本化原生对话框。我没有用一半的验证去做这个改动。 |
 | **P1-14 历史 payload 双列存储** | 成立（约 2.3× 体积），但 `payload` 列是**文本检索**的字段；只留 base64 就要在 SQLite 侧做解码检索，等于换搜索模型。这不是删一列能了事的。 |
 | **P1-6 CI 加 ESLint（含 react-hooks）** | 成立且投入产出比确实高，但要新增依赖 + 一次性吞掉全仓库告警。建议单独一轮，先以 warn 基线落地。 |
 | **P1-10 / P1-11 IPC 类型化（`ts-rs` / `tauri-specta`）** | 成立。这属于 §6.1"拆 `MqttManager`"同级别的结构性工程，需要一次贯穿全仓库的改动。 |
