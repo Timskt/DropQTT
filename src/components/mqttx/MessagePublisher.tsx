@@ -284,7 +284,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
 
   // The backend refuses cadences outside its window; mirroring the floor here
   // keeps a typed value from bouncing back as an error.
-  const MIN_SCHEDULE_MS = 50;
+  const MIN_SCHEDULE_MS = 10;
   const scheduleUnsupported = format === 'cbor';
 
   const startLoop = async () => {
@@ -469,7 +469,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 </label>
                 <input
                   id="dropqtt-schedule-interval"
-                  type="number" min={MIN_SCHEDULE_MS} step={50} value={schedIntervalMs}
+                  type="number" min={MIN_SCHEDULE_MS} max={86400000} value={schedIntervalMs}
                   onChange={(e) => setSchedIntervalMs(Math.max(MIN_SCHEDULE_MS, Number(e.target.value) || MIN_SCHEDULE_MS))}
                   className="field-input w-24"
                 />

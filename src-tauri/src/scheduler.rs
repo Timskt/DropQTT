@@ -8,9 +8,10 @@ use tokio::task::JoinHandle;
 
 use crate::protocol::PubProperties;
 
-/// Fastest allowed cadence. Below this a "scheduled publish" is really a stress
-/// run and belongs to the bench lab, where batching is designed for.
-pub const MIN_INTERVAL_MS: u64 = 50;
+/// Fastest allowed cadence. Pacing is windowed (see `run_schedule`), so this is
+/// no longer limited by OS timer wakeups; below ~10 ms a scheduled publish is
+/// really a stress run and belongs to the bench lab, which is built for that.
+pub const MIN_INTERVAL_MS: u64 = 10;
 /// Slowest allowed cadence (24 h).
 pub const MAX_INTERVAL_MS: u64 = 24 * 60 * 60 * 1000;
 /// Concurrent runs per session, so a runaway UI cannot fork unbounded tasks.
@@ -502,7 +503,10 @@ mod tests {
         wildcard.topic = "sensors/#".to_string();
         assert!(wildcard.validate().is_err());
 
-        assert!(spec("a", 10, 0).validate().is_err(), "below the cadence floor");
+        assert!(
+            spec("a", MIN_INTERVAL_MS - 1, 0).validate().is_err(),
+            "below the cadence floor"
+        );
         assert!(spec("a", MAX_INTERVAL_MS + 1, 0).validate().is_err());
         assert!(spec("a", MIN_INTERVAL_MS, 0).validate().is_ok(), "floor is inclusive");
 

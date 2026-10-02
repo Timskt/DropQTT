@@ -1281,58 +1281,67 @@ impl MqttManager {
         spec: ScheduleSpec,
         cancel: Arc<AtomicBool>,
     ) {
-        let period = std::time::Duration::from_millis(spec.interval_ms);
-        // Absolute grid: fire n is aimed at `next`, which advances by exactly one
-        // period no matter how long the publish took. A tokio `interval` with the
-        // Delay policy (and a webview `setInterval`) both re-arm from "now", so
-        // every tick's own cost leaked into the cadence — measured at 100 ms the
-        // Delay version ran p50 110 ms and finished 60 ticks in 6.55 s instead of
-        // 5.9 s. Falling more than one period behind (suspend, stalled runtime)
-        // re-anchors instead of discharging a burst of catch-up publishes.
-        let mut next = tokio::time::Instant::now();
+        // Pacing is windowed, not one publish per timer wake. Windows only
+        // resolves wakeups every ~10-16 ms, so a short interval simply lost
+        // messages against its own schedule (the same wall the bench lab hit;
+        // see docs §4.21). Each window fires whatever the elapsed time says is
+        // already due, and a long stall still discharges only a bounded catch-up
+        // instead of dumping the backlog -- an absolute grid on purpose, so a
+        // suspended laptop does not resume into a burst.
+        const WINDOW: std::time::Duration = std::time::Duration::from_millis(20);
+        let period_ms = spec.interval_ms.max(1);
+        let per_window = (WINDOW.as_millis() as u64 / period_ms).max(1);
+        let mut window = tokio::time::interval(WINDOW);
+        window.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let started = Instant::now();
         let mut seq: u64 = 0;
         loop {
-            tokio::time::sleep_until(next).await;
+            window.tick().await;
             if cancel.load(Ordering::SeqCst) {
                 return;
             }
-            seq += 1;
-            next += period;
-            if tokio::time::Instant::now() > next + period {
-                next = tokio::time::Instant::now();
-            }
-            let now_ms = chrono::Utc::now().timestamp_millis();
-            let random = (uuid::Uuid::new_v4().as_u128() & u128::from(u32::MAX)) as u32;
-            let rendered = scheduler::render_template(&spec.payload, seq, now_ms, random);
-            let params = match scheduler::encode_payload(&spec.format, &rendered) {
-                Ok(bytes) => ConsolePublishParams {
-                    topic: spec.topic.clone(),
-                    payload_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
-                    qos: spec.qos,
-                    retain: spec.retain,
-                    properties: spec.properties.clone(),
-                },
-                Err(e) => {
-                    self.scheduler.fail(&spec.id, &e);
-                    self.emit_schedule_event(&app, &spec.id).await;
-                    return;
+            // +1 keeps the historical behaviour of firing the first publish
+            // immediately rather than one period in.
+            let due = (started.elapsed().as_millis() as u64 / period_ms) + 1;
+            let target = due.min(seq + per_window * 4);
+            while seq < target {
+                seq += 1;
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let random = (uuid::Uuid::new_v4().as_u128() & u128::from(u32::MAX)) as u32;
+                let rendered = scheduler::render_template(&spec.payload, seq, now_ms, random);
+                let params = match scheduler::encode_payload(&spec.format, &rendered) {
+                    Ok(bytes) => ConsolePublishParams {
+                        topic: spec.topic.clone(),
+                        payload_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                        qos: spec.qos,
+                        retain: spec.retain,
+                        properties: spec.properties.clone(),
+                    },
+                    Err(e) => {
+                        self.scheduler.fail(&spec.id, &e);
+                        self.emit_schedule_event(&app, &spec.id).await;
+                        return;
+                    }
+                };
+                let outcome = self.publish_console(app.clone(), params).await;
+                match outcome {
+                    Ok(()) => match self.scheduler.record_fire(&spec.id, now_ms) {
+                        RunStatus::Completed | RunStatus::Failed | RunStatus::Stopped => {
+                            self.emit_schedule_event(&app, &spec.id).await;
+                            return;
+                        }
+                        RunStatus::Running => {}
+                    },
+                    Err(e) => {
+                        let streak = self.scheduler.record_error(&spec.id, &e);
+                        if streak >= scheduler::MAX_CONSECUTIVE_ERRORS {
+                            self.emit_schedule_event(&app, &spec.id).await;
+                            return;
+                        }
+                    }
                 }
-            };
-            let outcome = self.publish_console(app.clone(), params).await;
-            match outcome {
-                Ok(()) => match self.scheduler.record_fire(&spec.id, now_ms) {
-                    RunStatus::Completed | RunStatus::Failed | RunStatus::Stopped => {
-                        self.emit_schedule_event(&app, &spec.id).await;
-                        return;
-                    }
-                    RunStatus::Running => {}
-                },
-                Err(e) => {
-                    let streak = self.scheduler.record_error(&spec.id, &e);
-                    if streak >= scheduler::MAX_CONSECUTIVE_ERRORS {
-                        self.emit_schedule_event(&app, &spec.id).await;
-                        return;
-                    }
+                if cancel.load(Ordering::SeqCst) {
+                    return;
                 }
             }
         }
