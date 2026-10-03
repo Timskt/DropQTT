@@ -59,6 +59,8 @@ const boot = async (page: any, opts: { rules?: any[]; stats?: any[] } = {}) => {
           return { topicAliasMax: 10, maxQos: 2, retainAvailable: true, wildcardAvailable: true, sharedAvailable: true, subscriptionIdsAvailable: true, receiveMax: 65535, maxPacketSize: null, serverKeepAlive: null, sessionExpiry: null, assignedClientId: null, responseInformation: null, serverReference: null };
         if (cmd === 'get_subscription_ack_state') return { rejected: [], refusedUnsubscribes: [], capped: [], unattributed: 0 };
         if (cmd === 'get_topic_stats' || cmd === 'get_broker_sys') return [];
+        if (cmd === 'responder_sync_rules' || cmd === 'responder_stats' || cmd === 'responder_reset')
+          return w.responder ?? [];
         if (cmd === 'assertions_sync_rules' || cmd === 'assertions_state' || cmd === 'assertions_reset')
           return { stats: { matched: 0, passed: 0, violated: 0, unevaluable: 0 }, rules: 0, recent: [] };
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];

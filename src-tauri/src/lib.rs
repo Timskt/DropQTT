@@ -8,6 +8,7 @@ pub mod history;
 pub mod mqtt_manager;
 pub mod protocol;
 pub mod rpc;
+pub mod responder;
 pub mod scheduler;
 pub mod silence;
 pub mod transport;
@@ -521,6 +522,28 @@ async fn faults_reset(state: State<'_, AppState>) -> Result<Vec<faults::FaultRul
     Ok(state.mqtt.faults.stats())
 }
 
+/// Replace the scripted-responder rule set. A rule whose reply answers its own
+/// trigger is a loop and is refused here, before it can generate traffic.
+#[tauri::command]
+async fn responder_sync_rules(
+    state: State<'_, AppState>,
+    rules: Vec<responder::ResponderRule>,
+) -> Result<Vec<responder::ResponderStats>, String> {
+    state.mqtt.responder.sync_rules(rules)?;
+    Ok(state.mqtt.responder.stats())
+}
+
+#[tauri::command]
+async fn responder_stats(state: State<'_, AppState>) -> Result<Vec<responder::ResponderStats>, String> {
+    Ok(state.mqtt.responder.stats())
+}
+
+#[tauri::command]
+async fn responder_reset(state: State<'_, AppState>) -> Result<Vec<responder::ResponderStats>, String> {
+    state.mqtt.responder.reset();
+    Ok(state.mqtt.responder.stats())
+}
+
 #[tauri::command]
 async fn bridge_stats(
     state: State<'_, AppState>,
@@ -676,6 +699,9 @@ pub fn run() {
             faults_sync_rules,
             faults_stats,
             faults_reset,
+            responder_sync_rules,
+            responder_stats,
+            responder_reset,
             bridge_stats,
             bridge_reset_stats,
             bridge_test_transform

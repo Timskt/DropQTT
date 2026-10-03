@@ -169,6 +169,8 @@ pub struct MqttDiagnostics {
     pub fault_rules: usize,
     /// Messages dropped, delayed, duplicated, corrupted or mis-correlated by us
     pub fault_actions: u64,
+    /// Scripted-responder rules armed: this app is answering traffic as a device
+    pub responder_rules: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -610,6 +612,7 @@ mod tests {
             history_write: Timing::default().snapshot(),
             fault_rules: 0,
             fault_actions: 0,
+            responder_rules: 0,
         }
     }
 

@@ -205,6 +205,8 @@ pub struct MqttManager {
     /// Fault injection: loss, latency, duplicates and damage on demand, so the
     /// app's own failure paths can be tested rather than trusted
     pub faults: Arc<crate::faults::FaultInjector>,
+    /// Scripted responder: replies a simulated device should make to inbound traffic
+    pub responder: Arc<crate::responder::ResponderEngine>,
     /// Registry of backend-scheduled publishes for this session
     pub scheduler: Arc<SchedulerManager>,
     /// Registry of built-in publish stress runs (latency + ack accounting)
@@ -304,6 +306,7 @@ impl MqttManager {
             silence_watchdog: Arc::new(SilenceWatchdog::default()),
             assertions: Arc::new(crate::assertions::AssertionEngine::default()),
             faults: Arc::new(crate::faults::FaultInjector::default()),
+            responder: Arc::new(crate::responder::ResponderEngine::default()),
             scheduler: Arc::new(SchedulerManager::new()),
             bench: Arc::new(crate::bench::BenchManager::new()),
             rpc: Mutex::new(crate::rpc::RpcRegistry::default()),
@@ -455,6 +458,7 @@ impl MqttManager {
             history_write: timings.2,
             fault_rules,
             fault_actions,
+            responder_rules: self.responder.rule_count(),
         }
     }
 
@@ -1534,6 +1538,66 @@ impl MqttManager {
         Ok(())
     }
 
+    /// Send one responder reply and echo it into the feed as an outbound row, so a
+    /// simulated device shows up exactly where a real peer's traffic would. Broker
+    /// limits are checked here too: a reply the broker would refuse is our bug, and
+    /// it has to arrive as an error the rule can be seen carrying.
+    async fn publish_as_device(&self, reply: &crate::responder::PendingReply) -> Result<(), String> {
+        if let Some(err) = crate::topic::publish_topic_error(&reply.topic) {
+            return Err(err);
+        }
+        let client = self
+            .client
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| "MQTT client not connected".to_string())?;
+        let caps = self.broker_caps.read().await.clone();
+        if let Some(err) = crate::transport::qos_rejection(reply.qos, caps.max_qos) {
+            return Err(err);
+        }
+        if let Some(err) = crate::transport::retain_rejection(reply.retain, caps.retain_available) {
+            return Err(err);
+        }
+        let bytes = Bytes::from(reply.payload.clone());
+        let payload_len = bytes.len();
+        if let Some(err) = crate::transport::packet_size_rejection(
+            payload_len,
+            reply.topic.len(),
+            caps.max_packet_size,
+        ) {
+            return Err(err);
+        }
+        client
+            .publish(&reply.topic, reply.qos, reply.retain, bytes.clone(), None)
+            .await
+            .map_err(|e| format!("responder publish failed: {e}"))?;
+        let msg = MqttGenericMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            topic: reply.topic.clone(),
+            payload: reply.payload.clone(),
+            payload_len,
+            payload_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+            truncated: false,
+            content_type: None,
+            user_properties: Vec::new(),
+            response_topic: None,
+            correlation_data: None,
+            correlation_hex: None,
+            payload_format: None,
+            matched_filters: Vec::new(),
+            subscription_ids: Vec::new(),
+            qos: reply.qos,
+            retain: reply.retain,
+            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+            direction: "out".to_string(),
+            assertion: None,
+        };
+        self.push_feed(msg).await;
+        Ok(())
+    }
+
     // ------------------------------------------------------------------
     // Request / response (MQTT5)
     // ------------------------------------------------------------------
@@ -1966,6 +2030,27 @@ impl MqttManager {
                 let _ = app.emit("assertion-violation", violation);
             }
             self.push_feed(msg).await;
+        }
+
+        // Scripted responder: stand in for the device on the other end. Planned from
+        // the same delivery the console just showed, and skipped for chunk traffic —
+        // answering our own file-transfer protocol would be talking to ourselves.
+        if self.responder.is_active() && !is_chunk_topic {
+            let text = String::from_utf8_lossy(&publish.payload).to_string();
+            let replies = self.responder.plan(&topic, &text, chrono::Utc::now().timestamp_millis());
+            for reply in replies {
+                let me = self.clone();
+                let app = app.clone();
+                tokio::spawn(async move {
+                    if reply.delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(reply.delay_ms)).await;
+                    }
+                    if let Err(e) = me.publish_as_device(&reply).await {
+                        me.responder.record_failure(&reply.rule_id, &e);
+                        let _ = app.emit("responder-error", e);
+                    }
+                });
+            }
         }
 
         // Pair against open requests before the transfer dispatch: a response

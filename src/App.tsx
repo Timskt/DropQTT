@@ -39,9 +39,11 @@ import { useBatchSender } from './hooks/useBatchSender';
 import { useRpc } from './hooks/useRpc';
 import { useAssertions } from './hooks/useAssertions';
 import { useFaults } from './hooks/useFaults';
+import { useResponder } from './hooks/useResponder';
 import { RpcPanel } from './components/mqttx/RpcPanel';
 import { AssertionPanel } from './components/mqttx/AssertionPanel';
 import { FaultPanel } from './components/mqttx/FaultPanel';
+import { ResponderPanel } from './components/mqttx/ResponderPanel';
 
 const MODE_TITLES: Record<WorkspaceMode, (t: Translations) => string> = {
   transfer: (t) => t.modeFileTransfer,
@@ -207,6 +209,7 @@ export function App() {
   // Rules stay armed in Rust when the console closes; only the tallies stop polling
   const assertions = useAssertions(activeMode === 'mqttx');
   const faults = useFaults(activeMode === 'mqttx');
+  const responder = useResponder(activeMode === 'mqttx');
 
   return (
     <div className="min-h-screen flex overflow-hidden font-sans">
@@ -433,6 +436,19 @@ export function App() {
                 onRemove={faults.removeRule}
                 onToggle={faults.toggleRule}
                 onReset={faults.reset}
+                t={t}
+              />
+
+              <ResponderPanel
+                rules={responder.rules}
+                stats={responder.stats}
+                lastError={responder.lastError}
+                connected={broker.isConnected}
+                onAdd={responder.addRule}
+                onUpdate={responder.updateRule}
+                onRemove={responder.removeRule}
+                onToggle={responder.toggleRule}
+                onReset={responder.reset}
                 t={t}
               />
 

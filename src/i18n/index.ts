@@ -550,6 +550,22 @@ export interface Translations {
   faultsResetHint: string;
   faultsArmedWarning: string;
   opsCheckFaults: string;
+  responderTitle: string;
+  responderHint: string;
+  responderTokens: string;
+  responderNeedsConnection: string;
+  responderEmpty: string;
+  responderEnabled: string;
+  responderNamePlaceholder: string;
+  responderTrigger: string;
+  responderReplyTopic: string;
+  responderReplyPayload: string;
+  responderQos: string;
+  responderRetain: string;
+  responderDelay: string;
+  responderRate: string;
+  responderCounts: string;
+  responderResetHint: string;
   noMessagesFiltered: string;
   truncatedNote: string;
   mdView: string;
@@ -1230,6 +1246,22 @@ export const translations: Record<Language, Translations> = {
     faultsResetHint: '清零这些规则做过的事，但不解除它们的武装',
     faultsArmedWarning: '故障注入正在生效：本次会话里丢失或损坏的流量可能是我们干的，不是网络。',
     opsCheckFaults: '故障注入已生效',
+    responderTitle: '脚本应答器',
+    responderHint: '像一台不在实验台上的设备那样回应入站流量。应答主题若命中自己的触发过滤器会被直接拒绝，每条规则还带每秒上限——这个功能的失败模式就是自己造出一堆流量。',
+    responderTokens: '可用变量：${topic} ${payload} ${counter} ${uuid} ${ts} ${iso}',
+    responderNeedsConnection: '断线时不会有任何应答。',
+    responderEmpty: '还没有应答规则。入站流量目前只被看，没有被回。',
+    responderEnabled: '生效',
+    responderNamePlaceholder: '可选名称，例如"网关确认"',
+    responderTrigger: '触发过滤器',
+    responderReplyTopic: '应答主题',
+    responderReplyPayload: '应答载荷',
+    responderQos: '应答 QoS',
+    responderRetain: 'retain',
+    responderDelay: '延迟 ms',
+    responderRate: '上限 /s',
+    responderCounts: '命中 {matched} · 已答 {replied} · 限流 {throttled} · 自答 {suppressed} · 失败 {failed}',
+    responderResetHint: '清零这些规则答过多少，但不解除它们的武装',
     noMessagesFiltered: '没有匹配当前筛选的报文',
     truncatedNote: '载荷过大，已截断显示',
     mdView: 'Markdown 渲染视图',
@@ -1918,6 +1950,22 @@ export const translations: Record<Language, Translations> = {
     faultsResetHint: 'Zero what these rules have done without disarming them',
     faultsArmedWarning: 'Fault injection is armed: missing or damaged traffic in this session may be ours, not the network’s.',
     opsCheckFaults: 'Fault injection armed',
+    responderTitle: 'Scripted responder',
+    responderHint: 'Answer inbound traffic like a device that is not on the bench. A reply whose topic matches its own trigger is refused, and every rule carries a per-second ceiling, because the failure mode of this feature is inventing traffic.',
+    responderTokens: 'tokens: ${topic} ${payload} ${counter} ${uuid} ${ts} ${iso}',
+    responderNeedsConnection: 'Nothing answers while disconnected.',
+    responderEmpty: 'No responder rules. Inbound traffic is being watched, not answered.',
+    responderEnabled: 'armed',
+    responderNamePlaceholder: 'optional name, e.g. gateway ack',
+    responderTrigger: 'Trigger filter',
+    responderReplyTopic: 'Reply topic',
+    responderReplyPayload: 'Reply payload',
+    responderQos: 'reply QoS',
+    responderRetain: 'retain',
+    responderDelay: 'delay ms',
+    responderRate: 'max /s',
+    responderCounts: 'matched {matched} · replied {replied} · throttled {throttled} · self-echoed {suppressed} · failed {failed}',
+    responderResetHint: 'Zero what these rules have answered without disarming them',
     noMessagesFiltered: 'No messages matching current search filter.',
     truncatedNote: 'Payload too large — display truncated',
     mdView: 'Markdown rendered view',
@@ -2606,6 +2654,22 @@ export const translations: Record<Language, Translations> = {
     faultsResetHint: '清零這些規則做过的事，但不解除它們的武裝',
     faultsArmedWarning: '故障注入正在生效：本次工作階段裡遺失或損壞的流量可能是我們做的，不是網路。',
     opsCheckFaults: '故障注入已生效',
+    responderTitle: '腳本應答器',
+    responderHint: '像一台不在實驗台上的設備那樣回應入站流量。應答主題若命中自己的觸發過濾器會被直接拒絕，每條規則還帶每秒上限——這個功能的失敗模式就是自己造出一堆流量。',
+    responderTokens: '可用變數：${topic} ${payload} ${counter} ${uuid} ${ts} ${iso}',
+    responderNeedsConnection: '斷線時不會有任何應答。',
+    responderEmpty: '還沒有應答規則。入站流量目前只被看，沒有被回。',
+    responderEnabled: '生效',
+    responderNamePlaceholder: '可選名稱，例如「閘道確認」',
+    responderTrigger: '觸發過濾器',
+    responderReplyTopic: '應答主題',
+    responderReplyPayload: '應答載荷',
+    responderQos: '應答 QoS',
+    responderRetain: 'retain',
+    responderDelay: '延遲 ms',
+    responderRate: '上限 /s',
+    responderCounts: '命中 {matched} · 已答 {replied} · 限流 {throttled} · 自答 {suppressed} · 失敗 {failed}',
+    responderResetHint: '清零這些規則答過多少，但不解除它們的武裝',
     noMessagesFiltered: '沒有符合目前篩選的報文',
     truncatedNote: '載荷過大，已截斷顯示',
     mdView: 'Markdown 渲染視圖',
@@ -3294,6 +3358,22 @@ export const translations: Record<Language, Translations> = {
     faultsResetHint: '規則を有効にしたまま、これらの実績だけをリセットします',
     faultsArmedWarning: 'フォールト注入が有効です: このセッションで行方不明・破損したトラフィックは我々の仕業で、ネットワークの異常ではない可能性があります。',
     opsCheckFaults: 'フォールト注入が有効',
+    responderTitle: 'スクリプト応答',
+    responderHint: 'ベンチに居ないデバイスの代わりに着信トラフィックへ応答します。応答トピックが自分のトリガーに該当する場合は拒否され、各規則に毎秒上限を設けます。この機能の失敗パターンは自前でトラフィックを生やすことです。',
+    responderTokens: 'トークン: ${topic} ${payload} ${counter} ${uuid} ${ts} ${iso}',
+    responderNeedsConnection: '切断中は応答しません。',
+    responderEmpty: '応答規則がありません。着信は見るだけで返しません。',
+    responderEnabled: '有効',
+    responderNamePlaceholder: '任意の名前（例: ゲートウェイ応答）',
+    responderTrigger: 'トリガーフィルター',
+    responderReplyTopic: '応答トピック',
+    responderReplyPayload: '応答ペイロード',
+    responderQos: '応答 QoS',
+    responderRetain: 'retain',
+    responderDelay: '遅延 ms',
+    responderRate: '上限 /s',
+    responderCounts: '該当 {matched} · 応答 {replied} · 制限 {throttled} · 自己応答 {suppressed} · 失敗 {failed}',
+    responderResetHint: '規則を有効にしたまま、応答実績だけをリセットします',
     noMessagesFiltered: 'フィルターに一致するメッセージがありません',
     truncatedNote: 'ペイロードが大きすぎるため表示を切り詰めました',
     mdView: 'Markdown レンダリング表示',

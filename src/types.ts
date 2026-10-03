@@ -240,6 +240,48 @@ export const emptyFaultCounts: FaultCounts = {
 export const faultActionTotal = (counts: FaultCounts): number =>
   counts.dropped + counts.delayed + counts.duplicated + counts.corrupted + counts.misCorrelated;
 
+/** A scripted responder: answer traffic that matches `trigger` with a reply. */
+export interface ResponderRule {
+  id: string;
+  name: string;
+  /** Inbound filter that starts a reply. */
+  trigger: string;
+  /** Topic template; `${topic}` and `${payload}` are substituted per message. */
+  replyTopic: string;
+  replyPayload: string;
+  qos: number;
+  retain: boolean;
+  delayMs: number;
+  /** 0 means only the engine-wide ceiling applies. */
+  maxPerSec: number;
+  enabled: boolean;
+}
+
+export const responderRuleDefaults: Omit<ResponderRule, 'id' | 'trigger'> = {
+  name: '',
+  replyTopic: '',
+  replyPayload: '{"ok":true}',
+  qos: 1,
+  retain: false,
+  delayMs: 0,
+  maxPerSec: 0,
+  enabled: true,
+};
+
+export interface ResponderStats {
+  id: string;
+  name: string;
+  trigger: string;
+  enabled: boolean;
+  matched: number;
+  replied: number;
+  throttled: number;
+  /** Deliveries skipped because this app answered them a moment ago */
+  suppressed: number;
+  failed: number;
+  lastError?: string | null;
+}
+
 /** MQTT v5 user-facing publish properties (ignored on v3.1.1) */
 export interface PubProperties {
   contentType?: string;
