@@ -335,6 +335,18 @@ export interface Translations {
   replayTruncated: string;
   topicTraffic: string;
   noTraffic: string;
+  trafficViewLabel: string;
+  trafficViewList: string;
+  trafficViewTree: string;
+  trafficFilteredNote: string;
+  treeSummary: string;
+  treeExpandAll: string;
+  treeCollapseAll: string;
+  treeExpand: string;
+  treeCollapse: string;
+  treeSparkline: string;
+  treeMore: string;
+  treeHint: string;
   msgsPerSec: string;
   totalMsgs: string;
   totalBytes: string;
@@ -1129,6 +1141,18 @@ export const translations: Record<Language, Translations> = {
     replayTruncated: '载荷被截断，无法原样重发',
     topicTraffic: '主题流量统计',
     noTraffic: '暂无流量数据 — 订阅主题收到消息后实时统计，最热主题排首位',
+    trafficViewLabel: '流量视图',
+    trafficViewList: '列表',
+    trafficViewTree: '主题树',
+    trafficFilteredNote: '筛选中：{shown}/{total} 个主题',
+    treeSummary: '{branches} 个分支 · {topics} 个主题',
+    treeExpandAll: '展开全部',
+    treeCollapseAll: '收起全部',
+    treeExpand: '展开',
+    treeCollapse: '收起',
+    treeSparkline: '最近 {n} 秒，峰值 {max}/秒',
+    treeMore: '还有 {n} 个分支未显示（先展开上层）',
+    treeHint: '分支速率是它下面各主题当前这一秒速率之和；峰值取分支内单个主题达到过的最高值——两个主题在不同秒各自达到峰值，不等于分支在那个秒一起冲过顶。曲线只覆盖本次会话开始观察之后的这段时间。',
     msgsPerSec: '速率',
     totalMsgs: '消息数',
     totalBytes: '数据量',
@@ -1919,6 +1943,18 @@ export const translations: Record<Language, Translations> = {
     replayTruncated: 'Payload truncated — cannot replay verbatim',
     topicTraffic: 'Topic Traffic',
     noTraffic: 'No traffic yet — topics appear here live once messages arrive; hottest first',
+    trafficViewLabel: 'Traffic view',
+    trafficViewList: 'List',
+    trafficViewTree: 'Tree',
+    trafficFilteredNote: 'filtered: {shown} of {total} topics',
+    treeSummary: '{branches} branches · {topics} topics',
+    treeExpandAll: 'Expand all',
+    treeCollapseAll: 'Collapse all',
+    treeExpand: 'Expand',
+    treeCollapse: 'Collapse',
+    treeSparkline: 'last {n} seconds, peak {max}/s',
+    treeMore: '{n} more branches not shown (expand a parent first)',
+    treeHint: 'A branch rate is the sum of its children in the current second; its peak is the highest any single child reached, because two topics peaking in different seconds did not peak together. Sparklines cover only this session.',
     msgsPerSec: 'Rate',
     totalMsgs: 'Msgs',
     totalBytes: 'Volume',
@@ -2709,6 +2745,18 @@ export const translations: Record<Language, Translations> = {
     replayTruncated: '載入已截斷，無法原樣重發',
     topicTraffic: '主題流量統計',
     noTraffic: '暫無流量資料 — 訂閱主題收到訊息後即時統計，最熱主題排首位',
+    trafficViewLabel: '流量視圖',
+    trafficViewList: '列表',
+    trafficViewTree: '主題樹',
+    trafficFilteredNote: '篩選中：{shown}/{total} 個主題',
+    treeSummary: '{branches} 個分支 · {topics} 個主題',
+    treeExpandAll: '展開全部',
+    treeCollapseAll: '收合全部',
+    treeExpand: '展開',
+    treeCollapse: '收合',
+    treeSparkline: '最近 {n} 秒，峰值 {max}/秒',
+    treeMore: '還有 {n} 個分支未顯示（先展開上層）',
+    treeHint: '分支速率是它下面各主題目前這一秒速率之和；峰值取分支內單個主題曾達到的最高值——兩個主題在不同秒各自達到峰值，不等於分支在該秒一起衝過頂。曲線只涵蓋本次工作階段開始觀察之後的這段時間。',
     msgsPerSec: '速率',
     totalMsgs: '訊息數',
     totalBytes: '資料量',
@@ -3499,6 +3547,18 @@ export const translations: Record<Language, Translations> = {
     replayTruncated: 'ペイロードが切り詰められており再送不可',
     topicTraffic: 'トピックトラフィック統計',
     noTraffic: 'トラフィックなし — メッセージ受信後にリアルタイム集計、最多のトピックが先頭に',
+    trafficViewLabel: '表示方式',
+    trafficViewList: 'リスト',
+    trafficViewTree: 'ツリー',
+    trafficFilteredNote: '絞り込み中：{total} 件中 {shown} 件',
+    treeSummary: '分岐 {branches} · トピック {topics}',
+    treeExpandAll: 'すべて展開',
+    treeCollapseAll: 'すべて収納',
+    treeExpand: '展開',
+    treeCollapse: '収納',
+    treeSparkline: '直近 {n} 秒、ピーク {max}/秒',
+    treeMore: 'ほか {n} 分岐は未表示（上位を展開してください）',
+    treeHint: '分岐の速度は配下のトピックが現在の 1 秒に出した速度の合計です。ピークは配下の単一トピックが到達した最高値で、別の秒でそれぞれピーク出したものを足した値ではありません。スパークラインはこのセッションで観測開始以降の区間のみを示します。',
     msgsPerSec: '速度',
     totalMsgs: '件数',
     totalBytes: 'データ量',

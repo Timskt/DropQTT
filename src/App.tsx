@@ -450,6 +450,7 @@ export function App() {
 
               <TopicTrafficPanel
                 rows={topicStats.rows}
+                series={topicStats.series}
                 onReset={topicStats.resetTopicStats}
                 connected={broker.isConnected}
                 cap={topicStats.cap}

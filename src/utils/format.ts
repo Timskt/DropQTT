@@ -18,3 +18,16 @@ export function formatBytes(n: number): string {
   if (unit === 0) return `${Math.round(value)} B`;
   return `${value.toFixed(unit === 1 ? 1 : 2)} ${UNITS[unit]}`;
 }
+
+/**
+ * "How long ago" for a unix-seconds stamp, in the coarsest unit that still reads
+ * as recent. The caller passes `nowSec` so a whole list shares one clock instead
+ * of each row rendering a different instant.
+ */
+export function relativeFromNow(unixSec: number, nowSec: number): string {
+  const d = Math.max(0, nowSec - unixSec);
+  if (d < 2) return 'now';
+  if (d < 60) return `${d}s`;
+  if (d < 3600) return `${Math.floor(d / 60)}m`;
+  return `${Math.floor(d / 3600)}h`;
+}

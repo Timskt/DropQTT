@@ -1,15 +1,18 @@
 import React, { useMemo, useState } from 'react';
-import { formatBytes } from '../../utils/format';
-import { Activity, Camera, Download, Flame, RotateCcw, Square, Zap } from 'lucide-react';
+import { formatBytes, relativeFromNow } from '../../utils/format';
+import { Activity, Camera, Download, Flame, ListTree, RotateCcw, Rows3, Square, Zap } from 'lucide-react';
 import { BenchStatus, TopicStatRow } from '../../types';
 import { Translations, fill } from '../../i18n';
 import { usePersistentState } from '../../hooks/usePersistentState';
 import { useBench } from '../../hooks/useBench';
+import { TopicTreePanel } from './TopicTreePanel';
 import { saveTextFile } from '../../utils/exportMessages';
 import { csvRow } from '../../utils/csv';
 
 interface TopicTrafficPanelProps {
   rows: TopicStatRow[];
+  /** Per-topic rate samples, one per stats tick; drives the tree's sparklines */
+  series: Record<string, number[]>;
   onReset: () => void;
   connected: boolean;
   /** Runtime-configurable topic tracking cap (LRU eviction when full) */
@@ -48,22 +51,13 @@ const BENCH_LABEL: Record<BenchStatus, (t: Translations) => string> = {
   failed: (t) => t.scheduleRunFailed,
 };
 
-
-const relativeSec = (unixSec: number, nowSec: number): string => {
-  const d = Math.max(0, nowSec - unixSec);
-  if (d < 2) return 'now';
-  if (d < 60) return `${d}s`;
-  if (d < 3600) return `${Math.floor(d / 60)}m`;
-  return `${Math.floor(d / 3600)}h`;
-};
-
 /**
  * Live ranking of inbound topic traffic with hot-topic discovery:
  * sortable dimensions, anomaly threshold alerts, snapshot-based delta
  * comparison (finds who ramped up over a window) and CSV export.
  */
 export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
-  rows, onReset, connected, cap, setCap, t,
+  rows, series, onReset, connected, cap, setCap, t,
 }) => {
   const nowSec = Math.floor(Date.now() / 1000);
   const totalRate = useMemo(() => rows.reduce((a, r) => a + r.rate, 0), [rows]);
@@ -73,6 +67,9 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
   const [alertThreshold, setAlertThreshold] = usePersistentState<number>('dropqtt_traffic_alert', 100);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [topicFilter, setTopicFilter] = useState('');
+  // List answers "which topic is loudest"; the tree answers "which branch of the
+  // fleet is". The choice persists because a site tends to have one habit.
+  const [view, setView] = usePersistentState<'list' | 'tree'>('dropqtt_traffic_view', 'list');
 
   const sortedRows = useMemo(() => {
     const cmp: Record<SortKey, (a: TopicStatRow, b: TopicStatRow) => number> = {
@@ -174,6 +171,22 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
     });
   };
 
+  // One filter for both views: the list and the tree answer the same question at
+  // different granularity, and a filter that only worked in one of them would make
+  // the two disagree about what "these topics" means.
+  const filterBar = sortedRows.length > MAX_VISIBLE_ROWS && (
+    <div className="sticky top-0 z-20 px-2 py-1" style={{ background: 'var(--bg-panel-solid)' }}>
+      <input
+        type="search"
+        value={topicFilter}
+        onChange={(e) => setTopicFilter(e.target.value)}
+        placeholder={t.trafficFilterPh}
+        aria-label={t.trafficFilterPh}
+        className="field-input !py-0.5 text-[10px] w-full font-mono"
+      />
+    </div>
+  );
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -196,6 +209,32 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
               <option key={c} value={c}>{c >= 1000 ? `${c / 1000}k` : c}</option>
             ))}
           </select>
+          <div className="seg-box" role="group" aria-label={t.trafficViewLabel}>
+            <button
+              type="button"
+              aria-pressed={view === 'list'}
+              onClick={() => setView('list')}
+              className="px-2 py-1 rounded flex items-center gap-1 text-[10px]"
+              style={{ color: view === 'list' ? 'var(--accent)' : 'var(--text-muted)', background: view === 'list' ? 'var(--hover)' : undefined }}
+              title={t.trafficViewList}
+              data-testid="traffic-view-list"
+            >
+              <Rows3 className="w-3 h-3" />
+              {t.trafficViewList}
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === 'tree'}
+              onClick={() => setView('tree')}
+              className="px-2 py-1 rounded flex items-center gap-1 text-[10px]"
+              style={{ color: view === 'tree' ? 'var(--accent)' : 'var(--text-muted)', background: view === 'tree' ? 'var(--hover)' : undefined }}
+              title={t.trafficViewTree}
+              data-testid="traffic-view-tree"
+            >
+              <ListTree className="w-3 h-3" />
+              {t.trafficViewTree}
+            </button>
+          </div>
           <button onClick={exportCsv} disabled={rows.length === 0} className="btn-ghost !px-2.5 !py-1 flex items-center gap-1 text-[11px]" title={t.exportTraffic} aria-label={t.exportTraffic}>
             <Download className="w-3 h-3" />
           </button>
@@ -458,20 +497,19 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
         <div className="px-4 py-6 text-center text-[12px] font-mono" style={{ color: 'var(--text-muted)' }}>
           {t.noTraffic}
         </div>
-      ) : (
-        <div className="max-h-72 overflow-y-auto">
-          {sortedRows.length > MAX_VISIBLE_ROWS && (
-            <div className="sticky top-0 z-20 px-2 py-1" style={{ background: 'var(--bg-panel-solid)' }}>
-              <input
-                type="search"
-                value={topicFilter}
-                onChange={(e) => setTopicFilter(e.target.value)}
-                placeholder={t.trafficFilterPh}
-                aria-label={t.trafficFilterPh}
-                className="field-input !py-0.5 text-[10px] w-full font-mono"
-              />
+      ) : view === 'tree' ? (
+        <div className="max-h-96 overflow-y-auto">
+          {filterBar}
+          {filteredRows.length < sortedRows.length && (
+            <div className="sticky top-0 z-20 px-3 py-1 text-[10px] font-mono" data-testid="tree-filtered-note" style={{ background: 'var(--bg-panel-solid)', color: 'var(--text-muted)' }}>
+              {fill(t.trafficFilteredNote, { shown: String(filteredRows.length), total: String(sortedRows.length) })}
             </div>
           )}
+          <TopicTreePanel rows={filteredRows} series={series} nowSec={nowSec} t={t} />
+        </div>
+      ) : (
+        <div className="max-h-72 overflow-y-auto">
+          {filterBar}
           <table className="w-full text-[11px] font-mono" style={{ color: 'var(--text-secondary)' }}>
             <thead>
               <tr className="text-left sticky top-0 z-10" style={{ background: 'var(--bg-inset)', color: 'var(--text-muted)' }}>
@@ -532,7 +570,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                       </td>
                     )}
                     <td className="px-3 py-1.5 text-right" style={{ color: 'var(--text-muted)' }}>
-                      {relativeSec(r.lastSeen, nowSec)}
+                      {relativeFromNow(r.lastSeen, nowSec)}
                     </td>
                   </tr>
                 );
