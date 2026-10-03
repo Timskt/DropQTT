@@ -21,6 +21,7 @@ import { BrokerCapabilities, DiagnosticLevel } from '../../types';
 import { formatBytes } from '../../utils/format';
 import { Translations } from '../../i18n';
 import { useDiagnostics } from '../../hooks/useDiagnostics';
+import { EnvironmentCard } from './EnvironmentCard';
 import { copyToClipboard } from '../../utils/clipboard';
 import { saveTextFile } from '../../utils/exportMessages';
 import { toast } from '../../utils/toast';
@@ -227,6 +228,8 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
           <CapsCard caps={caps} t={t} />
         </div>
       </div>
+
+      <EnvironmentCard t={t} />
 
       {!snapshot ? (
         <div className="panel p-10 text-center text-xs" style={{ color: 'var(--text-muted)' }}>{t.opsNoSnapshot}</div>

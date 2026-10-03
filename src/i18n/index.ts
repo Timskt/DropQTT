@@ -566,6 +566,21 @@ export interface Translations {
   responderRate: string;
   responderCounts: string;
   responderResetHint: string;
+  envTitle: string;
+  envHint: string;
+  envExport: string;
+  envExported: string;
+  envCopy: string;
+  envCopied: string;
+  envImportPaste: string;
+  envCheck: string;
+  envMerge: string;
+  envSummary: string;
+  envNothingNew: string;
+  envPasteFirst: string;
+  envRedactionNote: string;
+  envMerged: string;
+  envReloadNote: string;
   noMessagesFiltered: string;
   truncatedNote: string;
   mdView: string;
@@ -1262,6 +1277,21 @@ export const translations: Record<Language, Translations> = {
     responderRate: '上限 /s',
     responderCounts: '命中 {matched} · 已答 {replied} · 限流 {throttled} · 自答 {suppressed} · 失败 {failed}',
     responderResetHint: '清零这些规则答过多少，但不解除它们的武装',
+    envTitle: '环境包',
+    envHint: '一份文本描述整个实验台：不含凭据的连接配置、订阅与全部规则。用来把可复现的环境交给同事，或附在工单里。',
+    envExport: '导出为文件',
+    envExported: '环境包已写出',
+    envCopy: '复制到剪贴板',
+    envCopied: '环境包已复制',
+    envImportPaste: '粘贴环境包',
+    envCheck: '检查',
+    envMerge: '合并',
+    envSummary: '将新增 {add} 条 · {skipped} 条已存在 · {malformed} 条没有 id',
+    envNothingNew: '这个环境包没有新内容',
+    envPasteFirst: '请先粘贴环境包',
+    envRedactionNote: '其中 {n} 条规则的 webhook 目标已被移除，需要重新填写才会告警。',
+    envMerged: '环境包已合并进本实验台',
+    envReloadNote: '合并会写入设置并刷新本窗口；broker 连接不会断。',
     noMessagesFiltered: '没有匹配当前筛选的报文',
     truncatedNote: '载荷过大，已截断显示',
     mdView: 'Markdown 渲染视图',
@@ -1966,6 +1996,21 @@ export const translations: Record<Language, Translations> = {
     responderRate: 'max /s',
     responderCounts: 'matched {matched} · replied {replied} · throttled {throttled} · self-echoed {suppressed} · failed {failed}',
     responderResetHint: 'Zero what these rules have answered without disarming them',
+    envTitle: 'Environment bundle',
+    envHint: 'One text blob describing this bench: profiles without credentials, subscriptions and every rule set. Built for handing a reproducible setup to a colleague or attaching it to a ticket.',
+    envExport: 'Export to file',
+    envExported: 'Environment bundle written',
+    envCopy: 'Copy to clipboard',
+    envCopied: 'Environment bundle copied',
+    envImportPaste: 'Paste a bundle',
+    envCheck: 'Check',
+    envMerge: 'Merge',
+    envSummary: 'would add {add} · {skipped} already present · {malformed} without an id',
+    envNothingNew: 'nothing new in this bundle',
+    envPasteFirst: 'paste a bundle first',
+    envRedactionNote: '{n} rule(s) arrive with the webhook target removed; type the target again before they can alert.',
+    envMerged: 'Bundle merged into this bench',
+    envReloadNote: 'Merging writes the settings and reloads this window; the broker session stays up.',
     noMessagesFiltered: 'No messages matching current search filter.',
     truncatedNote: 'Payload too large — display truncated',
     mdView: 'Markdown rendered view',
@@ -2670,6 +2715,21 @@ export const translations: Record<Language, Translations> = {
     responderRate: '上限 /s',
     responderCounts: '命中 {matched} · 已答 {replied} · 限流 {throttled} · 自答 {suppressed} · 失敗 {failed}',
     responderResetHint: '清零這些規則答過多少，但不解除它們的武裝',
+    envTitle: '環境包',
+    envHint: '一份文字描述整個實驗台：不含憑證的連線設定、訂閱與全部規則。用來把可重現的環境交給同事，或附在工單裡。',
+    envExport: '匯出為檔案',
+    envExported: '環境包已寫出',
+    envCopy: '複製到剪貼簿',
+    envCopied: '環境包已複製',
+    envImportPaste: '貼上環境包',
+    envCheck: '檢查',
+    envMerge: '合併',
+    envSummary: '將新增 {add} 條 · {skipped} 條已存在 · {malformed} 條沒有 id',
+    envNothingNew: '這個環境包沒有新內容',
+    envPasteFirst: '請先貼上環境包',
+    envRedactionNote: '其中 {n} 條規則的 webhook 目標已被移除，需要重新填寫才會告警。',
+    envMerged: '環境包已合併進本實驗台',
+    envReloadNote: '合併會寫入設定並重新整理本視窗；broker 連線不會中斷。',
     noMessagesFiltered: '沒有符合目前篩選的報文',
     truncatedNote: '載荷過大，已截斷顯示',
     mdView: 'Markdown 渲染視圖',
@@ -3374,6 +3434,21 @@ export const translations: Record<Language, Translations> = {
     responderRate: '上限 /s',
     responderCounts: '該当 {matched} · 応答 {replied} · 制限 {throttled} · 自己応答 {suppressed} · 失敗 {failed}',
     responderResetHint: '規則を有効にしたまま、応答実績だけをリセットします',
+    envTitle: '環境バンドル',
+    envHint: 'このベンチを 1 つのテキストで記述します: 認証情報を除いたプロファイル、購読、全規則。再現環境の引き継ぎやチケット添付用です。',
+    envExport: 'ファイルへ出力',
+    envExported: '環境バンドルを書き出しました',
+    envCopy: 'クリップボードへコピー',
+    envCopied: '環境バンドルをコピーしました',
+    envImportPaste: 'バンドルを貼り付け',
+    envCheck: '検証',
+    envMerge: 'マージ',
+    envSummary: '追加 {add} 件 · 既存 {skipped} 件 · id なし {malformed} 件',
+    envNothingNew: 'このバンドルに新しい項目はありません',
+    envPasteFirst: '先にバンドルを貼り付けてください',
+    envRedactionNote: '{n} 件の規則は webhook 宛先が除去されています。再入力するまで通知しません。',
+    envMerged: 'バンドルをこのベンチに統合しました',
+    envReloadNote: 'マージは設定を書き込んでこの画面を再読み込みします。broker 接続は維持されます。',
     noMessagesFiltered: 'フィルターに一致するメッセージがありません',
     truncatedNote: 'ペイロードが大きすぎるため表示を切り詰めました',
     mdView: 'Markdown レンダリング表示',

@@ -1338,6 +1338,41 @@ T1 排在 T2/T3 之后做是有道理的：有了断言才能**检查**模拟设
 门：Rust harness **195/195**（responder 14 条）、`clippy --lib --tests` 干净、
 vitest **60/60**、`tsc` 干净、`eslint` 0 error 10 warn、Playwright 全套 **118/118**（新增 10 条）。
 
+### 4.44 环境包：把"你按这个环境跑一遍"变成一次粘贴（§7 T10，第十二轮 2026-10-03）
+
+一个可复现环境 = 连接配置 + 订阅 + 全部规则集。以前交接只能靠截图和口述。
+`src/utils/environment.ts` 把这些收成一个 JSON：`profiles / subscriptions / bridgeRules /
+silenceRules / assertionRules / faultRules / responderRules`，带 `kind` 与 `version`。
+
+**两条规矩是这个功能的全部风险所在**：
+
+1. **凭据与机器本地路径一律不出门。** 递归按**键名模式**剔除
+   （`password|passwd|secret|token|apikey|...|cert|pem|keystore`），比逐字段白名单更抗未来的新增字段——
+   以后谁给 `BrokerConfig` 加一个 `clientKeyPem`，默认就是被剔除的，而不是"忘了写就导出去了"。
+   webhook 目标不是截断而是**清空并打标记**（`webhookRedacted: true`）：半个 URL 仍然是一个 URL，
+   而本项目的规矩是导出的规则文件里绝不能出现它。导入方因此会看到"有 N 条规则的告警目标需要重填"。
+2. **导入只合并，不覆盖。** 已存在的 id 跳过并计数；整个包解析失败就**一条都不落**
+   （版本不对、kind 不对、某段不是数组——都是一句话报错 + 不产出计划），
+   所以不存在"一半规则被换掉了"这种状态。包内自相重复的 id 也只算一条。
+
+**为什么是粘贴而不是选文件**：应用不读任意路径（这条在早前的路径穿越加固里立过规矩），
+所以导入的入口是文本框 + `Check`，而不是文件选择器。`Merge` 之后**刷新窗口**——
+所有规则的所有者都是 `usePersistentState`，在挂载时读自己的 key，刷新才是让它们一致的办法；
+而 broker 会话活在 Rust 里，刷新不断线（这一点在 §4.40 的真机记录里已经独立验证过）。
+
+**测试**：`tests/unit/environment.test.ts` 7 条钉纯函数（密码/证书路径不出现、webhook 被清空并标记、
+非法 JSON / 错 kind / 错版本 / 非数组段都拒绝且不产出计划、已有 id 被跳过并计数、无 id 条目算畸形、
+包内重复 id 只算一条）；`tests/ui/environment.spec.ts` 6 条钉界面（拒绝时 Merge 保持禁用、
+版本不兼容要说出来、"将新增 / 已存在 / 无 id"的汇总、重填提示、
+合并真的写进 localStorage 并刷新、按钮在等待什么就写什么 title）。
+
+一处**测试自伤**：merge 用例会真的刷新页面，我最初试图把 `window.location.reload` 换成假函数，
+Chromium 不认，evaluate 上下文被导航销毁。改成 `waitForLoadState('load')` 等导航过去再读
+localStorage——**用例从此在测真实行为而不是我的替身**。
+
+门：vitest **67/67**（新增 7 条）、`tsc` 干净、`eslint` 0 error 10 warn、
+Playwright 全套 **124/124**（新增 6 条）。Rust 侧无改动，harness 保持 195/195。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。
