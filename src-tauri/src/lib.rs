@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod bench;
 pub mod acks;
+pub mod assertions;
 pub mod diagnostics;
 pub mod history;
 pub mod mqtt_manager;
@@ -459,6 +460,44 @@ async fn silence_sync_rules(
         .sync_rules(rules, chrono::Utc::now().timestamp())
 }
 
+/// Replace the message-assertion rule set and report what has been judged so far.
+/// A set with one bad predicate is refused whole, so the tallies never belong to a
+/// half-applied rule list.
+#[tauri::command]
+async fn assertions_sync_rules(
+    state: State<'_, AppState>,
+    rules: Vec<assertions::AssertionRule>,
+) -> Result<assertions::AssertionSnapshot, String> {
+    state.mqtt.assertions.sync_rules(rules)?;
+    Ok(state.mqtt.assertions.snapshot())
+}
+
+/// Turn one typed line into a structured rule, or say why it cannot be one. The
+/// grammar lives in Rust so a rule that would silently never fire cannot be saved.
+#[tauri::command]
+async fn assertions_parse_rule(
+    id: String,
+    filter: String,
+    predicate: String,
+    label: String,
+) -> Result<assertions::AssertionRule, String> {
+    let mut rule = assertions::parse_rule(&id, &filter, &predicate)?;
+    rule.label = label;
+    Ok(rule)
+}
+
+#[tauri::command]
+async fn assertions_state(state: State<'_, AppState>) -> Result<assertions::AssertionSnapshot, String> {
+    Ok(state.mqtt.assertions.snapshot())
+}
+
+/// Forget the tallies, keep the rules armed.
+#[tauri::command]
+async fn assertions_reset(state: State<'_, AppState>) -> Result<assertions::AssertionSnapshot, String> {
+    state.mqtt.assertions.reset();
+    Ok(state.mqtt.assertions.snapshot())
+}
+
 #[tauri::command]
 async fn bridge_stats(
     state: State<'_, AppState>,
@@ -607,6 +646,10 @@ pub fn run() {
             bridge_status,
             bridge_sync_rules,
             silence_sync_rules,
+            assertions_sync_rules,
+            assertions_parse_rule,
+            assertions_state,
+            assertions_reset,
             bridge_stats,
             bridge_reset_stats,
             bridge_test_transform

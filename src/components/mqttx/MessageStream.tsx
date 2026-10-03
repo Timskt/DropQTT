@@ -19,6 +19,7 @@ import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
 import { HtmlPreview, MarkdownView } from './RichText';
 import { looksLikeSenml, parseSenmlPack, senmlFromDecoded, senmlToTable } from '../../utils/senml';
+import { assertionOutcomeChip, assertionOutcomeGlyph, assertionVerdictTitle } from '../../utils/assertions';
 import { JsonTree } from './JsonTree';
 
 interface MessageStreamProps {
@@ -208,6 +209,24 @@ const MessageRow = React.memo(function MessageRow({
             >
               ⌕ {msg.matchedFilters[0]}
               {msg.matchedFilters.length > 1 && ` +${msg.matchedFilters.length - 1}`}
+            </span>
+          )}
+          {/* The assertion verdict, when any rule claimed this row. Colour alone
+              would not survive greyscale or a screen reader, so the outcome is
+              spelled out too. */}
+          {msg.assertion && (
+            <span
+              className={`chip ${assertionOutcomeChip(msg.assertion.outcome)} shrink-0 font-mono`}
+              data-testid="assertion-chip"
+              title={assertionVerdictTitle(
+                t,
+                msg.assertion.expr,
+                msg.assertion.label,
+                msg.assertion.rules,
+                msg.assertion.outcome,
+              )}
+            >
+              {assertionOutcomeGlyph(msg.assertion.outcome)} {msg.assertion.expr}
             </span>
           )}
           {(msg.correlationData || msg.correlationHex) && (

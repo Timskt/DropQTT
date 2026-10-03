@@ -499,6 +499,7 @@ mod tests {
             timestamp: String::new(),
             timestamp_ms: 0,
             direction: dir.to_string(),
+            assertion: None,
         }
     }
 

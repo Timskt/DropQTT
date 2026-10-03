@@ -22,6 +22,8 @@ test.beforeEach(async ({ page }) => {
         if (cmd === 'get_connection_status') return { connected: true, brokerHost: 'localhost', brokerPort: 1883, clientId: 'test' };
         if (cmd === 'get_default_download_dir') return 'D:/Downloads';
         if (cmd === 'get_subscription_ids') return w.subIds ?? {};
+        if (cmd === 'assertions_sync_rules' || cmd === 'assertions_state' || cmd === 'assertions_reset')
+          return w.assertions ?? { stats: { matched: 0, passed: 0, violated: 0, unevaluable: 0 }, rules: 0, recent: [] };
         if (cmd === 'get_broker_capabilities')
           return w.caps ?? { topicAliasMax: 10, maxQos: 2, retainAvailable: true, wildcardAvailable: true, sharedAvailable: true, subscriptionIdsAvailable: true, receiveMax: 65535, maxPacketSize: null, serverKeepAlive: null, sessionExpiry: null, assignedClientId: null, responseInformation: null, serverReference: null };
         if (cmd === 'get_subscription_ack_state')

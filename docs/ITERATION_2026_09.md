@@ -1185,6 +1185,56 @@ vitest **54/54**、`tsc` 干净、`eslint` 0 error 10 warn、clippy **0 warning*
 门：Playwright **90/90**（新增 3 条：禁用态带原因 / 未提交搜索词是导出停用的原因 /
 到顶才出现的上限提示）、vitest **54/54**、`tsc` 干净、`eslint` 0 error 10 warn。
 
+### 4.40 报文断言：把控制台从"看"变成"判"（§7 T3，第十二轮 2026-10-03）
+
+审阅稿把 T3 和 T2 一起列为"只能再挑三件"的第二件，理由是：前几轮反复做的"失败必须可见"
+一直靠人眼，断言是第一个能让判定变成**机器结论**的东西，也是 §3.1 验收场景的最小可用形态。
+
+**语法刻意做小**：`<字段 | $.路径> <op> <值>`，op 只有 `<= >= != == ~ !~ < > = contains !contains exists missing`。
+理由写在 `src-tauri/src/assertions.rs` 的模块头：通用表达式语言这个项目已经有了（QuickJS 转换钩子），
+而**每条入站报文跑一段脚本**不是验收门该做的事。SenML 不需要专门支持——`{"e":[{"n":"t","v":22.5}]}`
+就是 JSON，`$.e[0].v <= 5` 直接能用；CBOR 载荷读不出来，走下面的第三种结果。
+
+**三种结果而不是两种**：Passed / Violated / **Unevaluable**。`$.tempC < 80` 面对二进制载荷、
+或缺这个成员的文档，是"读不出来"，报成通过就是这几轮一直在消灭的那类假绿。
+`rule_error` 因此在**写入时**拒绝两类会永远 Unevaluable 的规则：JSON 路径配 `contains`（会把整个数组
+字符串化后再子串匹配），以及 `<`/`>` 配一个非数字右值。
+
+harness 当场抓住三个我自己写的 bug，都不是测试问题：
+
+1. `contains` 排在 `!contains` 前面 → `payload !contains panic` 被解析成左值 `payload !`，**所有负向规则全废**；
+2. `exists`/`missing` 走的是"找 ` exists `"，可它们永远在行尾、没有尾随空格 → `$.deviceId exists`
+   整行被当成一个路径。改成**后缀词**匹配并要求前面是空白，于是 `$.exists` 仍然是一个合法路径而不会被误读；
+3. 上面第 3 条（右值不校验）是测试用例先失败暴露的：我原本断言 `not_a_field == 1 &&` 会被拒，
+   实际它是一条合法的文本相等规则——真正该拒的是 `$.v > 1 &&`。
+
+**判定归属**：verdict 只挂在**入站 feed 行**上。历史回放行不带（`assertion: Option<AssertionVerdict>`，
+注释写明原因：规则可能已经变了，**过期的红比没有红更糟**）。一条报文被两条规则认领时只出一个标
+（worst wins），但 tooltip 说清"2 rules claimed this message"。事件按规则 5 秒节流，
+**计数与标色不受节流影响**——这两件事各有一条测试钉住，因为它们很容易被顺手写成同一件事。
+
+**前端不做语法**：面板把整行交给 `assertions_parse_rule`，被拒时原样回显 Rust 的句子，
+localStorage 里不会留下半条规则；`sync_rules` 也是整集拒绝，所以 armed 数与本地规则数**允许不一致**，
+界面因此显示后端报的 `armed/本地数`（不一致本身就是"上一次提交被拒了"的可见证据）。
+
+**真机取证**（aedes 在 127.0.0.1:18830 + 注入器 8082，全程 loopback；用户的 1883 没碰；
+历史库先备份、跑完还原，`db/-shm/-wal` 三个文件 md5 与备份一致）：
+
+- 面板里敲 `$.tempC < 80` 与 `qos >= 1` → Rust 解析结果落盘为 `{"json":"$.tempC"}/lt/80` 与 `qos/ge/1`，armed **2/2**；
+- `{"tempC":95}` → ✗ Violated，`{"tempC":40}` → ✓ Passed，`\x00\x01\x02binary-blob` → ? Unreadable，
+  三条 tooltip 都带 "(2 rules claimed this message)"；
+- 把**同样的 95** 发到 `devices/gw1` → 该行没有任何标（过滤器不认领它），这比看代码更能说明归属是对的；
+- 故意提交 `$.tempC <> 80` → 错误条出现 Rust 原话 "this comparison needs a number on the right"，armed 仍是 2/2；
+- 清零 → 四项计数归零，armed 仍 2/2（规则还在岗）。
+- 顺带确认：页面 reload 后 MQTT 连接仍在（client 活在 Rust），所以第二次驱动时"找不到 Connect 按钮"不是 bug。
+
+**一个只在满负载下出现的测试竞态**：reset 用例原先是"手动把 mock 快照清零 → 再点击"，单独跑 8/8 通过；
+全套 16 worker 抢 CPU 时，1 秒轮询先跑了一轮，按钮因 `matched > 0` 不再成立而消失，点击等到 30 秒超时。
+改成让 mock **像真后端那样**只有收到 `assertions_reset` 才清零——用例不再依赖时序，也不再依赖我手动模拟的状态。
+
+门：Rust harness **167/167**（其中 assertions 22 条）、`cargo clippy --lib --tests` 干净、
+vitest **60/60**（新增 6 条纯函数测试）、Playwright 全套 **98/98**（新增 8 条）、`tsc` 干净、`eslint` 0 error 10 warn。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

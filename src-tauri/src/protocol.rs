@@ -327,6 +327,11 @@ pub struct MqttGenericMessage {
     #[serde(default)]
     pub timestamp_ms: i64,
     pub direction: String, // "in" | "out"
+    /// Verdict from the message-assertion rule set, computed live while the row was
+    /// being routed. Rows replayed from history carry none: the rules may well have
+    /// changed since they were stored, and a stale red badge is worse than no badge.
+    #[serde(default)]
+    pub assertion: Option<crate::assertions::AssertionVerdict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

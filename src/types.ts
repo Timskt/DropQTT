@@ -105,7 +105,82 @@ export interface MqttGenericMessage {
   /** Epoch milliseconds captured by the Rust event path. */
   timestampMs?: number;
   direction: 'in' | 'out';
+  /** Verdict from the message-assertion rules, computed live as the row routed.
+   * Replayed history rows carry none — the rules may have changed since. */
+  assertion?: AssertionVerdict;
 }
+
+/** What an assertion reads: a whole-message field, or a JSON path into the payload. */
+export type AssertionField =
+  | 'payload'
+  | 'topic'
+  | 'qos'
+  | 'retain'
+  | 'size'
+  | 'contentType'
+  | 'direction'
+  | { json: string };
+
+export type AssertionOp =
+  | 'lt'
+  | 'le'
+  | 'gt'
+  | 'ge'
+  | 'eq'
+  | 'ne'
+  | 'contains'
+  | 'notContains'
+  | 'present'
+  | 'absent';
+
+/** Three outcomes, not two: a rule that cannot read the message says so. */
+export type AssertOutcome = 'passed' | 'violated' | 'unevaluable';
+
+export interface AssertionRule {
+  id: string;
+  filter: string;
+  field: AssertionField;
+  op: AssertionOp;
+  expected: string;
+  enabled: boolean;
+  label: string;
+  /** The predicate as typed; absent for rules imported from an older save. */
+  text?: string;
+}
+
+export interface AssertionVerdict {
+  outcome: AssertOutcome;
+  ruleId: string;
+  label: string;
+  /** The line that decided it, e.g. `$.tempC < 80`. */
+  expr: string;
+  /** How many armed rules claimed this row; >1 means the badge summarises them. */
+  rules: number;
+}
+
+export interface AssertionViolation {
+  msgId: string;
+  topic: string;
+  ruleId: string;
+  expr: string;
+  outcome: AssertOutcome;
+  tsMs: number;
+}
+
+export interface AssertStats {
+  matched: number;
+  passed: number;
+  violated: number;
+  unevaluable: number;
+}
+
+export interface AssertionSnapshot {
+  stats: AssertStats;
+  rules: number;
+  recent: AssertionViolation[];
+}
+
+export const emptyAssertStats: AssertStats = { matched: 0, passed: 0, violated: 0, unevaluable: 0 };
 
 /** MQTT v5 user-facing publish properties (ignored on v3.1.1) */
 export interface PubProperties {

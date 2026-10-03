@@ -509,6 +509,25 @@ export interface Translations {
   whyNoRows: string;
   feedCapNote: string;
   noMessagesHint: string;
+  assertionsTitle: string;
+  assertionsHint: string;
+  assertionsFilter: string;
+  assertionsLabelPlaceholder: string;
+  assertionsPredicate: string;
+  assertionsNeedFields: string;
+  assertionsNotArmed: string;
+  assertionsPreviousKept: string;
+  assertionsResetHint: string;
+  assertionsEnabled: string;
+  assertionsNoRules: string;
+  assertionsMatched: string;
+  assertionsPassed: string;
+  assertionsViolated: string;
+  assertionsUnevaluable: string;
+  assertionsUnevaluableHint: string;
+  assertionsRecent: string;
+  assertionsNoViolations: string;
+  assertionsRulesAgree: string;
   noMessagesFiltered: string;
   truncatedNote: string;
   mdView: string;
@@ -1148,6 +1167,25 @@ export const translations: Record<Language, Translations> = {
     whyNoRows: '这个窗口里没有结果',
     feedCapNote: '只显示最近 {n} 条，更早的在 History 里',
     noMessagesHint: '订阅一个主题，或让设备发一条 —— $SYS 与桥接流量也会出现在这里',
+    assertionsTitle: '报文断言',
+    assertionsHint: '每条规则一个断言式，在 Rust 里对每条入站报文判定：$.tempC < 80、payload contains panic、qos >= 1。解析不了的规则当场被拒绝，而不是存下来永远不触发。',
+    assertionsFilter: '主题过滤器',
+    assertionsLabelPlaceholder: '可选备注，例如"网关温度"',
+    assertionsPredicate: '断言式',
+    assertionsNeedFields: '规则需要同时填主题过滤器和断言式',
+    assertionsNotArmed: '上一次提交的规则集被拒绝，当前没有规则生效',
+    assertionsPreviousKept: '此前生效的规则集仍在继续判定',
+    assertionsResetHint: '清零统计，从现在开始重新判定',
+    assertionsEnabled: '生效',
+    assertionsNoRules: '还没有断言规则。加一条，报文流就会把每一行标成通过、违规或读不了。',
+    assertionsMatched: '已判定',
+    assertionsPassed: '通过',
+    assertionsViolated: '违规',
+    assertionsUnevaluable: '读不了',
+    assertionsUnevaluableHint: '"读不了"是规则读不到这条报文——二进制载荷，或那个字段不存在。它不等于通过。',
+    assertionsRecent: '最近的违规',
+    assertionsNoViolations: '自上次清零以来，没有报文违反规则。',
+    assertionsRulesAgree: '（{n} 条规则都认领了这条报文）',
     noMessagesFiltered: '没有匹配当前筛选的报文',
     truncatedNote: '载荷过大，已截断显示',
     mdView: 'Markdown 渲染视图',
@@ -1795,6 +1833,25 @@ export const translations: Record<Language, Translations> = {
     whyNoRows: 'Nothing in this window',
     feedCapNote: 'Showing the newest {n}; older rows are in History',
     noMessagesHint: 'Subscribe to a topic, or let a device publish - $SYS and bridge traffic land here too',
+    assertionsTitle: 'Assertions',
+    assertionsHint: 'One predicate per rule, judged in Rust against every inbound message: $.tempC < 80, payload contains panic, qos >= 1. A line that cannot be parsed is refused here instead of being saved and silently never firing.',
+    assertionsFilter: 'Topic filter',
+    assertionsLabelPlaceholder: 'optional note, e.g. gateway temperature',
+    assertionsPredicate: 'Predicate',
+    assertionsNeedFields: 'A rule needs both a topic filter and a predicate',
+    assertionsNotArmed: 'The last rule set was rejected, so nothing is armed',
+    assertionsPreviousKept: 'the previous rule set keeps judging',
+    assertionsResetHint: 'Forget the tallies and start judging from now',
+    assertionsEnabled: 'armed',
+    assertionsNoRules: 'No assertions yet. Add a rule and the feed starts marking each row passed, violated or unreadable.',
+    assertionsMatched: 'Judged',
+    assertionsPassed: 'Passed',
+    assertionsViolated: 'Violated',
+    assertionsUnevaluable: 'Unreadable',
+    assertionsUnevaluableHint: 'Unreadable means a rule could not read the message - a binary payload, or a member that is not there. It is not a pass.',
+    assertionsRecent: 'Recent violations',
+    assertionsNoViolations: 'Nothing has broken a rule since the last reset.',
+    assertionsRulesAgree: '({n} rules claimed this message)',
     noMessagesFiltered: 'No messages matching current search filter.',
     truncatedNote: 'Payload too large — display truncated',
     mdView: 'Markdown rendered view',
@@ -2442,6 +2499,25 @@ export const translations: Record<Language, Translations> = {
     whyNoRows: '這個視窗裡沒有結果',
     feedCapNote: '只顯示最近 {n} 條，更早的在 History 裡',
     noMessagesHint: '訂閱一個主題，或讓裝置發一條 —— $SYS 與橋接流量也會出現在這裡',
+    assertionsTitle: '報文斷言',
+    assertionsHint: '每條規則一個斷言式，在 Rust 裡對每條入站報文判定：$.tempC < 80、payload contains panic、qos >= 1。解析不了的規則當場被拒絕，而不是存下來永遠不觸發。',
+    assertionsFilter: '主題過濾器',
+    assertionsLabelPlaceholder: '可選備註，例如「閘道溫度」',
+    assertionsPredicate: '斷言式',
+    assertionsNeedFields: '規則需要同時填主題過濾器和斷言式',
+    assertionsNotArmed: '上一次提交的規則集被拒絕，目前沒有規則生效',
+    assertionsPreviousKept: '此前生效的規則集仍在繼續判定',
+    assertionsResetHint: '清零統計，從現在開始重新判定',
+    assertionsEnabled: '生效',
+    assertionsNoRules: '還沒有斷言規則。加一條，報文流就會把每一行標成通過、違規或讀不了。',
+    assertionsMatched: '已判定',
+    assertionsPassed: '通過',
+    assertionsViolated: '違規',
+    assertionsUnevaluable: '讀不了',
+    assertionsUnevaluableHint: '「讀不了」是規則讀不到這條報文——二進位負載，或那個欄位不存在。它不等於通過。',
+    assertionsRecent: '最近的違規',
+    assertionsNoViolations: '自上次清零以來，沒有報文違反規則。',
+    assertionsRulesAgree: '（{n} 條規則都認領了這條報文）',
     noMessagesFiltered: '沒有符合目前篩選的報文',
     truncatedNote: '載荷過大，已截斷顯示',
     mdView: 'Markdown 渲染視圖',
@@ -3089,6 +3165,25 @@ export const translations: Record<Language, Translations> = {
     whyNoRows: 'この窓には結果がありません',
     feedCapNote: '直近 {n} 件だけ表示、古い行は履歴にあります',
     noMessagesHint: 'トピックを購読するかデバイスに publish させると、$SYS やブリッジ通信もここに出ます',
+    assertionsTitle: 'アサーション',
+    assertionsHint: '1 つの規則に 1 つの述語。着信メッセージごとに Rust で判定します: $.tempC < 80、payload contains panic、qos >= 1。解析できない行は保存時に拒否され、黙って発火しない規則が残ることを防ぎます。',
+    assertionsFilter: 'トピックフィルター',
+    assertionsLabelPlaceholder: '任意のメモ（例: ゲートウェイ温度）',
+    assertionsPredicate: '述語',
+    assertionsNeedFields: '規則にはトピックフィルターと述語の両方が必要です',
+    assertionsNotArmed: '直前の規則セットは拒否されたため、有効な規則はありません',
+    assertionsPreviousKept: '以前の規則セットが判定を続けています',
+    assertionsResetHint: '集計を消して、今から判定し直します',
+    assertionsEnabled: '有効',
+    assertionsNoRules: 'アサーションはまだありません。規則を追加すると、行が合格 / 違反 / 読めずに分類されます。',
+    assertionsMatched: '判定済み',
+    assertionsPassed: '合格',
+    assertionsViolated: '違反',
+    assertionsUnevaluable: '読めず',
+    assertionsUnevaluableHint: '「読めず」は規則がメッセージを読み取れないことです（バイナリ、または該当メンバなし）。合格ではありません。',
+    assertionsRecent: '最近の違反',
+    assertionsNoViolations: '前回のリセット以降、規則を破ったメッセージはありません。',
+    assertionsRulesAgree: '（{n} 件の規則がこのメッセージをclaimしました）',
     noMessagesFiltered: 'フィルターに一致するメッセージがありません',
     truncatedNote: 'ペイロードが大きすぎるため表示を切り詰めました',
     mdView: 'Markdown レンダリング表示',

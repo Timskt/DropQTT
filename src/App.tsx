@@ -37,7 +37,9 @@ import { useHistoryCount } from './hooks/useHistoryCount';
 import { useTransfers } from './hooks/useTransfers';
 import { useBatchSender } from './hooks/useBatchSender';
 import { useRpc } from './hooks/useRpc';
+import { useAssertions } from './hooks/useAssertions';
 import { RpcPanel } from './components/mqttx/RpcPanel';
+import { AssertionPanel } from './components/mqttx/AssertionPanel';
 
 const MODE_TITLES: Record<WorkspaceMode, (t: Translations) => string> = {
   transfer: (t) => t.modeFileTransfer,
@@ -199,6 +201,9 @@ export function App() {
 
   // Request/response calls live in Rust; the console lists them while it is open
   const rpc = useRpc(activeMode === 'mqttx', broker.isConnected);
+
+  // Rules stay armed in Rust when the console closes; only the tallies stop polling
+  const assertions = useAssertions(activeMode === 'mqttx');
 
   return (
     <div className="min-h-screen flex overflow-hidden font-sans">
@@ -400,6 +405,19 @@ export function App() {
                 pendingCount={mqtt.pendingCount}
                 feedDropped={mqtt.feedDropped}
                 onTogglePaused={mqtt.togglePaused}
+                t={t}
+              />
+
+              <AssertionPanel
+                rules={assertions.rules}
+                stats={assertions.stats}
+                armed={assertions.armed}
+                recent={assertions.recent}
+                lastError={assertions.lastError}
+                onAdd={assertions.addRule}
+                onRemove={assertions.removeRule}
+                onToggle={assertions.toggleRule}
+                onReset={assertions.reset}
                 t={t}
               />
 

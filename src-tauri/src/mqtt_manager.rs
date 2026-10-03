@@ -200,6 +200,8 @@ pub struct MqttManager {
     sys_metrics: Mutex<HashMap<String, (String, u64)>>,
     /// Silence watchdog: alerts when a topic filter stops carrying traffic
     pub silence_watchdog: Arc<SilenceWatchdog>,
+    /// Message assertions: rules that judge inbound rows as they are routed
+    pub assertions: Arc<crate::assertions::AssertionEngine>,
     /// Registry of backend-scheduled publishes for this session
     pub scheduler: Arc<SchedulerManager>,
     /// Registry of built-in publish stress runs (latency + ack accounting)
@@ -297,6 +299,7 @@ impl MqttManager {
             topic_stats: Mutex::new(HashMap::new()),
             sys_metrics: Mutex::new(HashMap::new()),
             silence_watchdog: Arc::new(SilenceWatchdog::default()),
+            assertions: Arc::new(crate::assertions::AssertionEngine::default()),
             scheduler: Arc::new(SchedulerManager::new()),
             bench: Arc::new(crate::bench::BenchManager::new()),
             rpc: Mutex::new(crate::rpc::RpcRegistry::default()),
@@ -1495,6 +1498,7 @@ impl MqttManager {
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
             timestamp_ms: chrono::Utc::now().timestamp_millis(),
             direction: "out".to_string(),
+            assertion: None,
         };
         self.push_feed(msg).await;
 
@@ -1878,7 +1882,7 @@ impl MqttManager {
                 .as_deref()
                 .map(crate::protocol::correlation_forms)
                 .unwrap_or((None, None));
-            let msg = MqttGenericMessage {
+            let mut msg = MqttGenericMessage {
                 id: uuid::Uuid::new_v4().to_string(),
                 topic: topic.clone(),
                 payload: String::from_utf8_lossy(&stored_bytes).to_string(),
@@ -1898,7 +1902,14 @@ impl MqttManager {
                 timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
                 timestamp_ms: chrono::Utc::now().timestamp_millis(),
                 direction: "in".to_string(),
+                assertion: None,
             };
+            // Judged here, on the row the console shows: the verdict is a live
+            // opinion about the rules as they are now, which is also why replayed
+            // history rows carry none.
+            if let Some(violation) = self.assertions.apply(&mut msg) {
+                let _ = app.emit("assertion-violation", violation);
+            }
             self.push_feed(msg).await;
         }
 
