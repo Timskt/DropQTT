@@ -581,7 +581,7 @@ mod tests {
                 outbound: 4,
                 oldest_ts: Some(1),
                 newest_ts: Some(2),
-                lost_rows: 0,
+                ..Default::default()
             },
             download_dir: std::env::temp_dir().to_string_lossy().to_string(),
             download_dir_writable: true,
