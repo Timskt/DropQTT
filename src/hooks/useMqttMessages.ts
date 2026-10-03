@@ -7,7 +7,9 @@ import { currentTranslations, fill } from '../i18n';
 import { toast } from '../utils/toast';
 import { observeTopic } from '../utils/topicStore';
 
-const MAX_MESSAGES = 500;
+/// Rows the feed keeps in memory. The cap is visible in the panel, not a
+/// silent truncation: the older rows are in History.
+export const MAX_MESSAGES = 500;
 
 const DEFAULT_SUBS: TopicSubscription[] = [
   { topic: 'dropqtt/#', qos: 1, color: '#06b6d4' },

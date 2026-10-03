@@ -499,6 +499,16 @@ export interface Translations {
   propertyKey: string;
   propertyValue: string;
   noMessages: string;
+  /** Why a control that looks dead is dead. "Nothing happened" is the report. */
+  whyNotConnected: string;
+  whyNoTopic: string;
+  whyBusy: string;
+  whyPickBroker: string;
+  whyNoScript: string;
+  whyFilterPending: string;
+  whyNoRows: string;
+  feedCapNote: string;
+  noMessagesHint: string;
   noMessagesFiltered: string;
   truncatedNote: string;
   mdView: string;
@@ -1129,6 +1139,15 @@ export const translations: Record<Language, Translations> = {
     propertyKey: '键',
     propertyValue: '值',
     noMessages: '暂无 MQTT 报文记录',
+    whyNotConnected: '未连接 broker',
+    whyNoTopic: '主题为空',
+    whyBusy: '上一次操作还没结束',
+    whyPickBroker: '先选一个 broker 配置，或填自定义地址',
+    whyNoScript: '脚本为空，没有可测试的转换',
+    whyFilterPending: '搜索框里还有未提交的文本：按 Enter 或点查询',
+    whyNoRows: '这个窗口里没有结果',
+    feedCapNote: '只显示最近 {n} 条，更早的在 History 里',
+    noMessagesHint: '订阅一个主题，或让设备发一条 —— $SYS 与桥接流量也会出现在这里',
     noMessagesFiltered: '没有匹配当前筛选的报文',
     truncatedNote: '载荷过大，已截断显示',
     mdView: 'Markdown 渲染视图',
@@ -1767,6 +1786,15 @@ export const translations: Record<Language, Translations> = {
     propertyKey: 'Key',
     propertyValue: 'Value',
     noMessages: 'No MQTT messages recorded yet.',
+    whyNotConnected: 'Not connected to a broker',
+    whyNoTopic: 'Topic is empty',
+    whyBusy: 'The previous action is still running',
+    whyPickBroker: 'Pick a broker profile, or fill in a custom address',
+    whyNoScript: 'No script to test',
+    whyFilterPending: 'The search box holds unsubmitted text: press Enter or Query',
+    whyNoRows: 'Nothing in this window',
+    feedCapNote: 'Showing the newest {n}; older rows are in History',
+    noMessagesHint: 'Subscribe to a topic, or let a device publish - $SYS and bridge traffic land here too',
     noMessagesFiltered: 'No messages matching current search filter.',
     truncatedNote: 'Payload too large — display truncated',
     mdView: 'Markdown rendered view',
@@ -2405,6 +2433,15 @@ export const translations: Record<Language, Translations> = {
     propertyKey: '鍵',
     propertyValue: '值',
     noMessages: '暫無 MQTT 報文記錄',
+    whyNotConnected: '未連線 broker',
+    whyNoTopic: '主題為空',
+    whyBusy: '上一次操作還沒結束',
+    whyPickBroker: '先選一個 broker 設定，或填自訂位址',
+    whyNoScript: '腳本為空，沒有可測試的轉換',
+    whyFilterPending: '搜尋框還有未提交的文字：按 Enter 或點查詢',
+    whyNoRows: '這個視窗裡沒有結果',
+    feedCapNote: '只顯示最近 {n} 條，更早的在 History 裡',
+    noMessagesHint: '訂閱一個主題，或讓裝置發一條 —— $SYS 與橋接流量也會出現在這裡',
     noMessagesFiltered: '沒有符合目前篩選的報文',
     truncatedNote: '載荷過大，已截斷顯示',
     mdView: 'Markdown 渲染視圖',
@@ -3043,6 +3080,15 @@ export const translations: Record<Language, Translations> = {
     propertyKey: 'キー',
     propertyValue: '値',
     noMessages: 'MQTT メッセージはまだありません',
+    whyNotConnected: 'ブローカーに接続していません',
+    whyNoTopic: 'トピックが空です',
+    whyBusy: '前の操作がまだ終わっていません',
+    whyPickBroker: 'ブローカー設定を選ぶか、独自アドレスを入力してください',
+    whyNoScript: 'スクリプトが空なので検証できません',
+    whyFilterPending: '検索欄に未確定の文字列があります：Enter かクエリを押してください',
+    whyNoRows: 'この窓には結果がありません',
+    feedCapNote: '直近 {n} 件だけ表示、古い行は履歴にあります',
+    noMessagesHint: 'トピックを購読するかデバイスに publish させると、$SYS やブリッジ通信もここに出ます',
     noMessagesFiltered: 'フィルターに一致するメッセージがありません',
     truncatedNote: 'ペイロードが大きすぎるため表示を切り詰めました',
     mdView: 'Markdown レンダリング表示',

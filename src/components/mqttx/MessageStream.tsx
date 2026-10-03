@@ -8,6 +8,7 @@ import { MqttGenericMessage } from '../../types';
 import { usePersistentString } from '../../hooks/usePersistentState';
 import { Translations, fill } from '../../i18n';
 import { useCodec } from '../../hooks/useCodec';
+import { MAX_MESSAGES } from '../../hooks/useMqttMessages';
 import {
   base64ToUint8, cborToDisplayJson, decodeCbor,
   uint8ToBase64, uint8ToHexDump, uint8ToUtf8,
@@ -727,11 +728,31 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
         </div>
       )}
 
+      {/* The list holds the newest N and the rest is in History. A panel that
+          quietly stops growing looks like a stopped broker. */}
+      {messages.length >= MAX_MESSAGES && (
+        <div
+          className="px-3 py-1 border-b text-[10px] font-mono"
+          data-testid="feed-cap-note"
+          style={{ color: 'var(--text-muted)', background: 'var(--bg-inset)' }}
+        >
+          {fill(t.feedCapNote, { n: String(MAX_MESSAGES) })}
+        </div>
+      )}
+
       {/* Message feed */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
         {filteredMessages.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-xs italic" style={{ color: 'var(--text-muted)' }}>
-            {messages.length === 0 ? t.noMessages : t.noMessagesFiltered}
+          <div className="h-full flex flex-col items-center justify-center gap-1.5 text-center">
+            <span className="text-xs italic" style={{ color: 'var(--text-muted)' }}>
+              {messages.length === 0 ? t.noMessages : t.noMessagesFiltered}
+            </span>
+            {messages.length === 0 && (
+              // An empty panel is the one screen that can teach the next step.
+              <span className="text-[11px] max-w-sm" style={{ color: 'var(--text-muted)' }}>
+                {t.noMessagesHint}
+              </span>
+            )}
           </div>
         ) : (
           <>

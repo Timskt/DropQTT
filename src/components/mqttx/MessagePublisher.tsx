@@ -918,6 +918,17 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
           <button
             type="submit"
             disabled={!connected || !topic.trim() || isPublishing}
+            // A disabled control has to say which of its three conditions it is
+            // stuck on; "nothing happened" is what people debug instead.
+            title={
+              !connected
+                ? t.whyNotConnected
+                : !topic.trim()
+                  ? t.whyNoTopic
+                  : isPublishing
+                    ? t.whyBusy
+                    : t.publish
+            }
             className="btn-accent flex items-center space-x-2"
           >
             <Send className={`w-3.5 h-3.5 ${isPublishing ? 'animate-spin' : ''}`} />

@@ -267,7 +267,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
             <button onClick={load} className="btn-ghost !px-2 !py-1 flex items-center gap-1 text-[10px]">
               <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> {t.refresh}
             </button>
-            <button onClick={clearAll} disabled={stats.rows === 0} className="btn-ghost !px-2 !py-1 flex items-center gap-1 text-[10px] disabled:opacity-40" style={{ color: 'var(--bad)' }}>
+            <button onClick={clearAll} disabled={stats.rows === 0} title={stats.rows === 0 ? t.whyNoRows : t.historyClear} className="btn-ghost !px-2 !py-1 flex items-center gap-1 text-[10px] disabled:opacity-40" style={{ color: 'var(--bad)' }}>
               <Trash2 className="w-3 h-3" /> {t.historyClear}
             </button>
           </div>
@@ -353,7 +353,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
           </label>
           <button onClick={runSearch} className="btn-accent !py-1.5">{t.historyQuery}</button>
           <div className="flex gap-1 ml-auto" aria-label={t.historyExportResults}>
-            {(['json', 'csv'] as const).map((format) => <button key={format} onClick={() => void handleExport(format)} disabled={!rows.length || loading || exporting || search !== debouncedSearch} className="btn-ghost !px-2 !py-1.5 flex items-center gap-1 disabled:opacity-40" title={t.historyExportResults}><Download className="w-3 h-3" />{format.toUpperCase()}</button>)}
+            {(['json', 'csv'] as const).map((format) => <button key={format} onClick={() => void handleExport(format)} disabled={!rows.length || loading || exporting || search !== debouncedSearch} className="btn-ghost !px-2 !py-1.5 flex items-center gap-1 disabled:opacity-40" title={search !== debouncedSearch ? t.whyFilterPending : loading || exporting ? t.whyBusy : !rows.length ? t.whyNoRows : t.historyExportResults}><Download className="w-3 h-3" />{format.toUpperCase()}</button>)}
           </div>
         </div>
 

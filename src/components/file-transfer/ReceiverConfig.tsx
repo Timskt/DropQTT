@@ -71,7 +71,11 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
             className="field-input flex-1 font-mono"
             style={{ color: 'var(--ok)' }}
           />
-          <button onClick={handleApply} disabled={!connected || isApplying} className="btn-ghost px-3 py-1.5 flex items-center space-x-1">
+          <button
+            onClick={handleApply}
+            disabled={!connected || isApplying}
+            title={!connected ? t.whyNotConnected : isApplying ? t.whyBusy : t.subscribe}
+            className="btn-ghost px-3 py-1.5 flex items-center space-x-1">
             <RefreshCw className={`w-3 h-3 ${isApplying ? 'animate-spin' : ''}`} />
             <span>{t.subscribe}</span>
           </button>

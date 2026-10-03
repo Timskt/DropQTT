@@ -250,6 +250,7 @@ const BridgeConnCard: React.FC<{
                 : onConnect(selected)
             }
             disabled={busy || (!customMode && !selected)}
+            title={busy ? t.whyBusy : !customMode && !selected ? t.whyPickBroker : t.connect}
             className="btn-accent w-full flex items-center justify-center gap-2"
           >
             <Server className="w-3.5 h-3.5" />
@@ -785,6 +786,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                       type="button"
                       onClick={runScriptTest}
                       disabled={!draft.transformScript.trim() || testing}
+                      title={!draft.transformScript.trim() ? t.whyNoScript : testing ? t.whyBusy : t.runTest}
                       className="btn-ghost flex items-center gap-1 text-[11px] shrink-0"
                     >
                       <Play className="w-3 h-3" />

@@ -116,6 +116,7 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
         <button
           onClick={onToggleConnect}
           disabled={isConnecting}
+          title={isConnecting ? t.whyBusy : undefined}
           className="flex items-center space-x-1.5 px-3 py-1 rounded text-xs font-semibold tracking-wide transition border"
           style={
             connected

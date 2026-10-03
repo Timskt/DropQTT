@@ -41,7 +41,7 @@ const boot = async (page: any, mode: string, extra: Record<string, any> = {}) =>
           return args.handler;
         }
         if (cmd === 'plugin:event|unlisten') return null;
-        if (cmd === 'get_connection_status') return { connected: true, brokerHost: '127.0.0.1', brokerPort: 1883, clientId: 'DropQTT_guards' };
+        if (cmd === 'get_connection_status') return { connected: ex.connected !== false, brokerHost: '127.0.0.1', brokerPort: 1883, clientId: 'DropQTT_guards' };
         if (cmd === 'get_default_download_dir') return 'D:/Downloads';
         if (cmd === 'get_topic_stats_cap') return 5000;
         if (cmd === 'get_subscription_stats') return {};
@@ -230,4 +230,35 @@ test('the retained popover opens by keyboard, moves focus inside, and Escape han
   await page.keyboard.press('Escape');
   await expect(popover).toHaveCount(0);
   await expect(toggle).toBeFocused();
+});
+
+test('a disabled control says which condition it is stuck on', async ({ page }) => {
+  await boot(page, 'mqttx', { connected: false });
+  const publish = page.getByRole('button', { name: /Publish Message/ });
+  await expect(publish).toBeDisabled();
+  await expect(publish).toHaveAttribute('title', /Not connected to a broker/);
+});
+
+test('an unsubmitted search box is the reason export is dead', async ({ page }) => {
+  await boot(page, 'history');
+  await page.getByRole('textbox').fill('sensor');
+  const json = page.getByRole('button', { name: 'JSON', exact: true });
+  await expect(json).toBeDisabled();
+  await expect(json).toHaveAttribute('title', /unsubmitted text/);
+});
+
+test('the feed says when it is only showing the newest window', async ({ page }) => {
+  await boot(page, 'mqttx');
+  await page.evaluate(() => {
+    const mk = (i: number) => ({
+      id: `m${i}`, topic: `bench/row/${i}`, payload: String(i), payloadLen: String(i).length,
+      payloadBase64: btoa(String(i)), truncated: false, qos: 0, retain: false,
+      timestamp: '10:00:00.000', timestampMs: Date.now(), direction: 'in',
+    });
+    (window as any).__fire('mqtt-messages', { messages: Array.from({ length: 502 }, (_, i) => mk(i)), dropped: 0 });
+  });
+  await expect(page.getByTestId('feed-cap-note')).toHaveText(/Showing the newest 500; older rows are in History/);
+  // A panel below the cap must not claim it is truncated.
+  await boot(page, 'mqttx');
+  await expect(page.getByTestId('feed-cap-note')).toHaveCount(0);
 });
