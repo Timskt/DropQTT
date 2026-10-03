@@ -54,6 +54,13 @@ pub struct BridgeRule {
     pub target_kind: String,
     #[serde(default)]
     pub webhook: WebhookConfig,
+    /// Extra sinks this rule fans the same message out to, after its primary
+    /// `webhook`. One device stream usually has to reach the business API, an
+    /// archive and an alert hook at once; each sink is delivered and retried on
+    /// its own, because one endpoint being down is not the others' excuse.
+    /// Index 0 in the outbox is the primary, 1.. these in order.
+    #[serde(default)]
+    pub targets: Vec<WebhookConfig>,
     /// "same" (keep original topic) | "prefix" (replace prefix)
     /// | "fixed" (single aggregate topic) | "regex" (capture-group rewrite)
     /// | "map" (per-topic mapping table, exact then wildcard)
@@ -410,6 +417,22 @@ impl BridgeManager {
                 );
                 continue;
             }
+            // The entry says which sink it owes, and only that sink. If the rule has
+            // since lost it, the delivery is failed rather than redirected: posting
+            // someone's telemetry to whichever endpoint happens to be left is worse
+            // than not posting it.
+            let sink = match crate::webhook::sink_at(&rule.webhook, &rule.targets, entry.target_index) {
+                Some(sink) => sink,
+                None => {
+                    let _ = outbox.record_failure(
+                        entry.id,
+                        crate::outbox::MAX_ATTEMPTS - 1,
+                        "that sink is no longer on the rule",
+                        chrono::Utc::now().timestamp_millis(),
+                    );
+                    continue;
+                }
+            };
             let permit = match self.webhook_slots.clone().try_acquire_owned() {
                 Ok(permit) => permit,
                 Err(_) => continue, // still due on the next tick; nothing is lost
@@ -417,7 +440,6 @@ impl BridgeManager {
             let client = self.webhook_client.get_or_init(crate::webhook::client).clone();
             let bytes = entry.body.len();
             let body = bytes::Bytes::from(entry.body.clone());
-            let webhook = rule.webhook.clone();
             let outbox2 = outbox.clone();
             let id = entry.id;
             let attempts = entry.attempts;
@@ -428,7 +450,7 @@ impl BridgeManager {
                 let _permit = permit;
                 let now_ms = chrono::Utc::now().timestamp_millis();
                 let result = match client {
-                    Ok(client) => crate::webhook::deliver(&client, &webhook, body).await,
+                    Ok(client) => crate::webhook::deliver(&client, &sink, body).await,
                     Err(e) => Err(e),
                 };
                 match result {
@@ -439,7 +461,7 @@ impl BridgeManager {
                             rule_id: rule2.id.clone(),
                             rule_name: rule2.name.clone(),
                             from_topic: entry.topic.clone(),
-                            to_topic: rule2.webhook.display_target(),
+                            to_topic: sink.display_target(),
                             bytes,
                             qos: entry.qos,
                             retain: entry.retain,
@@ -458,7 +480,7 @@ impl BridgeManager {
                             rule_id: rule2.id.clone(),
                             rule_name: rule2.name.clone(),
                             from_topic: entry.topic.clone(),
-                            to_topic: rule2.webhook.display_target(),
+                            to_topic: sink.display_target(),
                             bytes,
                             qos: entry.qos,
                             retain: entry.retain,
@@ -750,7 +772,29 @@ impl BridgeManager {
             if !matches!(r.target_kind.as_str(), "mqtt" | "http") {
                 return Err("Unknown bridge target kind".into());
             }
-            if r.target_kind == "http" && r.enabled { r.webhook.validate()?; }
+            if r.target_kind == "http" && r.enabled {
+                if r.targets.len() > webhook::MAX_EXTRA_TARGETS {
+                    return Err(format!(
+                        "Rule '{}' fans out to {} extra sinks; the limit is {}",
+                        r.name,
+                        r.targets.len(),
+                        webhook::MAX_EXTRA_TARGETS
+                    ));
+                }
+                // The primary may be left blank when the rule only archives, but then
+                // at least one extra sink has to exist — an HTTP rule that delivers
+                // nowhere is a rule that silently eats traffic.
+                let primary = r.webhook.url.trim();
+                if !primary.is_empty() {
+                    r.webhook.validate()?;
+                } else if r.targets.is_empty() {
+                    return Err(format!("Rule '{}' has no webhook target to deliver to", r.name));
+                }
+                for (i, t) in r.targets.iter().enumerate() {
+                    t.validate()
+                        .map_err(|e| format!("Rule '{}' extra sink #{}: {}", r.name, i + 1, e))?;
+                }
+            }
             if r.target_kind == "mqtt" && r.source_conn == r.target_conn {
                 return Err(format!("Rule '{}' must use two different connections", r.name));
             }
@@ -964,50 +1008,57 @@ impl BridgeManager {
             }
 
             if rule.target_kind == "http" {
-                let permit = match self.webhook_slots.clone().try_acquire_owned() {
-                    Ok(permit) => permit,
-                    Err(_) => { self.bump_dropped(&rule.id, &publish.topic).await; continue; }
-                };
-                let body = webhook::encode_body(&rule.webhook, &target_topic, &payload_out, qos, retain);
-                if body.len() > 2 * 1024 * 1024 {
-                    self.bump_dropped(&rule.id, &publish.topic).await;
-                    continue;
-                }
-                let this = self.clone();
-                let app = app.clone();
-                let rule = rule.clone();
-                let from_topic = publish.topic.clone();
-                let client = self.webhook_client.get_or_init(webhook::client).clone();
-                let queued = this.outbox().map(|_| body.clone());
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    let bytes = body.len();
-                    let result = match client {
-                        Ok(client) => webhook::deliver(&client, &rule.webhook, body).await,
-                        Err(e) => Err(e),
+                // One attempt per sink, each with its own body encoding (a raw POST
+                // to the archive and a JSON envelope to the API are the same message
+                // with different bytes) and its own queue entry if it fails.
+                for (index, sink) in webhook::sinks_with_indexes(&rule.webhook, &rule.targets) {
+                    let permit = match self.webhook_slots.clone().try_acquire_owned() {
+                        Ok(permit) => permit,
+                        Err(_) => { self.bump_dropped(&rule.id, &publish.topic).await; continue; }
                     };
-                    // A failed delivery is queued rather than counted and forgotten.
-                    // The error counter still moves, because the attempt did fail.
-                    if let (Err(_), Some(outbox), Some(body)) = (&result, this.outbox().cloned(), queued) {
-                        let entry = crate::outbox::OutboxEntry {
-                            id: 0,
-                            rule_id: rule.id.clone(),
-                            topic: from_topic.clone(),
-                            body: body.to_vec(),
-                            qos,
-                            retain,
-                            attempts: 0,
-                        };
-                        let _ = outbox.enqueue(&entry, chrono::Utc::now().timestamp_millis());
+                    let body = webhook::encode_body(&sink, &target_topic, &payload_out, qos, retain);
+                    if body.len() > 2 * 1024 * 1024 {
+                        self.bump_dropped(&rule.id, &publish.topic).await;
+                        continue;
                     }
-                    this.bump(&rule.id, result.is_ok(), &from_topic).await;
-                    let _ = app.emit("bridge-event", BridgeEvent {
-                        rule_id: rule.id, rule_name: rule.name, from_topic,
-                        to_topic: rule.webhook.display_target(), bytes, qos, retain,
-                        ok: result.is_ok(), error: result.err(),
-                        timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                    let this = self.clone();
+                    let app = app.clone();
+                    let rule = rule.clone();
+                    let from_topic = publish.topic.clone();
+                    let client = self.webhook_client.get_or_init(webhook::client).clone();
+                    let queued = this.outbox().map(|_| body.clone());
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        let bytes = body.len();
+                        let result = match client {
+                            Ok(client) => webhook::deliver(&client, &sink, body).await,
+                            Err(e) => Err(e),
+                        };
+                        // A failed delivery is queued rather than counted and
+                        // forgotten. The error counter still moves, because the
+                        // attempt did fail.
+                        if let (Err(_), Some(outbox), Some(body)) = (&result, this.outbox().cloned(), queued) {
+                            let entry = crate::outbox::OutboxEntry {
+                                id: 0,
+                                rule_id: rule.id.clone(),
+                                topic: from_topic.clone(),
+                                body: body.to_vec(),
+                                qos,
+                                retain,
+                                attempts: 0,
+                                target_index: index,
+                            };
+                            let _ = outbox.enqueue(&entry, chrono::Utc::now().timestamp_millis());
+                        }
+                        this.bump(&rule.id, result.is_ok(), &from_topic).await;
+                        let _ = app.emit("bridge-event", BridgeEvent {
+                            rule_id: rule.id, rule_name: rule.name, from_topic,
+                            to_topic: sink.display_target(), bytes, qos, retain,
+                            ok: result.is_ok(), error: result.err(),
+                            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        });
                     });
-                });
+                }
                 continue;
             }
 
@@ -1086,6 +1137,7 @@ mod tests {
             target_conn: "dst".into(),
             target_kind: "mqtt".into(),
             webhook: WebhookConfig::default(),
+            targets: Vec::new(),
             topic_mode: mode.into(),
             prefix_from: from.into(),
             prefix_to: to.into(),

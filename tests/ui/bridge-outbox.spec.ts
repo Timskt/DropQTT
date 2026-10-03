@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * The webhook outbox: what the bridge panel says when a delivery failed and the
- * payload is still on this machine. These tests pin the three things a queue can
- * get wrong on screen — hiding work that exists, offering a destructive cleanup
- * with one click, and quoting an attempt cap the backend does not use.
+ * The webhook outbox and fan-out: what the bridge panel says when a delivery
+ * failed and the payload is still on this machine, and how it shows a rule that
+ * feeds several sinks at once. These pin the things a queue can get wrong on
+ * screen — hiding work that exists, offering a destructive cleanup with one click,
+ * quoting an attempt cap the backend does not use, and blaming the wrong sink.
  */
 const rule = {
   id: 'r-1', name: 'Telemetry to API', sourceConn: 'src', sourceFilter: 'sensors/#', sourceQos: 1,
@@ -12,19 +13,33 @@ const rule = {
   webhook: { url: 'http://127.0.0.1:9/missing', format: 'json', headers: [] },
 };
 const other = { ...rule, id: 'r-2', name: 'Broker to broker', targetKind: 'mqtt', targetConn: 'dst', webhook: undefined };
+const fanOut = {
+  ...rule, id: 'r-3', name: 'Telemetry everywhere',
+  targets: [{ url: 'https://archive.internal/ingest', format: 'json', headers: [['Authorization', 'Bearer x']] }],
+};
 
 const emptyCounts = { pending: 0, dead: 0, delivered: 0, retries: 0 };
+
+/** One queued debt as the backend reports it. */
+const owed = (ruleId: string, topic: string, attempts: number, lastError: string, targetIndex = 0) => ({
+  ruleId, topic, attempts, lastError, targetIndex,
+});
 
 /** A complete bridge_outbox_state payload with one field changed. */
 const state = (over: Record<string, any> = {}) => ({
   counts: emptyCounts,
   error: null,
-  preview: [] as [string, string, number, string][],
+  preview: [] as ReturnType<typeof owed>[],
   maxAttempts: 8,
   ...over,
 });
 
-const boot = async (page: any, outbox: Record<string, any> = state(), stats: Record<string, any> = {}) => {
+const boot = async (
+  page: any,
+  outbox: Record<string, any> = state(),
+  stats: Record<string, any> = {},
+  rules: Record<string, any>[] = [rule, other],
+) => {
   await page.addInitScript(([exOutbox, exStats, exRules]) => {
     localStorage.setItem('dropqtt_lang', 'en');
     localStorage.setItem('dropqtt_theme', 'solaris');
@@ -73,7 +88,7 @@ const boot = async (page: any, outbox: Record<string, any> = state(), stats: Rec
         return null;
       },
     };
-  }, [outbox, stats, [rule, other]] as const);
+  }, [outbox, stats, rules] as const);
   await page.goto('/');
 };
 
@@ -94,7 +109,7 @@ test('a queue that has never been used takes no space in the panel', async ({ pa
 test('queued work names the counts it is holding and retries on demand', async ({ page }) => {
   await boot(page, state({
     counts: { pending: 2, dead: 0, delivered: 5, retries: 4 },
-    preview: [['r-1', 'sensors/temp', 1, '502 bad gateway']],
+    preview: [owed('r-1', 'sensors/temp', 1, '502 bad gateway')],
   }));
   const panel = page.getByTestId('outbox-panel');
   await expect(panel).toBeVisible();
@@ -112,7 +127,7 @@ test('queued work names the counts it is holding and retries on demand', async (
 test('the retry button for one rule only retries that rule', async ({ page }) => {
   await boot(
     page,
-    state({ counts: { pending: 2, dead: 0, delivered: 0, retries: 2 }, preview: [['r-1', 'sensors/temp', 1, 'timeout']] }),
+    state({ counts: { pending: 2, dead: 0, delivered: 0, retries: 2 }, preview: [owed('r-1', 'sensors/temp', 1, 'timeout')] }),
     { 'r-1': { forwarded: 0, errors: 1, dropped: 0, lastTopic: 'sensors/temp', queued: 2, dead: 0 } },
   );
   await expect(page.getByTestId('outbox-queued-r-1')).toHaveText('⧗ 2');
@@ -126,7 +141,7 @@ test('the retry button for one rule only retries that rule', async ({ page }) =>
 test('discarding dead letters takes two deliberate clicks', async ({ page }) => {
   await boot(
     page,
-    state({ counts: { pending: 0, dead: 1, delivered: 0, retries: 8 }, preview: [['r-1', 'sensors/temp', 8, 'connection refused']] }),
+    state({ counts: { pending: 0, dead: 1, delivered: 0, retries: 8 }, preview: [owed('r-1', 'sensors/temp', 8, 'connection refused')] }),
     { 'r-1': { forwarded: 0, errors: 8, dropped: 0, lastTopic: 'sensors/temp', queued: 0, dead: 1 } },
   );
   const drop = page.getByTestId('outbox-drop-dead');
@@ -153,4 +168,69 @@ test('a queue that could not be opened says retries are off instead of showing a
 test('the hint quotes the cap the backend actually uses', async ({ page }) => {
   await boot(page, state({ counts: { pending: 1, dead: 0, delivered: 0, retries: 0 }, maxAttempts: 11 }));
   await expect(page.getByTestId('outbox-panel')).toContainText('after 11 attempts');
+});
+
+test('a queued debt names the sink that is still owed', async ({ page }) => {
+  await boot(page, state({
+    counts: { pending: 1, dead: 0, delivered: 0, retries: 1 },
+    preview: [owed('r-3', 'sensors/temp', 1, 'HTTP 500', 2)],
+  }), {}, [fanOut]);
+  const panel = page.getByTestId('outbox-panel');
+  await expect(panel).toContainText('sink #2');
+  // The primary sink needs no label: the row is already about this rule.
+  await expect(panel).not.toContainText('sink #0');
+});
+
+test('work that will be retried again says a repeat POST can duplicate an action', async ({ page }) => {
+  await boot(page, state({ counts: { pending: 1, dead: 0, delivered: 0, retries: 1 } }));
+  await expect(page.getByTestId('outbox-idempotency')).toBeVisible();
+  // A dead letter is not going to be retried, so the warning would be noise.
+  await boot(page, state({ counts: { pending: 0, dead: 1, delivered: 0, retries: 8 } }));
+  await expect(page.getByTestId('outbox-idempotency')).toHaveCount(0);
+});
+
+test('a fan-out rule says the message goes to more than one sink', async ({ page }) => {
+  await boot(page, state(), {}, [fanOut]);
+  const row = page.getByText('Telemetry everywhere');
+  await expect(row).toBeVisible();
+  await expect(page.getByText('http://127.0.0.1:9/missing +1')).toBeVisible();
+});
+
+test('the sink editor names every control it adds', async ({ page }) => {
+  await boot(page, state(), {}, [fanOut]);
+  await page.getByTitle('Edit rule').click();
+  await expect(page.getByTestId('extra-sink-0')).toBeVisible();
+  await expect(page.getByLabel('Sink #1 URL')).toHaveValue('https://archive.internal/ingest');
+  await expect(page.getByLabel('Sink #1 headers')).toHaveValue('Authorization: Bearer x');
+
+  await page.getByTestId('sink-add').click();
+  await expect(page.getByTestId('extra-sink-1')).toBeVisible();
+  await expect(page.getByLabel('Sink #2 URL')).toBeVisible();
+
+  // Removing the first row must not orphan the second one's headers.
+  await page.getByTestId('extra-sink-remove-0').click();
+  await expect(page.getByTestId('extra-sink-1')).toHaveCount(0);
+  await expect(page.getByTestId('extra-sink-0')).toBeVisible();
+  await expect(page.getByLabel('Sink #1 URL')).toHaveValue('');
+});
+
+test('saving a fan-out rule keeps one address per sink', async ({ page }) => {
+  await boot(page, state(), {}, [rule]);
+  await page.getByTitle('Edit rule').click();
+  await page.getByTestId('sink-add').click();
+  const setV = async (label: string, value: string) => {
+    const el = page.getByLabel(label);
+    await el.click();
+    await el.fill(value);
+  };
+  await setV('Sink #1 URL', 'https://archive.internal/ingest');
+  await setV('Sink #1 headers', 'Authorization: Bearer archive-token');
+  await page.getByText('Save changes').click();
+  await expect
+    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('dropqtt_bridge_rules') || '[]')[0].targets?.[0]?.url ?? ''))
+    .toBe('https://archive.internal/ingest');
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('dropqtt_bridge_rules') || '[]')[0]);
+  expect(saved.targets[0].headers).toEqual([['Authorization', 'Bearer archive-token']]);
+  // The primary sink is untouched by an edit aimed at the extra one.
+  expect(saved.webhook.url).toBe('http://127.0.0.1:9/missing');
 });

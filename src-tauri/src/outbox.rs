@@ -39,6 +39,22 @@ pub struct OutboxEntry {
     pub qos: u8,
     pub retain: bool,
     pub attempts: u32,
+    /// Which sink of the rule owes this delivery: 0 is the rule's primary webhook,
+    /// 1.. are its extra targets. Stored as an index, never as an address.
+    pub target_index: usize,
+}
+
+/// One row of the panel's preview: enough to point at the debt, never enough to
+/// leak a payload or an address.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxPreviewRow {
+    pub rule_id: String,
+    pub topic: String,
+    pub attempts: u32,
+    pub last_error: String,
+    /// Which sink of the rule is still owed. 0 is the rule's primary webhook.
+    pub target_index: usize,
 }
 
 /// Everything the bridge panel needs about the queue at once.
@@ -49,8 +65,8 @@ pub struct OutboxState {
     /// Set when the queue could not be opened: retries are then off, and the panel
     /// has to say so instead of showing a clean zero.
     pub error: Option<String>,
-    /// (rule id, topic, attempts, last error) for the rows closest to giving up.
-    pub preview: Vec<(String, String, u32, String)>,
+    /// The rows closest to giving up, dead letters first.
+    pub preview: Vec<OutboxPreviewRow>,
     /// The panel quotes "attempt 5/8"; that 8 has to come from here, not from a
     /// number someone typed into a string.
     pub max_attempts: u32,
@@ -89,6 +105,7 @@ impl Outbox {
                 qos INTEGER NOT NULL,
                 retain INTEGER NOT NULL,
                 attempts INTEGER NOT NULL DEFAULT 0,
+                target_index INTEGER NOT NULL DEFAULT 0,
                 next_try_ms INTEGER NOT NULL,
                 state TEXT NOT NULL DEFAULT 'pending',
                 last_error TEXT,
@@ -101,6 +118,20 @@ impl Outbox {
              );",
         )
         .map_err(|e| format!("outbox schema: {e}"))?;
+        // A queue written before fan-out existed has no target column. Adding it in
+        // place keeps the entries already owed — recreating the table would throw
+        // away exactly the work this module exists to preserve.
+        let has_target: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('outbox') WHERE name = 'target_index'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("outbox schema probe: {e}"))?;
+        if has_target == 0 {
+            conn.execute("ALTER TABLE outbox ADD COLUMN target_index INTEGER NOT NULL DEFAULT 0", [])
+                .map_err(|e| format!("outbox target column: {e}"))?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
             broken: std::sync::atomic::AtomicBool::new(false),
@@ -132,9 +163,9 @@ impl Outbox {
         let next = now_ms + backoff_ms(attempts) as i64;
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO outbox (id, rule_id, topic, body, qos, retain, attempts, next_try_ms, state, created_ms)
-                 VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8)",
-                params![entry.rule_id, entry.topic, entry.body, entry.qos as i64, entry.retain as i64, attempts as i64, next, now_ms],
+                "INSERT INTO outbox (id, rule_id, topic, body, qos, retain, attempts, target_index, next_try_ms, state, created_ms)
+                 VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9)",
+                params![entry.rule_id, entry.topic, entry.body, entry.qos as i64, entry.retain as i64, attempts as i64, entry.target_index as i64, next, now_ms],
             )?;
             Ok(conn.last_insert_rowid())
         })
@@ -148,7 +179,7 @@ impl Outbox {
     pub fn due(&self, now_ms: i64) -> Result<Vec<OutboxEntry>, String> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, rule_id, topic, body, qos, retain, attempts
+                "SELECT id, rule_id, topic, body, qos, retain, attempts, target_index
                  FROM outbox WHERE state = 'pending' AND next_try_ms <= ?1
                  ORDER BY next_try_ms ASC, id ASC LIMIT ?2",
             )?;
@@ -161,6 +192,7 @@ impl Outbox {
                     qos: r.get::<_, i64>(4)?.max(0) as u8,
                     retain: r.get::<_, i64>(5)? != 0,
                     attempts: r.get::<_, i64>(6)?.max(0) as u32,
+                    target_index: r.get::<_, i64>(7)?.max(0) as usize,
                 })
             })?;
             rows.collect::<Result<Vec<_>, _>>()
@@ -260,16 +292,23 @@ impl Outbox {
         })
     }
 
-    /// A short preview for the panel: topic, attempts and the last error. Never the
-    /// body and never the URL.
-    pub fn preview(&self, limit: usize) -> Result<Vec<(String, String, u32, String)>, String> {
+    /// A short preview for the panel: topic, attempts, the last error and which
+    /// sink of the rule it belongs to. Never the body and never the URL — the
+    /// panel resolves the index against the live rule to name the target.
+    pub fn preview(&self, limit: usize) -> Result<Vec<OutboxPreviewRow>, String> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT rule_id, topic, attempts, COALESCE(last_error, '') FROM outbox
+                "SELECT rule_id, topic, attempts, COALESCE(last_error, ''), target_index FROM outbox
                  ORDER BY CASE state WHEN 'dead' THEN 0 ELSE 1 END, next_try_ms ASC LIMIT ?1",
             )?;
             let rows = stmt.query_map(params![limit as i64], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)?.max(0) as u32, r.get(3)?))
+                Ok(OutboxPreviewRow {
+                    rule_id: r.get(0)?,
+                    topic: r.get(1)?,
+                    attempts: r.get::<_, i64>(2)?.max(0) as u32,
+                    last_error: r.get(3)?,
+                    target_index: r.get::<_, i64>(4)?.max(0) as usize,
+                })
             })?;
             rows.collect::<Result<Vec<_>, _>>()
         })
@@ -298,6 +337,7 @@ mod tests {
             qos: 1,
             retain: false,
             attempts: 0,
+            target_index: 0,
         }
     }
 
@@ -395,7 +435,7 @@ mod tests {
         let (box_, path) = temp_outbox("preview");
         box_.enqueue(&entry("r1"), 0).expect("enqueue");
         let rows = box_.preview(10).expect("preview");
-        assert_eq!(rows[0].1, "home/temperature");
+        assert_eq!(rows[0].topic, "home/temperature");
         let blob = format!("{rows:?}");
         assert!(!blob.contains("21.5"), "the payload must not leak into the list");
         assert!(!blob.contains("http"), "no target in the preview");
@@ -433,5 +473,63 @@ mod tests {
         assert_eq!(again.counts().pending, 1);
         assert_eq!(again.due(10_000).expect("due").len(), 1);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn two_sinks_of_one_rule_are_two_separate_debts() {
+        let (box_, path) = temp_outbox("fanout");
+        let mut to_archive = entry("r1");
+        to_archive.target_index = 2;
+        box_.enqueue(&entry("r1"), 0).expect("primary sink");
+        box_.enqueue(&to_archive, 0).expect("extra sink");
+        let due = box_.due(10_000).expect("due");
+        assert_eq!(due.iter().map(|e| e.target_index).collect::<Vec<_>>(), vec![0, 2]);
+        // One sink coming back says nothing about the other.
+        box_.record_success(due[0].id).expect("delivered one");
+        assert_eq!(box_.counts_for("r1").pending, 1);
+        let rows = box_.preview(5).expect("preview");
+        assert_eq!(rows[0].target_index, 2, "the preview says which sink is still owed");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_queue_written_before_fan_out_is_upgraded_rather_than_rebuilt() {
+        let dir = std::env::temp_dir().join(format!("dropqtt_outbox_upgrade_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("outbox.db");
+        {
+            let conn = Connection::open(&path).expect("create");
+            // The pre-fan-out schema, with no target_index column at all.
+            conn.execute_batch(
+                "CREATE TABLE outbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_id TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    body BLOB NOT NULL,
+                    qos INTEGER NOT NULL,
+                    retain INTEGER NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_try_ms INTEGER NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'pending',
+                    last_error TEXT,
+                    created_ms INTEGER NOT NULL
+                 );
+                 CREATE TABLE outbox_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            )
+            .expect("old schema");
+            conn.execute(
+                "INSERT INTO outbox (rule_id, topic, body, qos, retain, attempts, next_try_ms, state, created_ms)
+                 VALUES ('r1', 'home/t', ?1, 1, 0, 2, 500, 'pending', 1)",
+                params![b"{\"v\":1}".to_vec()],
+            )
+            .expect("seed row");
+        }
+        let upgraded = Outbox::open(&path).expect("opening upgrades the schema in place");
+        let due = upgraded.due(10_000).expect("due");
+        assert_eq!(due.len(), 1, "the owed delivery survived the upgrade");
+        assert_eq!(due[0].target_index, 0, "the primary sink is index 0");
+        assert_eq!(due[0].attempts, 2, "and its attempt history is intact");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

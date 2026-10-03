@@ -413,6 +413,16 @@ export interface Translations {
   outboxDropDeadConfirmHint: string;
   outboxQueuedTip: string;
   outboxDeadTip: string;
+  outboxSink: string;
+  outboxIdempotencyNote: string;
+  extraSinks: string;
+  extraSinkUrl: string;
+  extraSinkHeaders: string;
+  addSink: string;
+  addSinkHint: string;
+  removeSink: string;
+  sinkLimitReached: string;
+  fanOutHint: string;
   bridgeLog: string;
   clearLog: string;
   noBridgeEvents: string;
@@ -1182,6 +1192,16 @@ export const translations: Record<Language, Translations> = {
     outboxDropDeadConfirmHint: '再点一次才会丢弃这些载荷',
     outboxQueuedTip: '仍留在本机等待下一次重试的 Webhook 载荷；最多尝试 {max} 次',
     outboxDeadTip: '已尝试 {max} 次仍失败并停止重试；载荷仍在磁盘上',
+    outboxSink: '接收端 #{n}',
+    outboxIdempotencyNote: '重投的 POST 可能重复触发业务动作，接收端应做成幂等。',
+    extraSinks: '额外接收端',
+    extraSinkUrl: '接收端 #{n} 地址',
+    extraSinkHeaders: '接收端 #{n} 请求头',
+    addSink: '添加接收端',
+    addSinkHint: '把同一条消息再投递到另一个 HTTP 端点',
+    removeSink: '移除该接收端',
+    sinkLimitReached: '一条规则最多 {max} 个额外接收端',
+    fanOutHint: '每个接收端各自投递、各自重试：一个端点不可达不会挡住其他端点。',
     bridgeLog: '转发明细',
     clearLog: '清空日志',
     noBridgeEvents: '暂无转发事件 — 连接源/目标并开始发布后这里会实时滚动',
@@ -1947,6 +1967,16 @@ export const translations: Record<Language, Translations> = {
     outboxDropDeadConfirmHint: 'Click once more to discard these payloads',
     outboxQueuedTip: 'Webhook payloads still on disk waiting for their next attempt, up to {max} in total',
     outboxDeadTip: 'Failed {max} attempts and stopped retrying; the payload is still on disk',
+    outboxSink: 'sink #{n}',
+    outboxIdempotencyNote: 'A retried POST can duplicate a business action, so the endpoint should be idempotent.',
+    extraSinks: 'Extra sinks',
+    extraSinkUrl: 'Sink #{n} URL',
+    extraSinkHeaders: 'Sink #{n} headers',
+    addSink: 'Add sink',
+    addSinkHint: 'Deliver the same message to one more HTTP endpoint',
+    removeSink: 'Remove this sink',
+    sinkLimitReached: 'A rule fans out to at most {max} extra sinks',
+    fanOutHint: 'Each sink is delivered and retried on its own: one endpoint being down does not stop the others.',
     bridgeLog: 'Forward Log',
     clearLog: 'Clear log',
     noBridgeEvents: 'No events yet — connect source/target and publish to see live traffic',
@@ -2712,6 +2742,16 @@ export const translations: Record<Language, Translations> = {
     outboxDropDeadConfirmHint: '再點一次才會真正丟棄這些載入',
     outboxQueuedTip: '仍留在本機等待下次重試的 Webhook 載入；最多嘗試 {max} 次',
     outboxDeadTip: '已嘗試 {max} 次仍失敗並停止重試；載入仍在磁碟上',
+    outboxSink: '接收端 #{n}',
+    outboxIdempotencyNote: '重試的 POST 可能重複觸發業務動作，接收端應做成冪等。',
+    extraSinks: '額外接收端',
+    extraSinkUrl: '接收端 #{n} 網址',
+    extraSinkHeaders: '接收端 #{n} 請求標頭',
+    addSink: '新增接收端',
+    addSinkHint: '把同一則訊息再派送給另一個 HTTP 端點',
+    removeSink: '移除該接收端',
+    sinkLimitReached: '一條規則最多 {max} 個額外接收端',
+    fanOutHint: '每個接收端各自派送、各自重試：一個端點不可達不會擋住其他端點。',
     bridgeLog: '轉發明細',
     clearLog: '清空日誌',
     noBridgeEvents: '尚無轉發事件 — 連線來源/目標並開始發佈後會即時捲動',
@@ -3477,6 +3517,16 @@ export const translations: Record<Language, Translations> = {
     outboxDropDeadConfirmHint: 'もう一度クリックするとこれらのペイロードを破棄します',
     outboxQueuedTip: '次の再送を待って本機に残っている Webhook ペイロード（合計最大 {max} 回）',
     outboxDeadTip: '{max} 回試みて失敗し、再送を停止しました。ペイロードはディスクに残っています',
+    outboxSink: 'シンク #{n}',
+    outboxIdempotencyNote: '再送された POST は業務操作を重複実行する可能性があります。エンドポイントは冪等にしてください。',
+    extraSinks: '追加のシンク',
+    extraSinkUrl: 'シンク #{n} の URL',
+    extraSinkHeaders: 'シンク #{n} のヘッダー',
+    addSink: 'シンクを追加',
+    addSinkHint: '同じメッセージをもう 1 つの HTTP エンドポイントに配信します',
+    removeSink: 'このシンクを削除',
+    sinkLimitReached: '1 つのルールに追加できるシンクは最大 {max} 個です',
+    fanOutHint: '各シンクは個別に配信・再送されます。1 つのエンドポイントが止まっても他は止まりません。',
     bridgeLog: '転送ログ',
     clearLog: 'ログをクリア',
     noBridgeEvents: '転送イベントはまだありません — 接続して発行するとライブ表示されます',

@@ -65,6 +65,28 @@ describe('buildEnvironmentBundle', () => {
     // Flagged, so the person importing knows a target has to be typed again.
     expect(rule.webhookRedacted).toBe(true);
   });
+
+  it('empties every sink of a fan-out bridge rule, not only the first', () => {
+    const parsed = JSON.parse(bundleOf({
+      bridgeRules: [{
+        id: 'b1', name: 'fan', sourceConn: 'src', sourceFilter: 'a/#', targetKind: 'http',
+        webhook: { url: 'https://api.example/x', format: 'json', headers: [['Authorization', 'Bearer aaa']] },
+        targets: [
+          { url: 'https://archive.example/y', format: 'raw', headers: [['X-Token', 'bbb']] },
+          { url: 'https://alert.example/z', format: 'json', headers: [] },
+        ],
+      } as never],
+    }));
+    const text = JSON.stringify(parsed);
+    for (const host of ['api.example', 'archive.example', 'alert.example']) expect(text).not.toContain(host);
+    for (const secret of ['Bearer aaa', 'bbb']) expect(text).not.toContain(secret);
+    const rule = parsed.bridgeRules[0];
+    expect(rule.webhookRedacted).toBe(true);
+    expect(rule.targets.map((s: any) => s.url)).toEqual(['', '']);
+    expect(rule.targets.map((s: any) => s.headers)).toEqual([[], []]);
+    // Formats stay: they describe behaviour, and an address is not one.
+    expect(rule.targets[0].format).toBe('raw');
+  });
 });
 
 describe('parseEnvironmentBundle', () => {

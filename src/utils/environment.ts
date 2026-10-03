@@ -71,9 +71,13 @@ const stripSecrets = (value: unknown, depth = 0): unknown => {
 /** A webhook target is replaced by an empty one and flagged, never partially kept. */
 const redactWebhook = <T extends { webhook?: { url?: string; format?: string; headers?: unknown } }>(rule: T): T => {
   if (!rule.webhook) return rule;
+  const sinks = rule as T & { targets?: { url?: string; format?: string; headers?: unknown }[] };
   return {
     ...rule,
     webhook: { url: '', format: rule.webhook.format ?? 'json', headers: [] },
+    // A fan-out rule carries one address per sink: blanking only the primary would
+    // export the rest of them.
+    ...(sinks.targets ? { targets: sinks.targets.map((s) => ({ ...s, url: '', headers: [] })) } : {}),
     webhookRedacted: true,
   };
 };

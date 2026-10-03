@@ -1535,6 +1535,71 @@ outbox 的 `rule_id` 模型要为它加"哪个目标"这一维；以及把 outbo
 保留策略 prune、也会被导出，而队列的生命周期与那些操作无关，混在一起等于让"清理历史"
 有机会顺手删掉待投的载荷。这条偏差要记在这里，而不是假装是照建议做的。
 
+### 4.49 桥接多 sink fan-out：一条设备流量同时进业务 API、归档与告警（§2 E5，第十四轮 2026-10-04）
+
+审阅稿这行有两半："一份设备流量常要同时进业务 API + 本地归档 + 告警"，**且要按条件过滤/限流**。
+后一半我复核后**没有重做**——条件与限流早就齐了：`excludeFilters`（主题级排除）、
+`transform` 返回 `null`（按内容丢单）、`rateLimit`（每秒上限）。前一半是真缺的，就做了它。
+
+**为什么是 `targets: Vec<WebhookConfig>` 而不是把 `webhook` 改成数组。** 三个既有事实都建立在
+"一个主目标"上：v2 导出的规则文件、localStorage 里已存的规则、以及 §4.48 的 outbox 记账。
+加一个 `#[serde(default)]` 的可选数组是向后兼容的最小改动，代价是主目标与额外目标在类型上
+不对称——我用"索引即身份"把这条不对称固定下来，而不是假装它不存在。
+
+**索引即身份（这轮唯一的新概念）。** outbox 行多了一列 `target_index`：**0 永远是主 webhook，
+1.. 是 `targets` 的顺序**。三条推论都是刻意设计：
+
+- 盘上仍然只有 `rule_id` + 一个数字，**没有第二个 URL 拷贝**（§4.48 的性质原样保留）。
+- 删掉某个 sink 之后，欠它的条目**不会改投别处**，而是直接失败并写明
+  "that sink is no longer on the rule"。把别人的遥测投到"碰巧还活着的那个端点"比不投更糟。
+- 老库自动升级：`Outbox::open` 先探 `pragma_table_info`，缺列才 `ALTER TABLE ... ADD COLUMN
+  target_index DEFAULT 0`。**不重建表**——重建等于把待投的载荷删掉，正是 §4.48 要防的事。
+  这条有专门的回归测试（`a_queue_written_before_fan_out_is_upgraded_rather_than_rebuilt`）。
+
+**每个 sink 各投各的，具体到三件事**：各自的 body（归档要 `raw`、API 要 json 信封——同一条
+消息的不同字节）、各自的并发许可、各自的失败与重试。上限 `MAX_EXTRA_TARGETS = 7`（Rust 是权威，
+前端的"添加接收端"按钮只是不再让你继续点，越界的规则集后端会带原因拒绝）。
+
+**两处必须说出来的代价，而不是藏起来：**
+
+1. **`forwarded` 的语义从"消息条数"变成"投递次数"**。一条消息 3 个 sink = 计数 3。反过来看
+   这才是对的：这一列回答的是"这个规则往外发了几次"，而"几条消息"由 feed/历史回答。
+   真机取证里那条 `sent 2` 就是"主 sink 一次 + 额外 sink 重投一次"。
+2. **自动重投与"POST 可能重复业务动作"是矛盾的。** `webhook.rs` 的模块注释原来写的是
+   "No automatic retries"，那句话在 §4.48 之后已经不成立——我没有让它悄悄过期，而是把它改成
+   明写权衡（"repeating an arbitrary POST can duplicate a business action, so a webhook target
+   is expected to be idempotent"），并在面板有待投条目时显示同一句话。
+
+**导出与脱敏跟着改了**：环境包 `redactWebhook` 原来只清主目标，fan-out 之后这等等于把剩下
+每个 sink 的地址和 `Authorization` 头原样导出。现在每条 sink 都清空、`format` 保留（它是行为
+不是秘密），并有一条单元测试盯着"三个 host 都不在文本里"。
+
+**门**：Rust harness **219/219**（新增 `fan_out_indexes_are_stable_rather_than_positional`、
+`a_queued_entry_never_moves_to_a_different_sink`、`two_sinks_of_one_rule_are_two_separate_debts`、
+`a_queue_written_before_fan_out_is_upgraded_rather_than_rebuilt`）、`clippy --lib --tests` 干净、
+vitest **68/68**、`tsc` 干净、`eslint` 0 error / 10 warning（预算未涨）、Playwright
+`bridge-outbox` **11 passed**（新增 5 条：债务点名是哪个 sink、幂等提示只在会重投时出现、
+规则行显示 `+1`、sink 编辑器每个控件都有名字、保存时每个 sink 各自保留地址与头）。
+
+**真机取证**（gnu 构建 6m32s；一条规则：主 sink = `127.0.0.1:8086`（健康，json），额外 sink =
+`127.0.0.1:8087`（宕，raw）；MQTT 侧仍是一次性 mosquitto `127.0.0.1:18831`，**用户自己的 1883
+未被触碰**；收尾后 18831/8085/8086/8087/9223 全无监听）：
+
+| 观察点 | 事实 |
+|---|---|
+| 发一条 `sensors/temp`（`{"temp":24.6,"tag":"fan"}`） | 主 sink **立刻收到 json 信封**；额外 sink 收到 0 次、自己计到 6 次失败。**健康的 sink 没有被宕掉的那个拖住** |
+| 面板 | `queued 1 · dead 0 · retries 4`，预览行点名 **"Telemetry everywhere sink #1 · sensors/temp · attempt 4/8 · HTTP 500"**，并出现幂等提示句 |
+| 把 8087 改回 200，点"Retry now" | `queued 0 · recovered 1`；8087 收到的是**它自己的 raw 字节** `{"temp":24.6,"tag":"fan"}`（队列保留了 per-sink 编码）；**8086 的 received 仍是 1**——重投只补了欠的那一个 sink，没有重复健康端点的投递 |
+| 规则行 / 转发日志 | 行上写 `http://127.0.0.1:8086/events +1`；日志里 3 条红 ✕ 后一条绿 ✓，且这条 ✓ 带 **25 B**（顺带证明 §4.48 修的"重投事件字节数写死 0"确实生效） |
+
+收尾：历史库三件套还原并 md5 校验一致，演示产生的 `dropqtt_outbox.db*` 与独立 WebView2 配置目录
+已删除。
+
+**这一条没做的事**：sink 级的"按条件路由"（例如 temp>40 才进告警 sink）。现在条件只在规则层
+（`excludeFilters` / `transform`），fan-out 之后所有 sink 共享同一个条件；把条件降到 sink 层要先
+定义"条件为假时这条 sink 算不算投递"，没定之前不做。以及 sink 级独立限流（现在 `rateLimit`
+仍是规则级）。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

@@ -1,5 +1,9 @@
-//! Bounded HTTP sink for desktop integrations. No automatic retries: repeating
-//! an arbitrary POST can duplicate a business action. The bridge reports errors.
+//! Bounded HTTP sink for desktop integrations.
+//!
+//! A failed POST is queued on disk and retried with growing delays (see
+//! [`crate::outbox`]) — which is a deliberate trade: repeating an arbitrary POST
+//! can duplicate a business action, so a webhook target is expected to be
+//! idempotent. Nothing here pretends to deliver exactly once.
 use bytes::Bytes;
 use reqwest::{header::{HeaderMap, HeaderName, HeaderValue}, Client, Url};
 use serde::{Deserialize, Serialize};
@@ -54,6 +58,35 @@ impl WebhookConfig {
     pub fn display_target(&self) -> String {
         Url::parse(self.url.trim()).map(|u| format!("POST {}", u.origin().ascii_serialization()))
             .unwrap_or_else(|_| "HTTP POST".into())
+    }
+}
+
+/// How many extra sinks one rule may fan out to, on top of its primary webhook.
+/// The cap is what keeps a pasted list from turning one device message into a
+/// hundred POSTs to the same host.
+pub const MAX_EXTRA_TARGETS: usize = 7;
+
+/// Every sink a rule delivers to, each tagged with the index the outbox records
+/// it under. Index 0 is always the rule's primary webhook, so a rule that only
+/// ever had one sink keeps the numbers already written to disk.
+pub fn sinks_with_indexes(primary: &WebhookConfig, extras: &[WebhookConfig]) -> Vec<(usize, WebhookConfig)> {
+    let mut sinks = Vec::with_capacity(extras.len() + 1);
+    if !primary.url.trim().is_empty() {
+        sinks.push((0, primary.clone()));
+    }
+    sinks.extend(extras.iter().cloned().enumerate().map(|(i, t)| (i + 1, t)));
+    sinks
+}
+
+/// Which sink a queued entry belongs to. `None` means the rule no longer carries
+/// that target, and the entry has nowhere to go: falling back to whichever sink is
+/// left would deliver someone's telemetry to the wrong system.
+pub fn sink_at(primary: &WebhookConfig, extras: &[WebhookConfig], index: usize) -> Option<WebhookConfig> {
+    match index {
+        // A cleared primary is not a sink, matching what `sinks_with_indexes`
+        // offered in the first place.
+        0 => (!primary.url.trim().is_empty()).then(|| primary.clone()),
+        i => extras.get(i - 1).cloned(),
     }
 }
 
@@ -112,6 +145,38 @@ mod tests {
         assert!(config.validate().is_err());
         config.headers = vec![("Authorization".into(), "bad\r\nInjected: yes".into())];
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn fan_out_indexes_are_stable_rather_than_positional() {
+        let primary = WebhookConfig { url: "http://a.test/1".into(), ..Default::default() };
+        let extras = vec![
+            WebhookConfig { url: "http://b.test/2".into(), ..Default::default() },
+            WebhookConfig { url: "http://c.test/3".into(), ..Default::default() },
+        ];
+        let sinks = sinks_with_indexes(&primary, &extras);
+        assert_eq!(sinks.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(sinks[2].1.url, "http://c.test/3");
+
+        // A rule whose primary was cleared to point only at archives keeps the
+        // extra targets on the numbers the outbox already stored for them.
+        let blank = WebhookConfig::default();
+        let sinks = sinks_with_indexes(&blank, &extras);
+        assert_eq!(sinks.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![1, 2]);
+    }
+
+    #[test]
+    fn a_queued_entry_never_moves_to_a_different_sink() {
+        let primary = WebhookConfig { url: "http://a.test/1".into(), ..Default::default() };
+        let extras = vec![WebhookConfig { url: "http://b.test/2".into(), ..Default::default() }];
+        assert_eq!(sink_at(&primary, &extras, 0).unwrap().url, "http://a.test/1");
+        assert_eq!(sink_at(&primary, &extras, 1).unwrap().url, "http://b.test/2");
+        // The rule dropped that target: the entry has nowhere to go, and guessing
+        // would post someone's telemetry to the wrong system.
+        assert!(sink_at(&primary, &extras, 2).is_none());
+        assert!(sink_at(&primary, &[], 1).is_none());
+        // A primary whose URL was cleared is not a sink either.
+        assert!(sink_at(&WebhookConfig::default(), &extras, 0).is_none());
     }
 
     #[test]

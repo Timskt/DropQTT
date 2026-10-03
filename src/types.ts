@@ -755,6 +755,12 @@ export interface BridgeRule {
   targetConn: string;
   targetKind: 'mqtt' | 'http';
   webhook: { url: string; format: 'raw' | 'json'; headers: [string, string][] };
+  /**
+   * Extra sinks the same message fans out to. Each is delivered and retried on
+   * its own, because one endpoint being down is not the others' excuse. Optional
+   * so rules written before fan-out keep loading unchanged.
+   */
+  targets?: { url: string; format: 'raw' | 'json'; headers: [string, string][] }[];
   topicMode: BridgeTopicMode;
   prefixFrom: string;
   prefixTo: string;
@@ -816,11 +822,19 @@ export interface SilenceAlertEvent {
   timestamp: string;
 }
 
+/**
+ * How many extra sinks one rule may fan out to. This mirrors
+ * `webhook::MAX_EXTRA_TARGETS` in Rust, which is the authority: a larger set is
+ * rejected on sync with the reason, so the form only uses this to stop asking.
+ */
+export const BRIDGE_MAX_EXTRA_SINKS = 7;
+
 /** Default-filled view of a persisted rule (older saves lack new fields) */
 export const bridgeRuleDefaults: Pick<
   BridgeRule,
   | 'targetKind'
   | 'webhook'
+  | 'targets'
   | 'fixedTopic'
   | 'regexPattern'
   | 'regexReplacement'
@@ -834,6 +848,7 @@ export const bridgeRuleDefaults: Pick<
 > = {
   targetKind: 'mqtt',
   webhook: { url: '', format: 'json', headers: [] },
+  targets: [],
   fixedTopic: '',
   regexPattern: '',
   regexReplacement: '',
@@ -873,11 +888,21 @@ export interface BridgeOutboxCounts {
   retries: number;
 }
 
+/** One queued debt as the panel sees it: enough to point at it, never the body. */
+export interface BridgeOutboxPreviewRow {
+  ruleId: string;
+  topic: string;
+  attempts: number;
+  lastError: string;
+  /** Which sink of the rule is owed; 0 is its primary webhook. */
+  targetIndex: number;
+}
+
 export interface BridgeOutboxState {
   counts: BridgeOutboxCounts;
   /** Set when retries are off because the queue could not be opened */
   error?: string | null;
-  preview: [string, string, number, string][];
+  preview: BridgeOutboxPreviewRow[];
   /** The backend's own attempt cap — the panel prints it, so it must not be a guess */
   maxAttempts: number;
 }

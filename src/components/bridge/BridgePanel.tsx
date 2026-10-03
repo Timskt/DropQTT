@@ -24,6 +24,7 @@ import {
   BrokerConfig,
   BrokerProfile,
   TopicMapEntry,
+  BRIDGE_MAX_EXTRA_SINKS,
   bridgeRuleDefaults,
   DEFAULT_BROKER_CONFIG,
 } from '../../types';
@@ -79,6 +80,35 @@ const parseTopicMap = (text: string): TopicMapEntry[] =>
 
 const formatTopicMap = (rows: TopicMapEntry[]): string =>
   (rows ?? []).map((e) => `${e.from} => ${e.to}`).join('\n');
+
+/** "Name: value" lines -> header rows; a malformed line throws, and the caller
+ *  turns that into the form error rather than a partial save. */
+const parseHeaders = (text: string): [string, string][] =>
+  text
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => {
+      const colon = line.indexOf(':');
+      if (colon < 1) throw new Error('invalid header line');
+      return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
+    });
+
+const formatHeaders = (rows: [string, string][] | undefined): string =>
+  (rows ?? []).map(([k, v]) => `${k}: ${v}`).join('\n');
+
+/** An absolute http(s) URL with no credentials or fragment hiding in it. */
+const normalizeWebhookUrl = (raw: string): string => {
+  const url = new URL(raw.trim());
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) {
+    throw new Error('unsupported webhook URL');
+  }
+  return url.toString();
+};
+
+/** One extra sink of a fan-out rule. */
+type SinkTarget = NonNullable<BridgeRule['targets']>[number];
+
+const newSink = (): SinkTarget => ({ url: '', format: 'json', headers: [] });
 
 const SAMPLE_SCRIPT = `// transform(topic, payload, qos, retain)
 // return the new payload; returning null drops this message
@@ -284,6 +314,8 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   const [excludeText, setExcludeText] = useState('');
   const [topicMapText, setTopicMapText] = useState('');
   const [headerText, setHeaderText] = useState('');
+  // One header box per extra sink, kept in the same order as draft.targets.
+  const [extraHeaderTexts, setExtraHeaderTexts] = useState<string[]>([]);
   const [draft, setDraft] = useState<BridgeRule>(() => newRuleDraft('src', 'dst'));
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -327,7 +359,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     if (rules.length === 0) return;
     await saveTextFile(
       'dropqtt-bridge-rules.json',
-      JSON.stringify({ app: 'dropqtt-bridge', version: 2, rules: rules.map((r) => r.targetKind === 'http' ? { ...r, enabled: false, webhook: { ...r.webhook, url: '', headers: [] } } : r) }, null, 2),
+      JSON.stringify({ app: 'dropqtt-bridge', version: 2, rules: rules.map((r) => r.targetKind === 'http' ? { ...r, enabled: false, webhook: { ...r.webhook, url: '', headers: [] }, targets: (r.targets ?? []).map((s) => ({ ...s, url: '', headers: [] })) } : r) }, null, 2),
     );
   };
 
@@ -353,6 +385,20 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   const connOf = (id: string) => conns.find((c) => c.id === id);
   const set = <K extends keyof BridgeRule>(k: K, v: BridgeRule[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
+  const extraSinks = draft.targets ?? [];
+  const sinksFull = extraSinks.length >= BRIDGE_MAX_EXTRA_SINKS;
+  const setExtraSink = (i: number, patch: Partial<SinkTarget>) =>
+    set('targets', extraSinks.map((s, n) => (n === i ? { ...s, ...patch } : s)));
+  const addExtraSink = () => {
+    if (sinksFull) return;
+    set('targets', [...extraSinks, newSink()]);
+    setExtraHeaderTexts((prev) => [...prev, '']);
+  };
+  const removeExtraSink = (i: number) => {
+    set('targets', extraSinks.filter((_, n) => n !== i));
+    setExtraHeaderTexts((prev) => prev.filter((_, n) => n !== i));
+  };
+
   const closeForm = () => {
     setShowForm(false);
     setEditingId(null);
@@ -365,7 +411,8 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     setDraft(full);
     setExcludeText((full.excludeFilters ?? []).join('\n'));
     setTopicMapText(formatTopicMap(full.topicMap ?? []));
-    setHeaderText(full.webhook.headers.map(([k, v]) => `${k}: ${v}`).join('\n'));
+    setHeaderText(formatHeaders(full.webhook.headers));
+    setExtraHeaderTexts((full.targets ?? []).map((s) => formatHeaders(s.headers)));
     setEditingId(r.id);
     setFormError(null);
     setShowAdvanced(
@@ -408,15 +455,19 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       rateLimit: Math.max(0, Math.min(1_000_000, draft.rateLimit || 0)),
     };
     if (draft.targetKind === 'http') {
+      // Every sink is normalised and parsed as a unit: a rule must not save with
+      // three targets where the third one's headers were silently dropped.
+      const extras = (draft.targets ?? []).filter((s) => s.url.trim());
       try {
-        const url = new URL(draft.webhook.url.trim());
-        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error();
-        const headers: [string, string][] = headerText.split('\n').filter((line) => line.trim()).map((line) => {
-          const colon = line.indexOf(':');
-          if (colon < 1) throw new Error();
-          return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
-        });
-        finalRule.webhook = { ...draft.webhook, url: url.toString(), headers };
+        if (!draft.webhook.url.trim() && extras.length === 0) throw new Error('nothing to deliver to');
+        finalRule.webhook = draft.webhook.url.trim()
+          ? { ...draft.webhook, url: normalizeWebhookUrl(draft.webhook.url), headers: parseHeaders(headerText) }
+          : { ...draft.webhook, url: '', headers: [] };
+        finalRule.targets = extras.map((s, i) => ({
+          ...s,
+          url: normalizeWebhookUrl(s.url),
+          headers: parseHeaders(extraHeaderTexts[i] ?? ''),
+        }));
       } catch {
         setFormError(t.webhookInvalid);
         return;
@@ -435,6 +486,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     setExcludeText('');
     setTopicMapText('');
     setHeaderText('');
+    setExtraHeaderTexts([]);
     closeForm();
   };
 
@@ -452,7 +504,14 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
         return t.topicKeepSame;
     }
   };
-  const targetDescription = (r: BridgeRule) => r.targetKind === 'http' ? r.webhook?.url || t.webhookUrl : topicRewriteDescription(r);
+  const targetDescription = (r: BridgeRule) => {
+    if (r.targetKind !== 'http') return topicRewriteDescription(r);
+    const sinks = [r.webhook?.url ?? '', ...(r.targets ?? []).map((s) => s.url)].filter(Boolean);
+    if (sinks.length === 0) return t.webhookUrl;
+    // The row has to say this message goes several places without printing every
+    // address across the panel.
+    return sinks.length > 1 ? `${sinks[0]} +${sinks.length - 1}` : sinks[0];
+  };
 
   // A queue that has never been used stays out of the panel; it appears as soon as
   // it holds work, holds evidence of work, or could not be opened at all.
@@ -476,7 +535,8 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       if (kind === 'alert') next.transformScript = 'function transform(topic, payload) {\n  const data = JSON.parse(payload);\n  if (typeof data.temperature !== "number" || data.temperature < 40) return null;\n  return { text: "High temperature: " + data.temperature, topic };\n}';
     }
     setDraft(next); setEditingId(null); setFormError(null); setExcludeText(''); setTopicMapText('');
-    setHeaderText(next.webhook.headers.map(([k, v]) => `${k}: ${v}`).join('\n'));
+    setHeaderText(formatHeaders(next.webhook.headers));
+    setExtraHeaderTexts([]);
     setShowAdvanced(kind === 'alert'); setShowForm(true);
   };
 
@@ -660,6 +720,71 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}><span>{t.webhookUrl}</span><input aria-label={t.webhookUrl} className="field-input w-full" placeholder="http://localhost:8080/events" value={draft.webhook.url} onChange={(e) => set('webhook', { ...draft.webhook, url: e.target.value })} /></label>
               <select aria-label={t.webhookBody} className="field-input w-full" value={draft.webhook.format} onChange={(e) => set('webhook', { ...draft.webhook, format: e.target.value as 'raw' | 'json' })}><option value="json">{t.webhookEnvelope}</option><option value="raw">{t.webhookRaw}</option></select>
               <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}><span>{t.webhookHeaders}</span><textarea aria-label={t.webhookHeaders} className="field-input w-full h-16 font-mono" placeholder="Content-Type: application/json" spellCheck={false} value={headerText} onChange={(e) => setHeaderText(e.target.value)} /></label>
+
+              {extraSinks.length > 0 && (
+                <div className="space-y-2 pt-1" data-testid="extra-sinks">
+                  <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{t.extraSinks}</div>
+                  {extraSinks.map((s, i) => (
+                    <div key={i} className="space-y-1" data-testid={`extra-sink-${i}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>#{i + 1}</span>
+                        <input
+                          className="field-input w-full"
+                          aria-label={fill(t.extraSinkUrl, { n: String(i + 1) })}
+                          placeholder="https://archive.internal/ingest"
+                          value={s.url}
+                          onChange={(e) => setExtraSink(i, { url: e.target.value })}
+                        />
+                        <select
+                          className="field-input shrink-0"
+                          aria-label={`${t.webhookBody} #${i + 1}`}
+                          value={s.format}
+                          onChange={(e) => setExtraSink(i, { format: e.target.value as 'raw' | 'json' })}
+                        >
+                          <option value="json">{t.webhookEnvelope}</option>
+                          <option value="raw">{t.webhookRaw}</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => removeExtraSink(i)}
+                          className="p-1.5 rounded border shrink-0"
+                          style={{ borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }}
+                          title={t.removeSink}
+                          aria-label={`${t.removeSink} #${i + 1}`}
+                          data-testid={`extra-sink-remove-${i}`}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <textarea
+                        className="field-input w-full h-12 font-mono"
+                        aria-label={fill(t.extraSinkHeaders, { n: String(i + 1) })}
+                        placeholder="Authorization: Bearer ..."
+                        spellCheck={false}
+                        value={extraHeaderTexts[i] ?? ''}
+                        onChange={(e) => setExtraHeaderTexts((prev) => prev.map((p, n) => (n === i ? e.target.value : p)))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={addExtraSink}
+                  className="btn-ghost text-[11px] flex items-center gap-1 shrink-0"
+                  disabled={sinksFull}
+                  title={sinksFull ? fill(t.sinkLimitReached, { max: String(BRIDGE_MAX_EXTRA_SINKS) }) : t.addSinkHint}
+                  data-testid="sink-add"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {t.addSink}
+                </button>
+                <p className="text-[10px] leading-relaxed flex-1 min-w-[12rem]" style={{ color: 'var(--text-muted)' }}>
+                  {t.fanOutHint}
+                </p>
+              </div>
               <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{t.webhookHint}</p>
             </div>}
 
@@ -956,14 +1081,25 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
             )}
             {outbox.preview.length > 0 && (
               <ul className="space-y-0.5 pt-0.5" data-testid="outbox-preview">
-                {outbox.preview.slice(0, 3).map(([ruleId, topic, attempts, lastErr], i) => (
-                  <li key={`${ruleId}-${i}`} className="text-[10px] font-mono truncate select-text" style={{ color: 'var(--text-muted)' }}>
-                    {rules.find((r) => r.id === ruleId)?.name ?? ruleId} · {topic} ·{' '}
-                    {fill(t.outboxAttempt, { n: String(attempts), max: String(outbox.maxAttempts) })}
-                    {lastErr ? ` · ${lastErr}` : ''}
+                {outbox.preview.slice(0, 3).map((row, i) => (
+                  <li key={`${row.ruleId}-${row.targetIndex}-${i}`} className="text-[10px] font-mono truncate select-text" style={{ color: 'var(--text-muted)' }}>
+                    {rules.find((r) => r.id === row.ruleId)?.name ?? row.ruleId}
+                    {row.targetIndex > 0 && (
+                      <span className="ml-1" style={{ color: 'var(--accent)' }}>
+                        {fill(t.outboxSink, { n: String(row.targetIndex) })}
+                      </span>
+                    )}
+                    {' · '}{row.topic} ·{' '}
+                    {fill(t.outboxAttempt, { n: String(row.attempts), max: String(outbox.maxAttempts) })}
+                    {row.lastError ? ` · ${row.lastError}` : ''}
                   </li>
                 ))}
               </ul>
+            )}
+            {outbox.counts.pending > 0 && !outbox.error && (
+              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--warning)' }} data-testid="outbox-idempotency">
+                {t.outboxIdempotencyNote}
+              </div>
             )}
           </div>
         )}
