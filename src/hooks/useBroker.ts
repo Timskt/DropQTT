@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { BrokerConfig, BrokerProfile, ConnectionStatus, DEFAULT_BROKER_CONFIG, SubOptions } from '../types';
 import { usePersistentState } from './usePersistentState';
 import { toast } from '../utils/toast';
-import { currentTranslations } from '../i18n';
+import { currentTranslations, fill } from '../i18n';
 
 const DEFAULT_PROFILES: BrokerProfile[] = [
   {
@@ -116,9 +116,7 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
         if (rejected.length > 0) {
           const rt = currentTranslations();
           toast.error(
-            rt.subscribeFailedAtConnect
-              .replace('{count}', String(rejected.length))
-              .replace('{detail}', rejected[0]),
+            fill(rt.subscribeFailedAtConnect, { count: String(rejected.length), detail: rejected[0] }),
           );
         }
 

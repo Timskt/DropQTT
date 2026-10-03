@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { Send, Plus, Trash2, FileText, Layers, DownloadCloud } from 'lucide-react';
 import { BatchFileItem } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 
 interface BatchSenderProps {
   publishTopic: string;
@@ -287,7 +287,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
         <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
           {files.length > 0 && (
             <span>
-              {t.totalFiles.replace('{count}', String(files.length))} • {t.totalSize.replace('{size}', formatBytes(totalSize))}
+              {fill(t.totalFiles, { count: String(files.length) })} • {fill(t.totalSize, { size: formatBytes(totalSize) })}
             </span>
           )}
         </div>
@@ -311,7 +311,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
             <Send className={`w-3.5 h-3.5 ${isSending ? 'animate-bounce' : ''}`} />
             <span>
               {isSending
-                ? t.sendingBatch.replace('{current}', String(sendingIndex + 1)).replace('{total}', String(files.length))
+                ? fill(t.sendingBatch, { current: String(sendingIndex + 1), total: String(files.length) })
                 : t.sendBatch}
             </span>
           </button>

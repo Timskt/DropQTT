@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { MqttGenericMessage } from '../../types';
 import { usePersistentString } from '../../hooks/usePersistentState';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { useCodec } from '../../hooks/useCodec';
 import {
   base64ToUint8, cborToDisplayJson, decodeCbor,
@@ -392,7 +392,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
     try {
       const saved = await exportMessages(messages, format);
       if (saved) {
-        setExportNote(t.exportDone.replace('{count}', String(messages.length)));
+        setExportNote(fill(t.exportDone, { count: String(messages.length) }));
         setTimeout(() => setExportNote(null), 2500);
       }
     } catch (e) {
@@ -644,7 +644,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
                   style={{ background: 'var(--warn-soft)', borderColor: 'var(--warn-border)', color: 'var(--warn)' }}
                 >
                   <Eraser className="w-3 h-3" />
-                  <span>{clearingRetain ? t.clearingRetained : t.clearAllRetained.replace('{count}', String(retainedTopics.length))}</span>
+                  <span>{clearingRetain ? t.clearingRetained : fill(t.clearAllRetained, { count: String(retainedTopics.length) })}</span>
                 </button>
                 <div className="text-[10px] mt-1.5 px-1" style={{ color: 'var(--text-muted)' }}>{t.retainClearNote}</div>
               </div>
@@ -713,7 +713,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
           <span>{t.feedPaused}</span>
           {pendingCount > 0 && (
             <button onClick={onTogglePaused} className="font-semibold underline">
-              {t.flushPending.replace('{count}', String(pendingCount))}
+              {fill(t.flushPending, { count: String(pendingCount) })}
             </button>
           )}
         </div>
@@ -723,7 +723,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
       {feedDropped > 0 && (
         <div className="px-3 py-1 border-b text-[10px] font-mono flex items-center gap-1.5" style={{ background: 'color-mix(in srgb, var(--danger) 10%, transparent)', borderColor: 'var(--border-inset)', color: 'var(--danger)' }}>
           <Activity className="w-3 h-3" />
-          {t.feedDroppedNotice.replace('{n}', feedDropped.toLocaleString())}
+          {fill(t.feedDroppedNotice, { n: feedDropped.toLocaleString() })}
         </div>
       )}
 

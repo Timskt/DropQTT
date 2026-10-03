@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { QosDowngradeEvent, SubRejection, SubscriptionAckState } from '../types';
-import { currentTranslations } from '../i18n';
+import { currentTranslations, fill } from '../i18n';
 import { describeAck } from '../utils/ackReason';
 import { toast } from '../utils/toast';
 
@@ -72,8 +72,8 @@ export function useSubscriptionStats(active: boolean) {
       const reason = describeAck(code, 'pub', t);
       toast.error(
         count > 1
-          ? t.publishRejectedManyToast.replace('{n}', String(count)).replace('{reason}', reason)
-          : t.publishRejectedToast.replace('{reason}', reason),
+          ? fill(t.publishRejectedManyToast, { n: String(count), reason })
+          : fill(t.publishRejectedToast, { reason }),
       );
     };
 
@@ -84,9 +84,7 @@ export function useSubscriptionStats(active: boolean) {
         const r = e.payload;
         setAck((prev) => ({ ...prev, rejected: { ...prev.rejected, [r.filter]: r } }));
         toast.error(
-          t.subRejectedToast
-            .replace('{topic}', r.filter)
-            .replace('{reason}', describeAck(r.code, 'sub', t)),
+          fill(t.subRejectedToast, { topic: r.filter, reason: describeAck(r.code, 'sub', t) }),
         );
       }),
       listen<SubRejection>('unsubscribe-rejected', (e) => {
@@ -98,9 +96,7 @@ export function useSubscriptionStats(active: boolean) {
           refusedUnsubscribes: [...prev.refusedUnsubscribes.filter((x) => x.filter !== r.filter), r],
         }));
         toast.error(
-          t.unsubRejectedToast
-            .replace('{topic}', r.filter)
-            .replace('{reason}', describeAck(r.code, 'unsub', t)),
+          fill(t.unsubRejectedToast, { topic: r.filter, reason: describeAck(r.code, 'unsub', t) }),
         );
       }),
       listen<QosDowngradeEvent>('subscription-downgraded', (e) => {
@@ -109,7 +105,7 @@ export function useSubscriptionStats(active: boolean) {
         const d = e.payload;
         setAck((prev) => ({ ...prev, capped: { ...prev.capped, [d.filter]: d.granted } }));
         toast.info(
-          t.subDowngradedToast.replace('{topic}', d.filter).replace('{qos}', String(d.granted)),
+          fill(t.subDowngradedToast, { topic: d.filter, qos: String(d.granted) }),
         );
       }),
       listen<{ code: number }>('publish-rejected', (e) => {

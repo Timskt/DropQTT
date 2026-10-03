@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, Radio, X, RotateCcw, SlidersHorizontal, Users } from 'lucide-react';
 import { BrokerCapabilities, SubOptions, TopicSubscription, subOptionsDefaults } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { ackHex, describeAck } from '../../utils/ackReason';
 import type { SubscriptionAck } from '../../hooks/useSubscriptionStats';
 import { useObservedTopics } from '../../utils/topicStore';
@@ -125,7 +125,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           <span>{t.subscriptions} ({subscriptions.length})</span>
           {totalHits > 0 && (
             <span className="text-[11px] font-normal" style={{ color: 'var(--text-muted)' }}>
-              · {t.hitTotal.replace('{count}', String(totalHits))}
+              · {fill(t.hitTotal, { count: String(totalHits) })}
             </span>
           )}
         </span>
@@ -167,7 +167,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           onChange={(e) => setQos(Number(e.target.value))}
           className="field-input px-2.5"
           aria-label={t.qosLevel}
-          title={caps ? t.capQosCeiling.replace('{n}', String(caps.maxQos)) : undefined}
+          title={caps ? fill(t.capQosCeiling, { n: String(caps.maxQos) }) : undefined}
         >
           {[0, 1, 2].map((q) => (
             <option key={q} value={q} disabled={!!caps && q > caps.maxQos}>
@@ -352,7 +352,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
                   className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
                   title={t.subShareHint}
                 >
-                  {t.subShareChip.replace('{name}', shareGroupOf(sub.topic) as string)}
+                  {fill(t.subShareChip, { name: shareGroupOf(sub.topic) as string })}
                 </span>
               )}
               <span className="text-[11px] px-1 py-0.5 inset-box font-mono" style={{ color: 'var(--text-muted)' }}>
@@ -366,18 +366,16 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
                   style={{ background: 'var(--danger)', color: 'var(--accent-contrast)' }}
                   title={refusal.detail}
                 >
-                  {t.subRejectedChip.replace('{reason}', refusal.label)}
+                  {fill(t.subRejectedChip, { reason: refusal.label })}
                 </span>
               )}
               {!refusal && capped !== undefined && (
                 <span
                   className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
                   data-testid={`sub-capped-${sub.topic}`}
-                  title={t.subDowngradedToast
-                    .replace('{topic}', sub.topic)
-                    .replace('{qos}', String(capped))}
+                  title={fill(t.subDowngradedToast, { topic: sub.topic, qos: String(capped) })}
                 >
-                  {t.ackCodeGrantedQos.replace('{qos}', String(capped))}
+                  {fill(t.ackCodeGrantedQos, { qos: String(capped) })}
                 </span>
               )}
               {flags.length > 0 && (

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ConsolePublishParams, FeedBatch, MqttGenericMessage, SubOptions, TopicSubscription } from '../types';
 import { usePersistentState } from './usePersistentState';
-import { currentTranslations } from '../i18n';
+import { currentTranslations, fill } from '../i18n';
 import { toast } from '../utils/toast';
 import { observeTopic } from '../utils/topicStore';
 
@@ -120,7 +120,7 @@ export function useMqttMessages(isConnected: boolean) {
         // The local chip is already gone, so a failed UNSUBSCRIBE means the broker
         // is still delivering on something the UI no longer lists.
         await invoke('unsubscribe_topic', { topic }).catch((e) => {
-          toast.error(`${currentTranslations().unsubscribeFailed.replace('{topic}', topic)}: ${e}`);
+          toast.error(`${fill(currentTranslations().unsubscribeFailed, { topic })}: ${e}`);
         });
       }
     },

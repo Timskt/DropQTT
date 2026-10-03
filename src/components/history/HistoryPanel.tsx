@@ -6,7 +6,7 @@ import {
   Inbox, Send, Rss, Filter, Copy, Check, Zap, BarChart3, Download, ChevronRight,
 } from 'lucide-react';
 import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
 import { canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView } from '../../utils/history';
@@ -234,7 +234,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
   const handleExport = async (format: ExportFormat) => {
     setExporting(true);
     try {
-      if (await exportMessages(rows.map(historyMessage), format)) toast.success(t.exportDone.replace('{count}', String(rows.length)));
+      if (await exportMessages(rows.map(historyMessage), format)) toast.success(fill(t.exportDone, { count: String(rows.length) }));
     } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
   };
 
@@ -355,7 +355,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
 
         {/* Results */}
         <div className="flex items-center justify-between px-3 py-1.5 text-[10px]" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-inset)' }}>
-          <span>{t.historyShowing.replace('{count}', String(rows.length))}</span>
+          <span>{fill(t.historyShowing, { count: String(rows.length) })}</span>
           {loading && <span className="flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /> {t.refresh}</span>}
         </div>
         <div className="max-h-[52vh] overflow-y-auto">

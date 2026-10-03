@@ -1,4 +1,4 @@
-import { Translations } from '../i18n';
+import { Translations, fill } from '../i18n';
 
 /**
  * MQTT 5 §3.2.2.2.0 reason codes, localized here rather than in the backend so
@@ -60,11 +60,11 @@ export function describeAck(
   t: Translations,
 ): string {
   if (kind === 'sub' && isSubAckGrant(code)) {
-    return t.ackCodeGrantedQos.replace('{qos}', String(code));
+    return fill(t.ackCodeGrantedQos, { qos: String(code) });
   }
   const key = TABLES[kind][code];
   if (key) return t[key];
-  return t.ackCodeUnrecognized.replace('{code}', ackHex(code));
+  return fill(t.ackCodeUnrecognized, { code: ackHex(code) });
 }
 
 /** `0x87` — the raw byte, shown next to the words so it can be searched. */

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatBytes } from '../../utils/format';
 import { Send, Trash2, Sparkles, Code2, CheckCircle2, Sliders, Eye, Columns2, Eraser, Timer, Square, Play } from 'lucide-react';
 import { BrokerCapabilities, ConsolePublishParams, PubProperties, RpcCall, RpcSpec, RunStatus } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { PAYLOAD_FORMATS, PayloadError, PayloadFormat, payloadToBytes } from '../../utils/payload';
 import { renderTemplate, TEMPLATE_TOKENS } from '../../utils/template';
 import { uint8ToBase64 } from '../../utils/cbor';
@@ -451,7 +451,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
             onChange={(e) => setQos(Number(e.target.value))}
             className="field-input"
             aria-label={t.qosLevel}
-            title={caps ? t.capQosCeiling.replace('{n}', String(caps.maxQos)) : undefined}
+            title={caps ? fill(t.capQosCeiling, { n: String(caps.maxQos) }) : undefined}
           >
             {[0, 1, 2].map((q) => (
               <option key={q} value={q} disabled={!!caps && q > caps.maxQos}>
@@ -483,7 +483,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               data-testid="cap-warning"
               style={{ color: 'var(--danger)' }}
             >
-              {qos > caps.maxQos ? t.capQosCeiling.replace('{n}', String(caps.maxQos)) : ''}
+              {qos > caps.maxQos ? fill(t.capQosCeiling, { n: String(caps.maxQos) }) : ''}
               {qos > caps.maxQos && retain && !caps.retainAvailable ? ' · ' : ''}
               {retain && !caps.retainAvailable ? t.capRetainOff : ''}
             </div>

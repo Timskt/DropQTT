@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { BellOff, Plus, Trash2, X, Check, CircleAlert } from 'lucide-react';
 import { SilenceRule, silenceRuleDefaults } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { SilenceAlertEntry } from '../../hooks/useSilence';
 
 interface SilencePanelProps {
@@ -49,7 +49,7 @@ export const SilencePanel: React.FC<SilencePanelProps> = ({
       return;
     }
     if (editing.timeoutSec < MIN_TIMEOUT) {
-      setFormError(t.silenceMinTimeout.replace('{n}', String(MIN_TIMEOUT)));
+      setFormError(fill(t.silenceMinTimeout, { n: String(MIN_TIMEOUT) }));
       return;
     }
     let url: URL;
@@ -159,7 +159,7 @@ export const SilencePanel: React.FC<SilencePanelProps> = ({
             <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
             <span className="font-mono px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-code)', color: 'var(--code-number)' }}>{r.topicFilter}</span>
             <span style={{ color: 'var(--text-muted)' }}>
-              {t.silenceAfter.replace('{n}', String(r.timeoutSec))} · {t.silenceEvery.replace('{n}', String(r.cooldownSec))}
+              {fill(t.silenceAfter, { n: String(r.timeoutSec) })} · {fill(t.silenceEvery, { n: String(r.cooldownSec) })}
             </span>
             <span className="font-mono truncate max-w-[220px]" style={{ color: 'var(--text-secondary)' }}>{r.webhook.url}</span>
             <div className="ml-auto flex gap-1">
@@ -188,7 +188,7 @@ export const SilencePanel: React.FC<SilencePanelProps> = ({
                 <span style={{ color: ev.ok ? 'var(--warn)' : 'var(--bad)' }}>{ev.ok ? '↑' : '!'}</span>
                 <span style={{ color: 'var(--text-primary)' }}>{ev.ruleName}</span>
                 <span style={{ color: 'var(--text-muted)' }}>{ev.timestamp}</span>
-                <span style={{ color: 'var(--text-secondary)' }}>{t.silenceAfter.replace('{n}', String(ev.silentForSec))}</span>
+                <span style={{ color: 'var(--text-secondary)' }}>{fill(t.silenceAfter, { n: String(ev.silentForSec) })}</span>
                 <span className="truncate" style={{ color: 'var(--text-muted)' }}>{ev.ok ? ev.target : ev.error}</span>
               </div>
             ))

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Activity, Gauge, Search, Trash2 } from 'lucide-react';
 import { SysRow } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { SysMetricId, detectDialect, detectVendor, pickMetrics } from '../../utils/sysDialect';
 
 interface BrokerSysPanelProps {
@@ -80,7 +80,7 @@ export const BrokerSysPanel: React.FC<BrokerSysPanelProps> = ({ rows, connected,
               data-testid="sys-no-dialect"
               style={{ color: 'var(--warn)' }}
             >
-              {t.sysNoDialect.replace('{vendor}', software || t.sysUnknownVendor)}
+              {fill(t.sysNoDialect, { vendor: software || t.sysUnknownVendor })}
             </div>
           )}
 

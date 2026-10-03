@@ -24,7 +24,7 @@ import { ToastHost } from './components/ToastHost';
 import { OpsPanel } from './components/ops/OpsPanel';
 
 import { BrokerConfig } from './types';
-import { Language, Translations, translations } from './i18n';
+import { Language, Translations, fill, translations } from './i18n';
 import { applyTheme, Theme } from './themes';
 import { usePersistentString } from './hooks/usePersistentState';
 import { useBroker } from './hooks/useBroker';
@@ -155,7 +155,7 @@ export function App() {
     setSubscribeTopic(top);
     if (broker.isConnected) {
       await broker.registerTopic(top.trim(), 1).catch((e) => {
-        toast.error(`${t.subscribeFailed.replace('{topic}', top.trim())}: ${e}`);
+        toast.error(`${fill(t.subscribeFailed, { topic: top.trim() })}: ${e}`);
       });
     }
   };
@@ -282,7 +282,7 @@ export function App() {
               onPublish={(params) => mqtt.publish(params)}
               onSubscribe={(topic) => {
                 mqtt.addSubscription(topic, 1).catch((e) => {
-                  toast.error(`${t.subscribeFailed.replace('{topic}', topic)}: ${e}`);
+                  toast.error(`${fill(t.subscribeFailed, { topic })}: ${e}`);
                 });
               }}
             />
@@ -393,7 +393,7 @@ export function App() {
                 }
                 onQuickSubscribe={(topic) => {
                   mqtt.addSubscription(topic, 1).catch((e) => {
-                    toast.error(`${t.subscribeFailed.replace('{topic}', topic)}: ${e}`);
+                    toast.error(`${fill(t.subscribeFailed, { topic })}: ${e}`);
                   });
                 }}
                 paused={mqtt.paused}

@@ -26,7 +26,7 @@ import {
   bridgeRuleDefaults,
   DEFAULT_BROKER_CONFIG,
 } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { useBridge } from '../../hooks/useBridge';
 import { EVENT_LOG_CAP } from '../../hooks/useBridge';
 import { saveTextFile } from '../../utils/exportMessages';
@@ -389,7 +389,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
         (draft.targetKind === 'http' ? r.webhook?.url === draft.webhook.url : r.targetConn === draft.targetConn),
     );
     if (clash) {
-      setFormError(t.ruleDuplicate.replace('{name}', clash.name));
+      setFormError(fill(t.ruleDuplicate, { name: clash.name }));
       return;
     }
     const finalRule: BridgeRule = {
@@ -975,11 +975,12 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
           <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
             {t.bridgeLog}
             <span className="ml-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-              {t.logSummary
-                .replace('{sent}', String(totalSent))
-                .replace('{kept}', String(events.length))
-                .replace('{cap}', String(EVENT_LOG_CAP))
-                .replace('{shown}', '80')}
+              {fill(t.logSummary, {
+                sent: String(totalSent),
+                kept: String(events.length),
+                cap: String(EVENT_LOG_CAP),
+                shown: '80',
+              })}
             </span>
           </div>
           <button onClick={clearEvents} className="btn-ghost !px-2.5 !py-1 text-[11px]">{t.clearLog}</button>

@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from '../utils/toast';
-import { currentTranslations } from '../i18n';
+import { currentTranslations, fill } from '../i18n';
 import confetti from 'canvas-confetti';
 import { BatchFileItem, TransferProgress } from '../types';
 import { prefersReducedMotion } from '../utils/motion';
@@ -124,12 +124,10 @@ export function useBatchSender({ publishTopic, waitForSendComplete }: UseBatchSe
         const rt = currentTranslations();
         if (delivered > 0 && unconfirmedOrFailed === 0) {
           if (!prefersReducedMotion()) confetti({ particleCount: 80, spread: 80, origin: { y: 0.7 } });
-          toast.success(rt.batchSummaryAll.replace('{count}', String(delivered)));
+          toast.success(fill(rt.batchSummaryAll, { count: String(delivered) }));
         } else {
           toast.error(
-            rt.batchSummaryPartial
-              .replace('{delivered}', String(delivered))
-              .replace('{other}', String(unconfirmedOrFailed)),
+            fill(rt.batchSummaryPartial, { delivered: String(delivered), other: String(unconfirmedOrFailed) }),
           );
         }
       }

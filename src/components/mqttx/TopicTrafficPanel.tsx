@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { formatBytes } from '../../utils/format';
 import { Activity, Camera, Download, Flame, RotateCcw, Square, Zap } from 'lucide-react';
 import { BenchStatus, TopicStatRow } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { usePersistentState } from '../../hooks/usePersistentState';
 import { useBench } from '../../hooks/useBench';
 import { saveTextFile } from '../../utils/exportMessages';
@@ -226,9 +226,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
           style={{ background: 'color-mix(in srgb, var(--danger) 12%, transparent)', borderColor: 'var(--border-inset)', color: 'var(--danger)' }}
         >
           <Zap className="w-3.5 h-3.5" />
-          {t.alertSummary
-            .replace('{n}', String(hotRows.length))
-            .replace('{x}', String(alertThreshold))}
+          {fill(t.alertSummary, { n: String(hotRows.length), x: String(alertThreshold) })}
           <span className="opacity-80 truncate">
             {hotRows.slice(0, 5).map((r) => `${r.topic} (${r.rate}/s)`).join(' · ')}
             {hotRows.length > 5 && ' …'}
@@ -359,15 +357,14 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                                     .map((f) =>
                                       f.kind === 'maxP99Ms' && f.actual === null
                                         ? t.benchFailNoSamples
-                                        : (
+                                        : fill(
                                           f.kind === 'minRate'
                                             ? t.benchFailMinRate
                                             : f.kind === 'maxP99Ms'
                                               ? t.benchFailP99
-                                              : t.benchFailLost
-                                        )
-                                          .replace('{limit}', String(f.limit))
-                                          .replace('{actual}', String(f.actual)),
+                                              : t.benchFailLost,
+                                          { limit: String(f.limit), actual: String(f.actual) },
+                                        ),
                                     )
                                     .join(' · ')
                               : t.benchVerdictPending
@@ -543,7 +540,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
           </table>
           {filteredRows.length > visibleRows.length && (
             <div className="px-3 py-1.5 text-[10px] border-t" style={{ color: 'var(--text-muted)', borderColor: 'var(--border-inset)' }}>
-              {t.trafficMore.replace('{n}', String(filteredRows.length - visibleRows.length))}
+              {fill(t.trafficMore, { n: String(filteredRows.length - visibleRows.length) })}
             </div>
           )}
           <div className="px-3 py-1.5 text-[10px] border-t flex items-center justify-between gap-2 flex-wrap" style={{ color: 'var(--text-muted)', borderColor: 'var(--border-inset)' }}>
@@ -564,7 +561,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
             <span className="flex items-center gap-2">
               {snapshot ? (
                 <>
-                  <span>{t.snapshotAge.replace('{s}', String(snapElapsed))}</span>
+                  <span>{fill(t.snapshotAge, { s: String(snapElapsed) })}</span>
                   <button onClick={() => setSnapshot(null)} className="underline decoration-dotted hover:opacity-80">{t.snapshotClear}</button>
                 </>
               ) : (

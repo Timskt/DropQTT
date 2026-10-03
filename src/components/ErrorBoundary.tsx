@@ -1,6 +1,6 @@
 import React from 'react';
 import { AlertTriangle, RotateCcw } from 'lucide-react';
-import { Translations } from '../i18n';
+import { Translations, fill } from '../i18n';
 
 interface Props {
   /** Which part of the UI is wrapped, shown in the fallback. */
@@ -41,7 +41,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
       >
         <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           <AlertTriangle className="w-4 h-4 shrink-0" style={{ color: 'var(--bad)' }} />
-          <span>{t.uiCrashedTitle.replace('{area}', area)}</span>
+          <span>{fill(t.uiCrashedTitle, { area })}</span>
         </div>
         <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
           {t.uiCrashedHint}

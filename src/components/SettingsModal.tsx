@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { BrokerConfig, BROKER_PRESETS, BrokerProfile } from '../types';
-import { Language, Translations } from '../i18n';
+import { Language, Translations, fill } from '../i18n';
 import { Theme } from '../themes';
 import {
   X, Server, Shield, Key, Sliders, CheckCircle2, Globe, Palette,
@@ -166,7 +166,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTestResult(null);
     try {
       const latency = await invoke<number>('test_broker_connection', { config: form });
-      setTestResult({ success: true, message: t.connectionSuccess.replace('{ms}', latency.toString()) });
+      setTestResult({ success: true, message: fill(t.connectionSuccess, { ms: latency.toString() }) });
     } catch (err) {
       setTestResult({ success: false, message: `${t.connectionFailed}: ${String(err)}` });
     } finally {
