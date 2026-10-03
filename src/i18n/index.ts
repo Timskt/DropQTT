@@ -34,6 +34,19 @@ export interface Translations {
   publishInterval: string;
   publishCount: string;
   publishCountHint: string;
+  publishDevices: string;
+  publishDevicesHint: string;
+  benchExpectTitle: string;
+  benchExpectMinRate: string;
+  benchExpectP99: string;
+  benchExpectLost: string;
+  benchVerdictPass: string;
+  benchVerdictFail: string;
+  benchVerdictPending: string;
+  benchFailMinRate: string;
+  benchFailP99: string;
+  benchFailLost: string;
+  benchFailNoSamples: string;
   startPublish: string;
   stopPublish: string;
   published: string;
@@ -642,6 +655,19 @@ export const translations: Record<Language, Translations> = {
     publishInterval: '间隔 (毫秒)',
     publishCount: '次数',
     publishCountHint: '0 = 无限循环直到手动停止',
+    publishDevices: '设备数',
+    publishDevicesHint: '每一拍向多少个模拟设备发送（${device} 从 1 到该值轮换）',
+    benchExpectTitle: '验收阈值',
+    benchExpectMinRate: '最低速率 /s',
+    benchExpectP99: '最高 p99 ms',
+    benchExpectLost: '最多未确认',
+    benchVerdictPass: '通过',
+    benchVerdictFail: '未通过',
+    benchVerdictPending: '进行中',
+    benchFailMinRate: '速率 {actual}/s 低于要求的 {limit}/s',
+    benchFailP99: 'p99 {actual} ms 高于要求的 {limit} ms',
+    benchFailLost: '{actual} 条未确认，要求不超过 {limit}',
+    benchFailNoSamples: '没有回环样本，无法判定 p99',
     startPublish: '开始',
     stopPublish: '停止',
     published: '已发',
@@ -1248,6 +1274,19 @@ export const translations: Record<Language, Translations> = {
     publishInterval: 'Interval (ms)',
     publishCount: 'Count',
     publishCountHint: '0 = loop until stopped',
+    publishDevices: 'Devices',
+    publishDevicesHint: 'how many simulated devices each tick emits to (${device} cycles 1..N)',
+    benchExpectTitle: 'Acceptance bar',
+    benchExpectMinRate: 'min rate /s',
+    benchExpectP99: 'max p99 ms',
+    benchExpectLost: 'max unacked',
+    benchVerdictPass: 'PASS',
+    benchVerdictFail: 'FAIL',
+    benchVerdictPending: 'running',
+    benchFailMinRate: 'rate {actual}/s is below the required {limit}/s',
+    benchFailP99: 'p99 {actual} ms exceeds the required {limit} ms',
+    benchFailLost: '{actual} unacked, allowed {limit}',
+    benchFailNoSamples: 'no loopback samples, p99 cannot be judged',
     startPublish: 'Start',
     stopPublish: 'Stop',
     published: 'Sent',
@@ -1854,6 +1893,19 @@ export const translations: Record<Language, Translations> = {
     publishInterval: '間隔 (毫秒)',
     publishCount: '次數',
     publishCountHint: '0 = 無限循環直到手動停止',
+    publishDevices: '裝置數',
+    publishDevicesHint: '每一拍向多少個模擬裝置發送（${device} 從 1 到該值輪替）',
+    benchExpectTitle: '驗收閾值',
+    benchExpectMinRate: '最低速率 /s',
+    benchExpectP99: '最高 p99 ms',
+    benchExpectLost: '最多未確認',
+    benchVerdictPass: '通過',
+    benchVerdictFail: '未通過',
+    benchVerdictPending: '進行中',
+    benchFailMinRate: '速率 {actual}/s 低於要求的 {limit}/s',
+    benchFailP99: 'p99 {actual} ms 高於要求的 {limit} ms',
+    benchFailLost: '{actual} 則未確認，要求不超過 {limit}',
+    benchFailNoSamples: '沒有回環樣本，無法判定 p99',
     startPublish: '開始',
     stopPublish: '停止',
     published: '已發',
@@ -2460,6 +2512,19 @@ export const translations: Record<Language, Translations> = {
     publishInterval: '間隔 (ミリ秒)',
     publishCount: '回数',
     publishCountHint: '0 = 手動停止までループ',
+    publishDevices: 'デバイス数',
+    publishDevicesHint: '各ティックで何台の模擬デバイスへ送るか（${device} は 1..N を巡回）',
+    benchExpectTitle: '受け入れ基準',
+    benchExpectMinRate: '最低速率 /s',
+    benchExpectP99: '最高 p99 ms',
+    benchExpectLost: '最大未確認',
+    benchVerdictPass: '合格',
+    benchVerdictFail: '不合格',
+    benchVerdictPending: '実行中',
+    benchFailMinRate: '速率 {actual}/s が要求の {limit}/s を下回っています',
+    benchFailP99: 'p99 {actual} ms が要求の {limit} ms を超えています',
+    benchFailLost: '{actual} 件未確認、許容 {limit}',
+    benchFailNoSamples: 'ループバック標本がなく p99 を判定できません',
     startPublish: '開始',
     stopPublish: '停止',
     published: '送信済',

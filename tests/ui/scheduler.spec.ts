@@ -201,3 +201,28 @@ test('CBOR is refused up front because the backend cannot encode it', async ({ p
   );
   expect(started).toHaveLength(0);
 });
+
+test('a fleet draft carries the device width to the backend', async ({ page }) => {
+  await boot(page);
+  await openScheduler(page);
+  await page.getByPlaceholder('test/topic').fill('site/${device}/telemetry');
+  await page.getByPlaceholder('{"key": "value"}').fill('{"d":${device}}');
+  await setCadence(page, 250, 12);
+  await page.getByLabel('Devices', { exact: true }).fill('12');
+  await page.getByRole('button', { name: 'Start', exact: true }).click();
+
+  await expect
+    .poll(async () =>
+      (await page.evaluate(() => (window as any).calls)).filter((c: any) => c.cmd === 'schedule_start').at(-1),
+    )
+    .toMatchObject({
+      args: {
+        spec: {
+          topic: 'site/${device}/telemetry',
+          payload: '{"d":${device}}',
+          count: 12,
+          devices: 12,
+        },
+      },
+    });
+});

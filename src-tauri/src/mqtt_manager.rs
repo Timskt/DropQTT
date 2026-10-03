@@ -1638,44 +1638,53 @@ impl MqttManager {
             // immediately rather than one period in.
             let due = (started.elapsed().as_millis() as u64 / period_ms) + 1;
             let target = due.min(seq + per_window * 4);
+            let devices = spec.device_count();
             while seq < target {
                 seq += 1;
                 let now_ms = chrono::Utc::now().timestamp_millis();
                 let random = (uuid::Uuid::new_v4().as_u128() & u128::from(u32::MAX)) as u32;
-                let rendered = scheduler::render_template(&spec.payload, seq, now_ms, random);
-                let params = match scheduler::encode_payload(&spec.format, &rendered) {
-                    Ok(bytes) => ConsolePublishParams {
-                        topic: spec.topic.clone(),
-                        payload_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
-                        qos: spec.qos,
-                        retain: spec.retain,
-                        properties: spec.properties.clone(),
-                    },
-                    Err(e) => {
-                        self.scheduler.fail(&spec.id, &e);
-                        self.emit_schedule_event(&app, &spec.id).await;
+                // One draft, N devices: every tick emits one copy per simulated
+                // device, with `${device}` substituted in the topic as well as the
+                // payload, so `site/${device}/telemetry` fans out by itself.
+                for device in 1..=devices {
+                    let topic =
+                        scheduler::render_template(&spec.topic, seq, now_ms, random, device);
+                    let rendered =
+                        scheduler::render_template(&spec.payload, seq, now_ms, random, device);
+                    let params = match scheduler::encode_payload(&spec.format, &rendered) {
+                        Ok(bytes) => ConsolePublishParams {
+                            topic,
+                            payload_base64: base64::engine::general_purpose::STANDARD
+                                .encode(&bytes),
+                            qos: spec.qos,
+                            retain: spec.retain,
+                            properties: spec.properties.clone(),
+                        },
+                        Err(e) => {
+                            self.scheduler.fail(&spec.id, &e);
+                            self.emit_schedule_event(&app, &spec.id).await;
+                            return;
+                        }
+                    };
+                    match self.publish_console(app.clone(), params).await {
+                        Ok(()) => match self.scheduler.record_fire(&spec.id, now_ms) {
+                            RunStatus::Completed | RunStatus::Failed | RunStatus::Stopped => {
+                                self.emit_schedule_event(&app, &spec.id).await;
+                                return;
+                            }
+                            RunStatus::Running => {}
+                        },
+                        Err(e) => {
+                            let streak = self.scheduler.record_error(&spec.id, &e);
+                            if streak >= scheduler::MAX_CONSECUTIVE_ERRORS {
+                                self.emit_schedule_event(&app, &spec.id).await;
+                                return;
+                            }
+                        }
+                    }
+                    if cancel.load(Ordering::SeqCst) {
                         return;
                     }
-                };
-                let outcome = self.publish_console(app.clone(), params).await;
-                match outcome {
-                    Ok(()) => match self.scheduler.record_fire(&spec.id, now_ms) {
-                        RunStatus::Completed | RunStatus::Failed | RunStatus::Stopped => {
-                            self.emit_schedule_event(&app, &spec.id).await;
-                            return;
-                        }
-                        RunStatus::Running => {}
-                    },
-                    Err(e) => {
-                        let streak = self.scheduler.record_error(&spec.id, &e);
-                        if streak >= scheduler::MAX_CONSECUTIVE_ERRORS {
-                            self.emit_schedule_event(&app, &spec.id).await;
-                            return;
-                        }
-                    }
-                }
-                if cancel.load(Ordering::SeqCst) {
-                    return;
                 }
             }
         }

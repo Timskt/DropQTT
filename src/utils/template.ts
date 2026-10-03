@@ -9,6 +9,7 @@ export const TEMPLATE_TOKENS = [
   { token: '${uuid}', desc: 'UUID v4' },
   { token: '${random}', desc: '0–999999' },
   { token: '${counter}', desc: 'auto-increment' },
+  { token: '${device}', desc: '1..N simulated devices' },
 ] as const;
 
 function uuid(): string {
@@ -20,8 +21,10 @@ function uuid(): string {
 }
 
 /** Replace `${...}` tokens; `counter` is the caller-supplied sequence number. */
-export function renderTemplate(text: string, counter: number): string {
-  return text.replace(/\$\{(timestamp|ts|iso|uuid|random|counter|seq)\}/g, (_m, key: string) => {
+export function renderTemplate(text: string, counter: number, device = 1): string {
+  return text.replace(
+    /\$\{(timestamp|ts|iso|uuid|random|counter|seq|device)\}/g,
+    (_m, key: string) => {
     switch (key) {
       case 'timestamp':
       case 'ts':
@@ -35,8 +38,11 @@ export function renderTemplate(text: string, counter: number): string {
       case 'counter':
       case 'seq':
         return String(counter);
+      case 'device':
+        return String(device);
       default:
         return _m;
     }
-  });
+    },
+  );
 }

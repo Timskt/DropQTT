@@ -132,6 +132,11 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
   const [benchOpen, setBenchOpen] = useState(false);
   const [benchTopics, setBenchTopics] = useState('bench/hot');
   const [benchRate, setBenchRate] = useState(3000);
+  // Acceptance bar. Empty means "no verdict", which is different from a pass:
+  // a run without thresholds stays a dashboard rather than claiming success.
+  const [expectMinRate, setExpectMinRate] = useState('');
+  const [expectP99, setExpectP99] = useState('');
+  const [expectLost, setExpectLost] = useState('');
   const [benchSize, setBenchSize] = useState(64);
   const [benchQos, setBenchQos] = useState(0);
   const [benchRetain, setBenchRetain] = useState(false);
@@ -155,6 +160,14 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
       qos: benchQos,
       retain: benchRetain,
       durationSec: Math.max(0, Math.min(3600, benchDuration)),
+      expect:
+        expectMinRate || expectP99 || expectLost
+          ? {
+              minRate: expectMinRate ? Number(expectMinRate) : undefined,
+              maxP99Ms: expectP99 ? Number(expectP99) : undefined,
+              maxLost: expectLost ? Number(expectLost) : undefined,
+            }
+          : undefined,
     });
   };
 
@@ -239,6 +252,30 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                 onChange={(e) => setBenchDuration(Number(e.target.value))}
               />
             </label>
+            <label className="flex items-center gap-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              {t.benchExpectMinRate}
+              <input
+                type="number" min={0} className="field-input flex-1 min-w-0" value={expectMinRate}
+                data-testid="bench-expect-rate"
+                onChange={(e) => setExpectMinRate(e.target.value)}
+              />
+            </label>
+            <label className="flex items-center gap-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              {t.benchExpectP99}
+              <input
+                type="number" min={0} className="field-input flex-1 min-w-0" value={expectP99}
+                data-testid="bench-expect-p99"
+                onChange={(e) => setExpectP99(e.target.value)}
+              />
+            </label>
+            <label className="flex items-center gap-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              {t.benchExpectLost}
+              <input
+                type="number" min={0} className="field-input flex-1 min-w-0" value={expectLost}
+                data-testid="bench-expect-lost"
+                onChange={(e) => setExpectLost(e.target.value)}
+              />
+            </label>
             <div className="flex items-center gap-2">
               <select
                 className="field-input !py-0.5 !px-1 text-[10px]"
@@ -283,6 +320,46 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                         {r.qos > 0 ? ` · ${r.acked.toLocaleString()} ${t.benchAcked}` : ''}
                         {` · ${rate.toFixed(0)}/s`}
                       </span>
+                      {r.verdict && (
+                        <span
+                          className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-bold"
+                          data-testid={`bench-verdict-${r.id}`}
+                          style={
+                            r.verdict.failures.length === 0 && r.verdict.settled
+                              ? { background: 'var(--ok-soft)', color: 'var(--success)' }
+                              : r.verdict.settled
+                                ? { background: 'var(--bad-soft)', color: 'var(--danger)' }
+                                : { background: 'var(--bg-inset)', color: 'var(--text-muted)' }
+                          }
+                          title={
+                            r.verdict.settled
+                              ? r.verdict.failures.length === 0
+                                ? t.benchVerdictPass
+                                : r.verdict.failures
+                                    .map((f) =>
+                                      f.kind === 'maxP99Ms' && f.actual === null
+                                        ? t.benchFailNoSamples
+                                        : (
+                                          f.kind === 'minRate'
+                                            ? t.benchFailMinRate
+                                            : f.kind === 'maxP99Ms'
+                                              ? t.benchFailP99
+                                              : t.benchFailLost
+                                        )
+                                          .replace('{limit}', String(f.limit))
+                                          .replace('{actual}', String(f.actual)),
+                                    )
+                                    .join(' · ')
+                              : t.benchVerdictPending
+                          }
+                        >
+                          {r.verdict.settled
+                            ? r.verdict.failures.length === 0
+                              ? t.benchVerdictPass
+                              : `${t.benchVerdictFail} × ${r.verdict.failures.length}`
+                            : t.benchVerdictPending}
+                        </span>
+                      )}
                       {(r.nacked > 0 || r.noSubscribers > 0) && (
                         <span
                           className="shrink-0"

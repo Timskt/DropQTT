@@ -40,6 +40,107 @@ pub struct BenchSpec {
     pub retain: bool,
     /// 0 = until stopped
     pub duration_sec: u32,
+    /// Acceptance thresholds. Without them the lab is a dashboard: it shows a
+    /// number and a person decides. With them it answers "did this build pass".
+    #[serde(default)]
+    pub expect: Option<BenchExpect>,
+}
+
+/// A pass/fail bar for one bench run. Every field is optional; a run with no
+/// expectations reports no verdict rather than a vacuous pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchExpect {
+    /// Lowest acceptable send rate, in messages per second
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_rate: Option<u32>,
+    /// Highest acceptable p99 loopback latency, in milliseconds
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_p99_ms: Option<u64>,
+    /// Highest acceptable unanswered publishes (sent minus acked)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_lost: Option<u64>,
+}
+
+/// Which bar was missed, with both numbers so the UI can phrase it in any
+/// language instead of reading back an English sentence from the backend.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchFailure {
+    /// 'minRate' | 'maxP99Ms' | 'maxLost'
+    pub kind: String,
+    pub limit: u64,
+    /// What was measured. `None` means the measurement does not exist at all
+    /// (a latency bar with no loopback samples) — which is a different claim
+    /// from "measured at some huge number", and no UI can render a sentinel
+    /// faithfully across a JSON number boundary.
+    pub actual: Option<u64>,
+}
+
+/// What the measured numbers say about the thresholds.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchVerdict {
+    /// False while the run is still going: a rate measured over 200 ms is not a
+    /// verdict, it is a sample.
+    pub settled: bool,
+    pub failures: Vec<BenchFailure>,
+}
+
+impl BenchSpec {
+    /// Compare what happened against what was required. `p99_ms` and the latency
+    /// bar only mean something when samples exist, so a run that looped back
+    /// nothing is reported as a failure of that bar rather than as a pass.
+    pub fn evaluate(
+        &self,
+        sent: u64,
+        acked: u64,
+        rate: u64,
+        p99_ms: Option<u64>,
+        finished: bool,
+    ) -> Option<BenchVerdict> {
+        let expect = self.expect.as_ref()?;
+        let mut failures = Vec::new();
+        if let Some(min) = expect.min_rate {
+            let min = u64::from(min);
+            if rate < min {
+                failures.push(BenchFailure {
+                    kind: "minRate".to_string(),
+                    limit: min,
+                    actual: Some(rate),
+                });
+            }
+        }
+        if let Some(max) = expect.max_p99_ms {
+            match p99_ms {
+                Some(p99) if p99 > max => failures.push(BenchFailure {
+                    kind: "maxP99Ms".to_string(),
+                    limit: max,
+                    actual: Some(p99),
+                }),
+                None => failures.push(BenchFailure {
+                    kind: "maxP99Ms".to_string(),
+                    limit: max,
+                    actual: None,
+                }),
+                Some(_) => {}
+            }
+        }
+        if let Some(max) = expect.max_lost {
+            let lost = sent.saturating_sub(acked);
+            if lost > max {
+                failures.push(BenchFailure {
+                    kind: "maxLost".to_string(),
+                    limit: max,
+                    actual: Some(lost),
+                });
+            }
+        }
+        Some(BenchVerdict {
+            settled: finished,
+            failures,
+        })
+    }
 }
 
 impl BenchSpec {
@@ -195,6 +296,13 @@ pub struct BenchProgress {
     pub status: BenchStatus,
     pub last_error: Option<String>,
     pub latency: LatencySummary,
+    /// The thresholds this run was started with, echoed back so the panel can
+    /// show what was required, not only what happened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expect: Option<BenchExpect>,
+    /// Absent when no thresholds were set or the run has no numbers yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<BenchVerdict>,
 }
 
 pub struct BenchRun {
@@ -277,6 +385,13 @@ impl BenchManager {
             .values()
             .map(|r| {
                 let inner = lock(&r.inner);
+                let sent = r.sent.load(Ordering::SeqCst);
+                let acked_now = r.acked.load(Ordering::SeqCst);
+                let elapsed_ms = (inner
+                    .finished_ms
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis())
+                    - r.started_ms)
+                    .max(0) as u64;
                 BenchProgress {
                     id: r.spec.id.clone(),
                     topics: r.spec.topics.clone(),
@@ -284,19 +399,29 @@ impl BenchManager {
                     size: r.spec.size,
                     qos: r.spec.qos,
                     retain: r.spec.retain,
-                    sent: r.sent.load(Ordering::SeqCst),
-                    acked: r.acked.load(Ordering::SeqCst),
+                    sent,
+                    acked: acked_now,
                     nacked: r.nacked.load(Ordering::SeqCst),
                     no_subscribers: r.no_subscribers.load(Ordering::SeqCst),
                     observed: inner.observed,
-                    elapsed_ms: (inner
-                        .finished_ms
-                        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis())
-                        - r.started_ms)
-                        .max(0) as u64,
+                    elapsed_ms,
                     status: inner.status.unwrap_or(BenchStatus::Running),
                     last_error: inner.last_error.clone(),
                     latency: inner.latency.summary(),
+                    expect: r.spec.expect.clone(),
+                    verdict: {
+                        // One sample per call: a verdict whose rate and counters
+                        // straddle two loads can blame the run for a torn read.
+                        let rate = sent.saturating_mul(1000).checked_div(elapsed_ms).unwrap_or(0);
+                        let summary = inner.latency.summary();
+                        r.spec.evaluate(
+                            sent,
+                            acked_now,
+                            rate,
+                            (summary.samples > 0).then(|| u64::from(summary.p99_ms)),
+                            inner.status.map(|s| s != BenchStatus::Running).unwrap_or(false),
+                        )
+                    },
                 }
             })
             .collect();
@@ -450,6 +575,7 @@ mod tests {
             qos: 1,
             retain: false,
             duration_sec: 5,
+            expect: None,
         }
     }
 
@@ -569,6 +695,63 @@ mod tests {
         assert_eq!(row.acked, 1, "a finished run stops accruing acks");
         assert_eq!(row.status, BenchStatus::Finished);
         assert!(!mgr.is_running("r2"));
+    }
+
+    fn expecting(min_rate: Option<u32>, p99: Option<u64>, lost: Option<u64>) -> BenchSpec {
+        let mut s = spec("r-expect");
+        s.expect = Some(BenchExpect {
+            min_rate,
+            max_p99_ms: p99,
+            max_lost: lost,
+        });
+        s
+    }
+
+    #[test]
+    fn no_thresholds_means_no_verdict_rather_than_a_vacuous_pass() {
+        assert_eq!(spec("r-none").evaluate(1000, 1000, 1000, Some(5), true), None);
+    }
+
+    #[test]
+    fn a_verdict_reports_both_numbers_for_every_bar_missed() {
+        let s = expecting(Some(5000), Some(50), Some(0));
+        let v = s.evaluate(100, 90, 100, Some(120), true).expect("verdict");
+        assert!(v.settled);
+        let kinds: Vec<&str> = v.failures.iter().map(|f| f.kind.as_str()).collect();
+        assert_eq!(kinds, ["minRate", "maxP99Ms", "maxLost"]);
+        assert_eq!(v.failures[0].limit, 5000);
+        assert_eq!(v.failures[0].actual, Some(100));
+        assert_eq!(v.failures[2].actual, Some(10), "lost is sent minus acked");
+    }
+
+    #[test]
+    fn a_latency_bar_without_samples_is_a_failure_not_a_pass() {
+        // "p99 unknown" must never read as "p99 fine": the whole point of the bar
+        // is that nobody has to remember which cells were measured.
+        let s = expecting(None, Some(50), None);
+        let v = s.evaluate(100, 100, 100, None, true).expect("verdict");
+        assert_eq!(v.failures.len(), 1);
+        assert_eq!(v.failures[0].kind, "maxP99Ms");
+        assert_eq!(
+            v.failures[0].actual, None,
+            "the bar failed because nothing was measured, not because latency was huge"
+        );
+    }
+
+    #[test]
+    fn a_run_in_progress_is_not_yet_a_verdict() {
+        let s = expecting(Some(1000), None, None);
+        let v = s.evaluate(10, 10, 12, None, false).expect("verdict");
+        assert!(!v.settled, "a 200 ms sample is not a pass/fail statement");
+        assert!(!v.failures.is_empty(), "and it already shows what is short");
+    }
+
+    #[test]
+    fn meeting_every_bar_passes_with_nothing_to_report() {
+        let s = expecting(Some(900), Some(50), Some(0));
+        let v = s.evaluate(100, 100, 980, Some(12), true).expect("verdict");
+        assert!(v.settled);
+        assert!(v.failures.is_empty(), "{:?}", v.failures);
     }
 
     #[tokio::test]

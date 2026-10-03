@@ -142,6 +142,8 @@ export interface ScheduleSpec {
   qos: number;
   retain: boolean;
   properties: PubProperties;
+  /** Fan-out width: how many `${device}` indices each tick emits to (1..200). */
+  devices?: number;
 }
 
 export type RunStatus = 'running' | 'completed' | 'failed' | 'stopped';
@@ -175,6 +177,8 @@ export interface BenchSpec {
   retain: boolean;
   /** 0 = until stopped */
   durationSec: number;
+  /** Acceptance bar; absent means "no verdict", not "passed". */
+  expect?: BenchExpect;
 }
 
 export interface LatencySummary {
@@ -209,6 +213,30 @@ export interface BenchProgress {
   status: BenchStatus;
   lastError?: string;
   latency: LatencySummary;
+  /** The bar this run was started with, echoed back. */
+  expect?: BenchExpect;
+  /** Absent when no bar was set. */
+  verdict?: BenchVerdict;
+}
+
+/** Acceptance thresholds for a bench run; every field is optional. */
+export interface BenchExpect {
+  minRate?: number;
+  maxP99Ms?: number;
+  maxLost?: number;
+}
+
+export interface BenchFailure {
+  kind: 'minRate' | 'maxP99Ms' | 'maxLost';
+  limit: number;
+  /** `null` when the measurement does not exist (a latency bar, no samples). */
+  actual: number | null;
+}
+
+export interface BenchVerdict {
+  /** False while the run is still going: a sample is not a pass/fail statement. */
+  settled: boolean;
+  failures: BenchFailure[];
 }
 
 /** MQTT v5 subscription options; ignored by the backend on v3.1.1 links. */

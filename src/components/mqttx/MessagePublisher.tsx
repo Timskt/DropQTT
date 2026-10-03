@@ -22,6 +22,10 @@ interface MessagePublisherProps {
   t: Translations;
 }
 
+// Mirrors `scheduler::MAX_DEVICES`. A fleet simulation is the point; a typo
+// multiplying a rate by six digits is not.
+const MAX_SIM_DEVICES = 200;
+
 const JSON_TEMPLATE = JSON.stringify(
   {
     deviceId: 'edge-client-01',
@@ -150,6 +154,10 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   const [schedCount, setSchedCount] = usePersistentState<number>(
     'dropqtt_console_schedule_count',
     0, // 0 = until stopped
+  );
+  const [schedDevices, setSchedDevices] = usePersistentState<number>(
+    'dropqtt_console_schedule_devices',
+    1,
   );
   const {
     runs,
@@ -301,6 +309,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
         format,
         intervalMs: Math.max(MIN_SCHEDULE_MS, Math.round(schedIntervalMs) || MIN_SCHEDULE_MS),
         count: Math.max(0, Math.round(schedCount) || 0),
+        devices: Math.min(MAX_SIM_DEVICES, Math.max(1, Math.round(schedDevices) || 1)),
         qos,
         retain,
         properties: buildProps(),
@@ -505,6 +514,22 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                   onChange={(e) => setSchedCount(Math.max(0, parseInt(e.target.value) || 0))}
                   className="field-input w-20"
                   title={t.publishCountHint}
+                />
+              </div>
+              <div>
+                <label htmlFor="dropqtt-schedule-devices" className="block mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  {t.publishDevices}
+                </label>
+                <input
+                  id="dropqtt-schedule-devices"
+                  type="number" min={1} max={MAX_SIM_DEVICES} value={schedDevices}
+                  onChange={(e) =>
+                    setSchedDevices(
+                      Math.min(MAX_SIM_DEVICES, Math.max(1, parseInt(e.target.value) || 1)),
+                    )
+                  }
+                  className="field-input w-20"
+                  title={t.publishDevicesHint}
                 />
               </div>
               <button

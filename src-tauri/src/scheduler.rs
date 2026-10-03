@@ -41,13 +41,28 @@ pub struct ScheduleSpec {
     pub retain: bool,
     #[serde(default)]
     pub properties: PubProperties,
+    /// Fan-out width: how many simulated devices each tick emits to.
+    /// `count` stays the run's total message budget, so 500 messages across 50
+    /// devices is ten reports per device — that is the number a person sets out
+    /// to send, not a number they have to divide.
+    #[serde(default)]
+    pub devices: Option<u32>,
 }
+
+/// A ceiling on the fan-out width. Simulating a fleet is the point; accidentally
+/// multiplying a rate by a typo is not.
+pub const MAX_DEVICES: u32 = 200;
 
 fn default_format() -> String {
     "text".to_string()
 }
 
 impl ScheduleSpec {
+    /// 1 when unset; the loop uses this instead of an Option.
+    pub fn device_count(&self) -> u32 {
+        self.devices.unwrap_or(1).max(1)
+    }
+
     /// Reject anything that cannot work before a task is spawned.
     pub fn validate(&self) -> Result<(), String> {
         if self.id.trim().is_empty() {
@@ -55,6 +70,12 @@ impl ScheduleSpec {
         }
         if self.topic.trim().is_empty() {
             return Err("schedule topic must not be empty".to_string());
+        }
+        if self.devices.unwrap_or(1) > MAX_DEVICES {
+            return Err(format!(
+                "at most {MAX_DEVICES} simulated devices per run (this one asked for {})",
+                self.devices.unwrap_or(1)
+            ));
         }
         if self.topic.contains('#') || self.topic.contains('+') {
             return Err("a published topic cannot contain wildcards".to_string());
@@ -331,7 +352,13 @@ impl SchedulerManager {
 
 /// Replace `${...}` placeholders. Mirrors `src/utils/template.ts` so the manual
 /// and scheduled paths emit the same text; unknown names stay verbatim.
-pub fn render_template(text: &str, counter: u64, now_ms: i64, random: u32) -> String {
+pub fn render_template(
+    text: &str,
+    counter: u64,
+    now_ms: i64,
+    random: u32,
+    device: u32,
+) -> String {
     let mut out = String::with_capacity(text.len() + 16);
     let mut rest = text;
     while let Some(pos) = rest.find("${") {
@@ -339,7 +366,8 @@ pub fn render_template(text: &str, counter: u64, now_ms: i64, random: u32) -> St
         let after = &rest[pos + 2..];
         let closed = after.find('}');
         let token = match closed {
-            Some(end) => token_value(&after[..end], counter, now_ms, random).map(|v| (v, end)),
+            Some(end) => token_value(&after[..end], counter, now_ms, random, device)
+                .map(|v| (v, end)),
             None => None,
         };
         match token {
@@ -361,7 +389,7 @@ pub fn render_template(text: &str, counter: u64, now_ms: i64, random: u32) -> St
     out
 }
 
-fn token_value(name: &str, counter: u64, now_ms: i64, random: u32) -> Option<String> {
+fn token_value(name: &str, counter: u64, now_ms: i64, random: u32, device: u32) -> Option<String> {
     match name {
         "timestamp" | "ts" => Some(now_ms.to_string()),
         "iso" => chrono::DateTime::from_timestamp_millis(now_ms)
@@ -370,6 +398,9 @@ fn token_value(name: &str, counter: u64, now_ms: i64, random: u32) -> Option<Str
         "uuid" => Some(uuid::Uuid::new_v4().to_string()),
         "random" => Some((random % 1_000_000).to_string()),
         "counter" | "seq" => Some(counter.to_string()),
+        // Which simulated device this copy belongs to. Works in the topic as well
+        // as the payload, so `site/${device}/telemetry` fans out on its own.
+        "device" => Some(device.to_string()),
         _ => None,
     }
 }
@@ -432,6 +463,7 @@ mod tests {
             qos: 1,
             retain: false,
             properties: PubProperties::default(),
+            devices: None,
         }
     }
 
@@ -448,34 +480,49 @@ mod tests {
     #[test]
     fn template_tokens_render() {
         let out = render_template(
-            r#"{"ts":${ts},"i":${counter},"r":${random},"iso":"${iso}"}"#,
+            r#"{"ts":${ts},"i":${counter},"r":${random},"iso":"${iso}","d":${device}}"#,
             7,
             1_700_000_000_123,
             42,
+            3,
         );
         assert_eq!(
             out,
-            r#"{"ts":1700000000123,"i":7,"r":42,"iso":"2023-11-14T22:13:20.123Z"}"#
+            r#"{"ts":1700000000123,"i":7,"r":42,"iso":"2023-11-14T22:13:20.123Z","d":3}"#
         );
+    }
+
+    #[test]
+    fn the_device_token_fans_a_single_template_across_a_fleet() {
+        // One draft, N devices: the topic and the payload both see the index.
+        for device in 1..=3 {
+            assert_eq!(
+                render_template("site/${device}/telemetry", 1, 0, 0, device),
+                format!("site/{device}/telemetry")
+            );
+        }
+        // A run without fan-out still has a device, so a draft never renders a
+        // bare `${device}` on the wire.
+        assert_eq!(render_template("d/${device}", 1, 0, 0, 1), "d/1");
     }
 
     #[test]
     fn template_keeps_unknown_and_unclosed_placeholders() {
-        assert_eq!(render_template("${nope} ${counter}", 3, 0, 0), "${nope} 3");
-        assert_eq!(render_template("tail ${", 3, 0, 0), "tail ${");
-        assert_eq!(render_template("${a${seq}", 9, 0, 0), "${a9");
+        assert_eq!(render_template("${nope} ${counter}", 3, 0, 0, 1), "${nope} 3");
+        assert_eq!(render_template("tail ${", 3, 0, 0, 1), "tail ${");
+        assert_eq!(render_template("${a${seq}", 9, 0, 0, 1), "${a9");
     }
 
     #[test]
     fn template_replaces_every_occurrence() {
-        assert_eq!(render_template("${seq}-${seq}", 2, 0, 0), "2-2");
-        assert_eq!(render_template("counter=off", 2, 0, 0), "counter=off");
+        assert_eq!(render_template("${seq}-${seq}", 2, 0, 0, 1), "2-2");
+        assert_eq!(render_template("counter=off", 2, 0, 0, 1), "counter=off");
     }
 
     #[test]
     fn uuid_token_is_unique_and_well_formed() {
-        let a = render_template("${uuid}", 1, 0, 0);
-        let b = render_template("${uuid}", 1, 0, 0);
+        let a = render_template("${uuid}", 1, 0, 0, 1);
+        let b = render_template("${uuid}", 1, 0, 0, 1);
         assert_ne!(a, b);
         assert_eq!(a.matches('-').count(), 4);
         assert_eq!(a.len(), 36);

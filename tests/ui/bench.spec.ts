@@ -89,11 +89,11 @@ test('the form submits one complete spec, topics split on separators', async ({ 
 
   await page.getByRole('button', { name: 'Start bench' }).click();
 
-  await expect
-    .poll(async () =>
-      (await page.evaluate(() => (window as any).calls)).filter((c: any) => c.cmd === 'bench_start').at(-1),
-    )
-    .toMatchObject({
+  const starts = () =>
+    page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'bench_start'));
+  await expect.poll(async () => (await starts()).length).toBe(1);
+  expect(await starts()).toMatchObject([
+    {
       args: {
         spec: {
           topics: ['bench/a', 'bench/b', 'bench/c'],
@@ -104,10 +104,8 @@ test('the form submits one complete spec, topics split on separators', async ({ 
           durationSec: 0,
         },
       },
-    });
-  expect(
-    (await page.evaluate(() => (window as any).calls)).filter((c: any) => c.cmd === 'start_bench'),
-  ).toHaveLength(0);
+    },
+  ]);
 });
 
 test('counters and percentiles come from the backend event, not local math', async ({ page }) => {
@@ -150,4 +148,83 @@ test('backend validation surfaces instead of failing silently', async ({ page })
   await openBench(page);
   await page.getByRole('button', { name: 'Start bench' }).click();
   await expect(page.getByText('rate must be between 1 and 20000 msg/s')).toBeVisible();
+});
+
+test('the acceptance bar travels with the run spec', async ({ page }) => {
+  await boot(page);
+  await openBench(page);
+  await page.getByPlaceholder(/Bench topics/).fill('bench/hot');
+  await page.getByTitle('0 = until stopped').fill('5');
+  await page.getByTestId('bench-expect-rate').fill('4000');
+  await page.getByTestId('bench-expect-p99').fill('50');
+  await page.getByRole('button', { name: 'Start bench' }).click();
+  await expect
+    .poll(async () =>
+      (await page.evaluate(() => (window as any).calls)).filter((c: any) => c.cmd === 'bench_start').length,
+    )
+    .toBeGreaterThan(0);
+  const spec = (
+    await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'bench_start').pop())
+  ).args.spec;
+  expect(spec.expect).toEqual({ minRate: 4000, maxP99Ms: 50 });
+});
+
+test('a missed bar reads FAIL with the numbers, a met bar reads PASS', async ({ page }) => {
+  await boot(page);
+  await openBench(page);
+  await page.getByRole('button', { name: 'Start bench' }).click();
+
+  const failing = {
+    ...row(),
+    status: 'finished',
+    expect: { minRate: 20000, maxP99Ms: 5 },
+    verdict: {
+      settled: true,
+      failures: [
+        { kind: 'minRate', limit: 20000, actual: 4938 },
+        { kind: 'maxP99Ms', limit: 5, actual: 27 },
+      ],
+    },
+  };
+  await page.evaluate((r) => (window as any).__fire('bench-progress', [r]), failing);
+  const chip = page.getByTestId('bench-verdict-bench-1');
+  await expect(chip).toHaveText('FAIL × 2');
+  await expect(chip).toHaveAttribute('title', /rate 4938\/s is below the required 20000\/s/);
+  await expect(chip).toHaveAttribute('title', /p99 27 ms exceeds the required 5 ms/);
+
+  const passing = {
+    ...row(),
+    status: 'finished',
+    expect: { minRate: 4000 },
+    verdict: { settled: true, failures: [] },
+  };
+  await page.evaluate((r) => (window as any).__fire('bench-progress', [r]), passing);
+  await expect(page.getByTestId('bench-verdict-bench-1')).toHaveText('PASS');
+});
+
+test('a latency bar with no samples says nothing was measured, not that latency exploded', async ({ page }) => {
+  await boot(page);
+  await openBench(page);
+  const blind = {
+    ...row(),
+    status: 'finished',
+    observed: 0,
+    expect: { maxP99Ms: 5 },
+    latency: { ...row().latency, samples: 0 },
+    verdict: { settled: true, failures: [{ kind: 'maxP99Ms', limit: 5, actual: null }] },
+  };
+  await page.evaluate((r) => (window as any).__fire('bench-progress', [r]), blind);
+  const chip = page.getByTestId('bench-verdict-bench-1');
+  await expect(chip).toHaveText('FAIL × 1');
+  await expect(chip).toHaveAttribute('title', /no loopback samples/);
+  // A sentinel like u64::MAX crossing JSON as a number is the failure this guards.
+  await expect(chip).not.toHaveAttribute('title', /18446744|9007199/);
+});
+
+test('a run without thresholds gets no verdict chip at all', async ({ page }) => {
+  await boot(page);
+  await openBench(page);
+  await page.getByRole('button', { name: 'Start bench' }).click();
+  await page.evaluate((r) => (window as any).__fire('bench-progress', [r]), row());
+  await expect(page.getByTestId(/^bench-verdict-/)).toHaveCount(0);
 });

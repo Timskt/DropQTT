@@ -908,6 +908,35 @@ hex 关联数据与文本关联数据加了 `hex:` 前缀再比较，否则字�
 行对齐三种形态、超限拒绝对齐）、Playwright **65/65**（新增 1 项：从事件里投两条真实报文 → 开对比 →
 选两行 → 面板出现 QoS 差异与 `+`/`-` 行）、`tsc`/`eslint` 干净（warn 预算 10 不变）。
 
+### 4.33 一条 run 仿真一支设备舰队，压测从仪表盘变成验收门（§2 E2 + E6，第十一轮 2026-10-03）
+
+**E2 的取舍：宽度而不是 run 数。** `ScheduleSpec.devices`（1..=200，`MAX_DEVICES`，前端 `MAX_SIM_DEVICES` 同值），
+`render_template` 多一个 `device` 形参、多一个 `${device}` token（`src/utils/template.ts` 的令牌表同步列出），
+**topic 与 payload 都过模板**，所以 `site/${device}/telemetry` 自己就散开，不必为 50 台网关建 50 条 run。
+`count` 的语义我特意守住：它仍是这次 run 的**总条数**——500 条 ÷ 50 台 = 每台 10 报，
+用户设的是"我要发多少"，不是一道除法题。超上限在 `validate()` 里拒绝并回显请求值，不静默截断。
+
+**E6 的三条规则，每条都在防一种假成功**：
+
+1. **没设阈值 = 没有判决**，不是"通过"。`evaluate()` 直接返回 `None`，前端不出 chip。
+2. **running 时 `settled = false`**。200 ms 窗口的速率不构成交付结论，UI 用中性色显示"进行中"。
+3. **一次 `progress()` 只读一次计数器**。原先 `sent`/`elapsed` 各读两次，判决可能把一次撕裂读当成掉速；
+   顺手把重复的 `elapsed` 计算与 `if elapsed > 0` 手工除法消掉（clippy 的 `manual_checked_ops` 也在这里冒出来）。
+
+一个值得留在仓库里的坑：**"没有测量"不能用大数当哨兵**。第一版 p99 无回环样本时写 `actual: u64::MAX`，
+前端拿 `Number.MAX_SAFE_INTEGER` 比对——`1.8e19` 永远不等于 `9.0e15`，于是界面会说
+"p99 18446744073709551616 ms 超标"，把"没测到"翻译成一句极其自信的错误话。改成 `Option<u64>`：
+缺测量就是 `null`，前端只认 `null`。判定结果带 `limit` 与 `actual` **两个数**而不是一句英文，
+四种语言各自措辞，这也延续了 §4.26 那条"后端不要替前端说话"的规矩。
+
+没做的另一半：E6 还要求 `mirror: false`（压测流量不写 feed/历史）。它是 §5.5 那 ~315 msg/s 天花板的钥匙，
+但要先分开"自发自收的采样路径"和"镜像路径"，混在这一批里会让验收门的证据不干净，下一轮单独做。
+
+门：harness **132/132**（新增设备扇出 + 5 条 verdict）、vitest **48/48**、Playwright **70/70**
+（新增 5 项：run 规格带上 devices 宽度 / 期望线随 spec 上线 / `FAIL × 2` 显示两组数 /
+无回环样本时说"没测到"而不是报一个天文数字 / 无阈值不出 chip）、
+`tsc` 干净、`eslint` 0 error 10 warn、`cargo clippy --all-targets`（gnu）**0 warning**。
+
 ### 5.10 本轮（A1/A2）没有做到的三件事
 
 1. **PUBACK 拒绝没能在桌面应用里跑通**。同样适用于 §4.28 的遗嘱属性上线编码。代码路径有 harness 测试、有真实 mosquitto 的 `PUBACK rc135` 证据、
