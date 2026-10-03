@@ -93,7 +93,9 @@ test('start hands the whole draft, template included, to the backend', async ({ 
   // paths do; the editor must not flag it.
   await expect(page.getByText('⚠ invalid')).toHaveCount(0);
   await setCadence(page, 250, 12);
-  await page.getByLabel('Retain').check();
+  // Addressed by role: once the retained-message button got an accessible name,
+  // a loose getByLabel('Retain') matches both it and the publish retain checkbox.
+  await page.getByRole('checkbox', { name: /Retain/ }).check();
 
   await page.getByRole('button', { name: 'Start', exact: true }).click();
 

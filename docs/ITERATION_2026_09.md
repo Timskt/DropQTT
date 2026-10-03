@@ -984,6 +984,58 @@ broker 报的命中 / 本地匹配的命中 / 多命中只显示第一条并计�
 `sensors/room1/temp` 后两条 IN 行各自显示 `⌕ sensors/#` 与 `⌕ sensors/+/temp`，
 tooltip 为 "subscription the broker said it matched"，`get_subscription_stats` 报 `1 / 1 / 0`。
 
+### 4.35 无障碍：把"只有 placeholder 的输入框"变成有名字的控件（§1.11，第十二轮 2026-10-03）
+
+审阅稿列的那几处在当前代码里已经不止：**80 处** `aria-label` 落在 14 个文件里，
+全部是**只增不改**（没有删除或改写任何 placeholder、title、id 或类名）。
+名字一律复用界面上已经存在的那个字符串——placeholder 是什么，可访问名就是什么，
+不发明第二套说法，也就不需要新增 4×N 个键。
+
+**这一轮真正留下来的不是那 80 行，而是 `tests/ui/a11y.spec.ts`。**
+它遍历五个工作区（含展开的压测台、规则编辑器、设置弹窗），对**每一个有布局盒子的**
+控件问一句"你有名字吗"，对**每一个没有文字的图标按钮**问一句"你有 aria-label 吗"，
+没有就失败。理由很实际：靠人眼复查"哪个输入框缺 label"这件事，上一轮审计发现了 6 处，
+这一轮实测 62 处——**手工审计的数量是不可信的**，而这条测试以后每次改动都会重跑。
+
+顺带抓到两类真问题：
+
+1. **`ToastHost` 的 "Notifications" / "Dismiss" 是硬编码英文**（它不在 prop 树里，
+   所以拿不到 `t`）。现在读 `currentTranslations()`，并且加了 `data-testid="toast-region"`——
+   以后驱动它的脚本不必再按英文文案找它。
+2. **一个按钮的名字说的是另一件事**：发布区的橡皮擦挂的是 `title={t.clearMessages}`（"清空报文"），
+   而它清的是**载荷草稿**。新增 `clearPayloadDraft` ×4 语言，标题与 aria-label 都用它。
+
+**保留消息浮层补齐了键盘路径**：Escape 关闭、`aria-expanded`/`aria-controls`、
+打开时焦点进入"清除"按钮、Escape 后焦点**回到触发按钮**。仓库里 `SettingsModal` 早就做了这三件事，
+说明范式存在，只是没推广到浮层。`ux-guards.spec.ts` 新增的用例是真的用键盘走一遍
+（`focus()` + `Enter` + `Escape`，并断言 `toBeFocused()`），不是只查属性存在。
+
+**对比度是量出来的，不是感觉出来的。** 各主题 `--text-muted` 在各自面板底色上的 WCAG 比值：
+
+| 主题 | 旧值 | 旧比值 | 新值 | 新比值 |
+|---|---|---|---|---|
+| darkBase（cyberpunk） | `#64748b` | 3.75 | `#7c8da3` | 5.27 |
+| obsidian | 同上 | 3.94 | 同上 | 5.53 |
+| nord | `#7b88a1` | **2.82** | `#a8b3c4` | 4.75 |
+| solaris light | `#78716c` | 4.80 ✓ | 不动 | 4.80 |
+
+10–11px 的文字在 WCAG 里按"普通字号"要求 4.5:1，而 muted 正是提示、时间戳、说明文字用的颜色。
+nord 的 2.82 等于**在现场笔记本上基本读不出**。新值只提亮到刚好过 AA，
+仍比 `--text-secondary` 暗，层级没有塌。
+
+**故意没做**：`RichText` 里 GFM 任务清单的 checkbox 仍无名。它是**不可信载荷**渲染出来的
+`disabled` 复选框，给它起名等于把我们的话贴在设备作者写的内容上；而且它不参与交互。
+要在改名之前先定"我们是否要为渲染出来的内容负责"，那是另一件事。
+
+一个必须记下来的副作用：给图标按钮加 aria-label **让一条旧测试失败了**——
+`scheduler.spec.ts` 用 `getByLabel('Retain')`（Playwright 默认是**子串**匹配），
+新加名的"保留消息管理"按钮也被匹配上了 → strict mode violation。
+正确修法是限定角色 `getByRole('checkbox', { name: /Retain/ })`，**不是**把名字改短。
+宽松的选择器在无障碍改善之后会反过来咬人，这类"测试依赖了界面的含糊"值得清一遍。
+
+门：Playwright **82/82**（新增 7 项：6 项结构守卫 + 1 项键盘路径）、vitest **48/48**、
+`tsc` 干净、`eslint` 0 error 10 warn（预算未变）。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

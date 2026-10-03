@@ -186,13 +186,14 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
             className="field-input !py-0.5 !px-1.5 text-[10px]"
             value={cap}
             onChange={(e) => setCap(Number(e.target.value))}
+            aria-label={t.capHint}
             title={t.capHint}
           >
             {CAP_OPTIONS.map((c) => (
               <option key={c} value={c}>{c >= 1000 ? `${c / 1000}k` : c}</option>
             ))}
           </select>
-          <button onClick={exportCsv} disabled={rows.length === 0} className="btn-ghost !px-2.5 !py-1 flex items-center gap-1 text-[11px]" title={t.exportTraffic}>
+          <button onClick={exportCsv} disabled={rows.length === 0} className="btn-ghost !px-2.5 !py-1 flex items-center gap-1 text-[11px]" title={t.exportTraffic} aria-label={t.exportTraffic}>
             <Download className="w-3 h-3" />
           </button>
           <button
@@ -235,7 +236,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
       {benchOpen && (
         <div className="px-4 py-3 border-b space-y-2" style={{ borderColor: 'var(--border-panel)', background: 'var(--bg-inset)' }}>
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
-            <input className="field-input md:col-span-2 font-mono" placeholder={t.benchTopicPh} value={benchTopics} onChange={(e) => setBenchTopics(e.target.value)} spellCheck={false} />
+            <input className="field-input md:col-span-2 font-mono" placeholder={t.benchTopicPh} aria-label={t.benchTopicPh} value={benchTopics} onChange={(e) => setBenchTopics(e.target.value)} spellCheck={false} />
             <label className="flex items-center gap-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
               {t.benchRate}
               <input type="number" min={1} max={20000} className="field-input flex-1 min-w-0" value={benchRate} onChange={(e) => setBenchRate(Number(e.target.value))} />
@@ -281,6 +282,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                 className="field-input !py-0.5 !px-1 text-[10px]"
                 value={benchQos}
                 onChange={(e) => setBenchQos(Number(e.target.value))}
+                aria-label={t.qosLevel}
                 title="QoS"
               >
                 <option value={0}>QoS 0</option>
@@ -451,7 +453,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                 <th className="px-3 py-1.5 font-medium w-8">#</th>
                 <th className="px-2 py-1.5 font-medium">{t.topicPattern}</th>
                 <th className="px-2 py-1.5 font-medium">
-                  <select className="bg-transparent focus:outline-none cursor-pointer" style={{ color: 'var(--text-muted)' }} value={sortBy} onChange={(e) => setSortBy(e.target.value as SortKey)} title={t.sortBy}>
+                  <select className="bg-transparent focus:outline-none cursor-pointer" style={{ color: 'var(--text-muted)' }} value={sortBy} onChange={(e) => setSortBy(e.target.value as SortKey)} title={t.sortBy} aria-label={t.sortBy}>
                     <option value="rate">{t.sortRate}</option>
                     <option value="peak">{t.sortPeak}</option>
                     <option value="bytes">{t.sortBytes}</option>

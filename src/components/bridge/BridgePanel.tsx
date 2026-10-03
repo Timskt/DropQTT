@@ -140,6 +140,7 @@ const BridgeConnCard: React.FC<{
       <div className="p-4 space-y-3">
         <div className="flex items-center gap-2">
           <select
+            aria-label={title}
             value={customMode ? '__custom__' : selected}
             onChange={(e) => {
               if (e.target.value === '__custom__') {
@@ -173,12 +174,14 @@ const BridgeConnCard: React.FC<{
           <div className="grid grid-cols-3 gap-2">
             <input
               className="field-input col-span-2"
+              aria-label={t.hostPlaceholder}
               placeholder={t.hostPlaceholder}
               value={customHost}
               onChange={(e) => setCustomHost(e.target.value)}
             />
             <input
               className="field-input"
+              aria-label={t.portPlaceholder}
               placeholder={t.portPlaceholder}
               type="number"
               value={customPort}
@@ -491,6 +494,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
         <label className="flex items-center gap-2 text-[11px] font-mono cursor-pointer px-3 py-1.5 rounded border" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border-panel)', background: 'var(--bg-panel)' }}>
           <input
             type="checkbox"
+            aria-label={t.bridgeAutoReconnect}
             checked={autoReconnect}
             onChange={(e) => setAutoReconnect(e.target.checked)}
             className="w-3.5 h-3.5"
@@ -583,6 +587,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
             <input
               ref={fileRef}
               type="file"
+              aria-label={t.importRules}
               accept=".json,application/json"
               className="hidden"
               onChange={(e) => {
@@ -613,18 +618,19 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <span className="text-[11px] font-mono font-semibold" style={{ color: 'var(--accent)' }}>
                 {editingId ? `✎ ${t.editRule}` : `＋ ${t.addRule}`}
               </span>
-              <button onClick={closeForm} className="p-1 rounded" style={{ color: 'var(--text-muted)' }} title={t.cancel}>
+              <button onClick={closeForm} className="p-1 rounded" style={{ color: 'var(--text-muted)' }} title={t.cancel} aria-label={t.cancel}>
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <input
                 className="field-input"
+                aria-label={t.ruleName}
                 placeholder={t.ruleName}
                 value={draft.name}
                 onChange={(e) => set('name', e.target.value)}
               />
-              <select className="field-input" value={draft.sourceConn} onChange={(e) => setDraft((d) => ({ ...d, sourceConn: e.target.value, targetConn: d.sourceConn === e.target.value ? d.targetConn : e.target.value === 'src' ? 'dst' : 'src' }))}>
+              <select aria-label={`${t.bridgeRules} · ${t.bridgeSource}`} className="field-input" value={draft.sourceConn} onChange={(e) => setDraft((d) => ({ ...d, sourceConn: e.target.value, targetConn: d.sourceConn === e.target.value ? d.targetConn : e.target.value === 'src' ? 'dst' : 'src' }))}>
                 <option value="src">{t.bridgeSource} (src)</option>
                 <option value="dst">{t.bridgeTarget} (dst)</option>
               </select>
@@ -646,6 +652,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <div className="md:col-span-2">
                 <textarea
                   className="field-input w-full h-16 resize-y font-mono"
+                  aria-label={t.sourceFilterMultiPlaceholder}
                   placeholder={t.sourceFilterMultiPlaceholder}
                   title={t.sourceFiltersMulti}
                   value={draft.sourceFilter}
@@ -661,13 +668,13 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   )}
                 </div>
               </div>
-              <select className="field-input self-start" value={draft.sourceQos} onChange={(e) => set('sourceQos', Number(e.target.value))}>
+              <select className="field-input self-start" aria-label={t.sourceQosLabel} value={draft.sourceQos} onChange={(e) => set('sourceQos', Number(e.target.value))}>
                 {[0, 1, 2].map((q) => <option key={q} value={q}>Sub QoS {q}</option>)}
               </select>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <select className="field-input" value={draft.topicMode} onChange={(e) => set('topicMode', e.target.value as BridgeRule['topicMode'])}>
+              <select className="field-input" aria-label={t.topicRewriteMode} value={draft.topicMode} onChange={(e) => set('topicMode', e.target.value as BridgeRule['topicMode'])}>
                 <option value="same">{t.topicKeepSame}</option>
                 <option value="prefix">{t.topicPrefixMap}</option>
                 <option value="fixed">{t.topicFixed}</option>
@@ -676,22 +683,23 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               </select>
               {draft.topicMode === 'prefix' && (
                 <>
-                  <input className="field-input" placeholder={t.prefixFrom} value={draft.prefixFrom} onChange={(e) => set('prefixFrom', e.target.value)} />
-                  <input className="field-input" placeholder={t.prefixTo} value={draft.prefixTo} onChange={(e) => set('prefixTo', e.target.value)} />
+                  <input className="field-input" aria-label={t.prefixFrom} placeholder={t.prefixFrom} value={draft.prefixFrom} onChange={(e) => set('prefixFrom', e.target.value)} />
+                  <input className="field-input" aria-label={t.prefixTo} placeholder={t.prefixTo} value={draft.prefixTo} onChange={(e) => set('prefixTo', e.target.value)} />
                 </>
               )}
               {draft.topicMode === 'fixed' && (
-                <input className="field-input md:col-span-2" placeholder={t.fixedTopicPlaceholder} value={draft.fixedTopic} onChange={(e) => set('fixedTopic', e.target.value)} />
+                <input className="field-input md:col-span-2" aria-label={t.fixedTopicPlaceholder} placeholder={t.fixedTopicPlaceholder} value={draft.fixedTopic} onChange={(e) => set('fixedTopic', e.target.value)} />
               )}
               {draft.topicMode === 'regex' && (
                 <>
-                  <input className="field-input" placeholder={t.regexPatternPlaceholder} value={draft.regexPattern} onChange={(e) => set('regexPattern', e.target.value)} />
-                  <input className="field-input" placeholder={t.regexReplacePlaceholder} value={draft.regexReplacement} onChange={(e) => set('regexReplacement', e.target.value)} />
+                  <input className="field-input" aria-label={t.regexPatternPlaceholder} placeholder={t.regexPatternPlaceholder} value={draft.regexPattern} onChange={(e) => set('regexPattern', e.target.value)} />
+                  <input className="field-input" aria-label={t.regexReplacePlaceholder} placeholder={t.regexReplacePlaceholder} value={draft.regexReplacement} onChange={(e) => set('regexReplacement', e.target.value)} />
                 </>
               )}
               {draft.topicMode === 'map' && (
                 <textarea
                   className="field-input md:col-span-2 h-20 resize-y font-mono"
+                  aria-label={t.topicMapPlaceholder}
                   placeholder={t.topicMapPlaceholder}
                   value={topicMapText}
                   onChange={(e) => setTopicMapText(e.target.value)}
@@ -702,17 +710,17 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="flex items-center gap-2">
-                <select className="field-input flex-1" value={draft.qosMode} onChange={(e) => set('qosMode', e.target.value as BridgeRule['qosMode'])}>
+                <select className="field-input flex-1" aria-label={t.forwardQosMode} value={draft.qosMode} onChange={(e) => set('qosMode', e.target.value as BridgeRule['qosMode'])}>
                   <option value="source">{t.qosFollowSource}</option>
                   <option value="fixed">{t.qosFixed}</option>
                 </select>
                 {draft.qosMode === 'fixed' && (
-                  <select className="field-input !w-20" value={draft.fixedQos} onChange={(e) => set('fixedQos', Number(e.target.value))}>
+                  <select aria-label={t.qosFixed} className="field-input !w-20" value={draft.fixedQos} onChange={(e) => set('fixedQos', Number(e.target.value))}>
                     {[0, 1, 2].map((q) => <option key={q} value={q}>QoS {q}</option>)}
                   </select>
                 )}
               </div>
-              <select className="field-input" value={draft.retainMode} onChange={(e) => set('retainMode', e.target.value as BridgeRule['retainMode'])}>
+              <select className="field-input" aria-label={t.retainModeLabel} value={draft.retainMode} onChange={(e) => set('retainMode', e.target.value as BridgeRule['retainMode'])}>
                 <option value="source">{t.retainFollow}</option>
                 <option value="on">{t.retainForceOn}</option>
                 <option value="off">{t.retainForceOff}</option>
@@ -720,6 +728,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <label className="flex items-center gap-2 text-[12px] font-mono cursor-pointer px-1" style={{ color: 'var(--text-secondary)' }}>
                 <input
                   type="checkbox"
+                  aria-label={t.forwardV5Props}
                   checked={draft.forwardProps}
                   onChange={(e) => set('forwardProps', e.target.checked)}
                   className="w-4 h-4"
@@ -755,6 +764,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   </div>
                   <textarea
                     className="field-input w-full h-24 resize-y font-mono text-[11px]"
+                    aria-label={t.transformScriptLabel}
                     placeholder={t.transformScriptPlaceholder}
                     value={draft.transformScript}
                     onChange={(e) => set('transformScript', e.target.value)}
@@ -765,6 +775,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   <div className="flex items-center gap-2 mt-1.5">
                     <input
                       className="field-input flex-1 font-mono text-[11px]"
+                      aria-label={t.testPayloadPlaceholder}
                       placeholder={t.testPayloadPlaceholder}
                       value={testPayload}
                       onChange={(e) => setTestPayload(e.target.value)}
@@ -798,6 +809,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     <div className="text-[10px] font-mono mb-1" style={{ color: 'var(--text-muted)' }}>{t.excludeTopics}</div>
                     <textarea
                       className="field-input w-full h-16 resize-y font-mono"
+                      aria-label={t.excludeTopics}
                       placeholder={'home/private/#\nhome/secret'}
                       value={excludeText}
                       onChange={(e) => setExcludeText(e.target.value)}
@@ -807,12 +819,14 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   <div className="space-y-2">
                     <input
                       className="field-input w-full"
+                      aria-label={t.payloadPrefixPlaceholder}
                       placeholder={t.payloadPrefixPlaceholder}
                       value={draft.payloadPrefix}
                       onChange={(e) => set('payloadPrefix', e.target.value)}
                     />
                     <input
                       className="field-input w-full"
+                      aria-label={t.payloadSuffixPlaceholder}
                       placeholder={t.payloadSuffixPlaceholder}
                       value={draft.payloadSuffix}
                       onChange={(e) => set('payloadSuffix', e.target.value)}
@@ -821,6 +835,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                       <label className="flex items-center gap-1.5 text-[11px] font-mono cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
                         <input
                           type="checkbox"
+                          aria-label={t.wrapJson}
                           checked={draft.wrapJson}
                           onChange={(e) => set('wrapJson', e.target.checked)}
                           className="w-3.5 h-3.5"
@@ -832,6 +847,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                         {t.rateLimit}
                         <input
                           type="number"
+                          aria-label={t.rateLimit}
                           min={0}
                           className="field-input !w-20"
                           value={draft.rateLimit || 0}
@@ -871,6 +887,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <div key={r.id} className="inset-box px-3 py-2.5 flex items-center gap-3 flex-wrap">
                 <input
                   type="checkbox"
+                  aria-label={`${t.bridgeRules} · ${r.name}`}
                   checked={r.enabled}
                   onChange={() => toggleRule(r.id)}
                   className="w-4 h-4 shrink-0"

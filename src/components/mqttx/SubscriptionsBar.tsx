@@ -150,6 +150,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
             value={topicInput}
             onChange={(e) => setTopicInput(e.target.value)}
             placeholder={t.topicPattern}
+            aria-label={t.topicPattern}
             list="dropqtt-observed-topics"
             className="field-input w-full"
             style={{ color: 'var(--success)' }}
@@ -242,6 +243,10 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
               key={color}
               type="button"
               onClick={() => setSelectedColor(color)}
+              // The swatch is the only label, so its name has to carry the hex too:
+              // "colour 3 of 6" tells a screen-reader user nothing they can act on.
+              aria-label={`${t.pickColor} ${color}`}
+              title={color}
               className="w-3.5 h-3.5 rounded-full transition"
               style={{
                 backgroundColor: color,
@@ -395,6 +400,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
               <button
                 onClick={() => onRemoveSubscription(sub.topic)}
                 title={t.unsubscribe}
+                aria-label={t.unsubscribe}
                 className="p-0.5 transition hover:opacity-100 opacity-50 ml-1"
                 style={{ color: 'var(--danger)' }}
               >

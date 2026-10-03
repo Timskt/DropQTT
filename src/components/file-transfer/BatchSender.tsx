@@ -145,6 +145,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
         </div>
         <input
           type="text"
+          aria-label={t.publishTopic}
           value={publishTopic}
           onChange={(e) => setPublishTopic(e.target.value)}
           placeholder="dropqtt/public-lobby"
@@ -265,7 +266,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
         <div className="space-y-1">
           <label className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{t.packetChunkSize}</label>
-          <select value={chunkSize} disabled={isSending} onChange={(e) => setChunkSize(Number(e.target.value))} className="field-input w-full">
+          <select value={chunkSize} disabled={isSending} onChange={(e) => setChunkSize(Number(e.target.value))} className="field-input w-full" aria-label={t.packetChunkSize}>
             {CHUNK_OPTIONS(t).map((opt) => (
               <option key={opt.value} value={opt.value} style={OPT_STYLE}>{opt.label}</option>
             ))}
@@ -273,7 +274,7 @@ export const BatchSender: React.FC<BatchSenderProps> = ({
         </div>
         <div className="space-y-1">
           <label className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{t.qosLevel}</label>
-          <select value={qos} disabled={isSending} onChange={(e) => setQos(Number(e.target.value))} className="field-input w-full">
+          <select value={qos} disabled={isSending} onChange={(e) => setQos(Number(e.target.value))} className="field-input w-full" aria-label={t.qosLevel}>
             {[0, 1, 2].map((q) => (
               <option key={q} value={q} style={OPT_STYLE}>{q === 0 ? t.qos0Desc : q === 1 ? t.qos1Desc : t.qos2Desc}</option>
             ))}

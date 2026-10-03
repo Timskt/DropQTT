@@ -306,7 +306,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
               </button>
             ))}
           </div>
-          <select value={limit} onChange={(e) => setLimit(Number(e.target.value))} className="field-input" title={t.historyStatTotal}>
+          <select value={limit} onChange={(e) => setLimit(Number(e.target.value))} className="field-input" title={t.historyStatTotal} aria-label={t.historyStatTotal}>
             {[100, 200, 500, 1000, 2000].map((n) => (<option key={n} value={n}>{n}</option>))}
           </select>
           <button onClick={runSearch} className="btn-accent !py-1.5">{t.historyQuery}</button>

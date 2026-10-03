@@ -244,6 +244,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <select
               value={lang}
               onChange={(e) => setLang(e.target.value as Language)}
+              aria-label={t.language}
               className="bg-transparent text-[11px] font-mono focus:outline-none w-full cursor-pointer"
               style={{ color: 'var(--text-secondary)' }}
             >
@@ -260,6 +261,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <select
               value={theme}
               onChange={(e) => setTheme(e.target.value as Theme)}
+              aria-label={t.theme}
               className="bg-transparent text-[11px] font-mono focus:outline-none w-full cursor-pointer"
               style={{ color: 'var(--text-secondary)' }}
             >

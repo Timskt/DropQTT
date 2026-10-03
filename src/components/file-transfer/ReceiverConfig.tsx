@@ -64,6 +64,7 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
         <div className="flex items-center space-x-2">
           <input
             type="text"
+            aria-label={t.subscribeTopic}
             value={subscribeTopic}
             onChange={(e) => setSubscribeTopic(e.target.value)}
             placeholder="dropqtt/public-lobby/#"
@@ -107,6 +108,7 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
           type="button"
           role="switch"
           aria-checked={autoReceive}
+          aria-label={t.autoAcceptFiles}
           onClick={() => onToggleAutoReceive(!autoReceive)}
           className="relative w-10 h-5 rounded-full border transition shrink-0"
           style={{ background: autoReceive ? 'var(--ok)' : 'var(--bg-inset)', borderColor: autoReceive ? 'var(--ok)' : 'var(--border-inset)' }}

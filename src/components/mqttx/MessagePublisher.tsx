@@ -414,6 +414,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             placeholder="test/topic"
+            aria-label={t.publishTopic}
             list="dropqtt-recent-topics"
             className="field-input flex-1 min-w-[180px]"
           />
@@ -634,6 +635,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 value={contentType}
                 onChange={(e) => setContentType(e.target.value)}
                 placeholder={`${t.contentTypeLabel} (e.g. application/json)`}
+                aria-label={t.contentTypeLabel}
                 className="field-input text-[11px]"
               />
               <input
@@ -641,6 +643,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 value={messageExpiry}
                 onChange={(e) => setMessageExpiry(e.target.value)}
                 placeholder={`${t.messageExpiryLabel} (default: broker)`}
+                aria-label={t.messageExpiryLabel}
                 className="field-input text-[11px]"
                 min={0}
               />
@@ -651,6 +654,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 value={payloadFormat}
                 onChange={(e) => setPayloadFormat(e.target.value as '' | '0' | '1')}
                 className="field-input text-[11px]"
+                aria-label={t.payloadFormatHint}
                 title={t.payloadFormatHint}
                 style={{ color: payloadFormat ? 'var(--text-primary)' : 'var(--text-muted)' }}
               >
@@ -665,6 +669,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 value={topicAlias}
                 onChange={(e) => setTopicAlias(e.target.value)}
                 placeholder={t.topicAliasLabel}
+                aria-label={t.topicAliasLabel}
                 className="field-input text-[11px]"
                 title={t.topicAliasHint}
               />
@@ -675,6 +680,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 value={responseTopic}
                 onChange={(e) => setResponseTopic(e.target.value)}
                 placeholder={t.responseTopicLabel}
+                aria-label={t.responseTopicLabel}
                 className="field-input text-[11px]"
                 title={t.responseTopicHint}
               />
@@ -683,6 +689,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                 value={correlationData}
                 onChange={(e) => setCorrelationData(e.target.value)}
                 placeholder={t.correlationDataLabel}
+                aria-label={t.correlationDataLabel}
                 className="field-input text-[11px]"
                 title={t.correlationDataHint}
               />
@@ -724,6 +731,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                   type="text"
                   value={k}
                   placeholder={t.propertyKey}
+                  aria-label={t.propertyKey}
                   onChange={(e) =>
                     setUserProps((prev) => prev.map((p, i) => (i === idx ? [e.target.value, p[1]] : p)))
                   }
@@ -733,6 +741,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                   type="text"
                   value={v}
                   placeholder={t.propertyValue}
+                  aria-label={t.propertyValue}
                   onChange={(e) =>
                     setUserProps((prev) => prev.map((p, i) => (i === idx ? [p[0], e.target.value] : p)))
                   }
@@ -787,6 +796,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                     type="button"
                     onClick={() => setLayout(l)}
                     title={l === 'split' ? `${t.preview} / ${t.payload}` : l === 'preview' ? t.preview : t.payload}
+                    aria-label={l === 'split' ? `${t.preview} / ${t.payload}` : l === 'preview' ? t.preview : t.payload}
                     className="px-2 py-1 rounded text-[11px] transition"
                     style={
                       layout === l
@@ -827,7 +837,10 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               onClick={() => setPayload('')}
               className="transition opacity-70 hover:opacity-100"
               style={{ color: 'var(--danger)' }}
-              title={t.clearMessages}
+              // This erases the payload draft, not the feed: the tooltip used to
+              // borrow "Clear Messages", which is a different button's job.
+              title={t.clearPayloadDraft}
+              aria-label={t.clearPayloadDraft}
             >
               <Eraser className="w-3 h-3" />
             </button>
@@ -869,6 +882,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                   ? '# Hello **world**'
                   : '{"key": "value"}'
               }
+              aria-label={t.payload}
               className="w-full field-input resize-y text-xs leading-relaxed"
               style={{ background: 'var(--bg-code)', color: 'var(--code-text)', minHeight: '12rem' }}
             />

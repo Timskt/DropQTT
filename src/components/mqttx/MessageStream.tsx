@@ -354,6 +354,8 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   const [compareOn, setCompareOn] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
   const retainRef = useRef<HTMLDivElement>(null);
+  const retainToggleRef = useRef<HTMLButtonElement>(null);
+  const retainClearRef = useRef<HTMLButtonElement>(null);
 
   // Unique topics that currently hold a retained message (inbound or echoed outbound)
   const retainedTopics = useMemo(() => {
@@ -362,14 +364,26 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
     return [...set].sort();
   }, [messages]);
 
-  // Close the retained popover on outside click
+  // Close the retained popover on outside click or Escape, and start inside it.
+  // Escape also returns focus to the toggle: a keyboard user who just dismissed a
+  // popover should not be left on the document body with no idea where they are.
   useEffect(() => {
     if (!retainOpen) return;
     const onDown = (e: MouseEvent) => {
       if (retainRef.current && !retainRef.current.contains(e.target as Node)) setRetainOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setRetainOpen(false);
+      retainToggleRef.current?.focus();
+    };
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    retainClearRef.current?.focus();
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [retainOpen]);
 
   const handleExport = useCallback(async (format: ExportFormat) => {
@@ -449,6 +463,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder={t.filterTopic}
+              aria-label={t.filterTopic}
               className="field-input w-full pl-8"
             />
           </div>
@@ -581,9 +596,13 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
           {/* Retained message clearer */}
           <div className="relative" ref={retainRef}>
             <button
+              ref={retainToggleRef}
               onClick={() => setRetainOpen((x) => !x)}
               disabled={retainedTopics.length === 0}
               title={t.clearRetainedTitle}
+              aria-label={t.clearRetainedTitle}
+              aria-expanded={retainOpen}
+              aria-controls="dropqtt-retained-popover"
               className={`relative p-1.5 rounded border transition ${
                 retainedTopics.length > 0 ? 'chip-warn !p-1.5' : 'cursor-not-allowed opacity-40'
               }`}
@@ -604,7 +623,11 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
               )}
             </button>
             {retainOpen && retainedTopics.length > 0 && (
-              <div className="absolute right-0 top-full mt-1.5 z-20 w-72 rounded-md border shadow-xl p-2.5 animate-fade-in" style={{ background: 'var(--bg-panel-solid)', borderColor: 'var(--border-panel)' }}>
+              <div
+                id="dropqtt-retained-popover"
+                role="group"
+                aria-label={t.retainedOnTopics}
+                className="absolute right-0 top-full mt-1.5 z-20 w-72 rounded-md border shadow-xl p-2.5 animate-fade-in" style={{ background: 'var(--bg-panel-solid)', borderColor: 'var(--border-panel)' }}>
                 <div className="text-[11px] mb-1.5 px-1" style={{ color: 'var(--text-secondary)' }}>{t.retainedOnTopics}</div>
                 <div className="max-h-40 overflow-y-auto space-y-0.5 mb-2">
                   {retainedTopics.map((tp) => (
@@ -614,6 +637,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
                   ))}
                 </div>
                 <button
+                  ref={retainClearRef}
                   onClick={handleClearRetained}
                   disabled={clearingRetain}
                   className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-[11px] font-bold disabled:opacity-50 transition border"

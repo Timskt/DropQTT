@@ -81,7 +81,11 @@ const darkBase: ThemeTokens = {
   '--border-inset': 'rgba(51, 65, 85, 0.5)',
   '--text-primary': '#f1f5f9',
   '--text-secondary': '#94a3b8',
-  '--text-muted': '#64748b',
+  // Muted text is rendered at 10-11px across the console, which is normal-size text
+  // for WCAG and therefore needs 4.5:1. The slate this used to carry measured
+  // 3.75:1 on this panel and 3.9:1 on obsidian's, so every hint, caption and
+  // timestamp was quietly unreadable. Still dimmer than --text-secondary.
+  '--text-muted': '#7c8da3',
   '--accent': '#06b6d4',
   '--accent-strong': '#0891b2',
   '--accent-contrast': '#ffffff',
@@ -155,7 +159,7 @@ export const themes: Record<Theme, ThemeDefinition> = {
       '--border-inset': 'rgba(136, 192, 208, 0.15)',
       '--text-primary': '#eceff4',
       '--text-secondary': '#d8dee9',
-      '--text-muted': '#7b88a1',
+      '--text-muted': '#a8b3c4',
       '--accent': '#88c0d0',
       '--accent-strong': '#5e81ac',
       '--accent-contrast': '#2e3440',

@@ -474,6 +474,15 @@ export interface Translations {
   payloadFormatHint: string;
   matchedByBrokerHint: string;
   matchedByLocalHint: string;
+  /** Names for the bridge rule editor's mode pickers, which have no visible label. */
+  sourceQosLabel: string;
+  topicRewriteMode: string;
+  forwardQosMode: string;
+  retainModeLabel: string;
+  pickColor: string;
+  clearPayloadDraft: string;
+  toastRegion: string;
+  toastDismiss: string;
   payloadFormatUnset: string;
   topicAliasLabel: string;
   topicAliasHint: string;
@@ -1166,6 +1175,8 @@ export const translations: Record<Language, Translations> = {
     corrHexHint: '以原始字节的十六进制显示关联数据',
     matchedByBrokerHint: 'broker 用订阅标识符报回的命中订阅',
     matchedByLocalHint: '本地匹配的命中订阅（broker 未回传标识符）',
+    toastRegion: '通知',
+    toastDismiss: '关闭通知',
     corrHexBadge: '十六进制',
     rpcNoCorrelation: '应答未带关联数据',
     ackCodeGrantedQos: '已授予 QoS {qos}',
@@ -1193,6 +1204,12 @@ export const translations: Record<Language, Translations> = {
     clearRetainedTitle: '保留消息管理',
     retainedOnTopics: '以下主题存在保留消息',
     clearAllRetained: '清除 {count} 个主题的保留消息',
+    sourceQosLabel: '源订阅 QoS',
+    topicRewriteMode: '主题改写方式',
+    forwardQosMode: '转发 QoS 方式',
+    retainModeLabel: 'Retain 处理方式',
+    pickColor: '订阅颜色',
+    clearPayloadDraft: '清空载荷草稿',
     clearingRetained: '清除中…',
     retainClearNote: '向每个主题发布空载荷（retain=1）以清除 broker 保留状态',
     schedulesTitle: '定时发布',
@@ -1786,6 +1803,8 @@ export const translations: Record<Language, Translations> = {
     corrHexHint: 'Correlation data shown as hex of the raw bytes',
     matchedByBrokerHint: 'subscription the broker said it matched',
     matchedByLocalHint: 'matched here — the broker sent no Subscription Identifier',
+    toastRegion: 'Notifications',
+    toastDismiss: 'Dismiss notification',
     corrHexBadge: 'hex',
     rpcNoCorrelation: 'reply carried no correlation data',
     ackCodeGrantedQos: 'granted QoS {qos}',
@@ -1814,6 +1833,12 @@ export const translations: Record<Language, Translations> = {
     clearRetainedTitle: 'Retained message manager',
     retainedOnTopics: 'Retained messages on these topics',
     clearAllRetained: 'Clear retained on {count} topics',
+    sourceQosLabel: 'Source subscribe QoS',
+    topicRewriteMode: 'Topic rewrite mode',
+    forwardQosMode: 'Forwarding QoS mode',
+    retainModeLabel: 'Retain mode',
+    pickColor: 'Subscription colour',
+    clearPayloadDraft: 'Clear payload draft',
     clearingRetained: 'Clearing…',
     retainClearNote: 'Publishes an empty payload (retain=1) per topic to wipe broker retain state',
     schedulesTitle: 'Scheduled Runs',
@@ -2406,6 +2431,8 @@ export const translations: Record<Language, Translations> = {
     corrHexHint: '以原始位元組的十六進位顯示關聯資料',
     matchedByBrokerHint: 'broker 以訂閱識別號回報的命中訂閱',
     matchedByLocalHint: '本機比對的命中訂閱（broker 未回傳識別號）',
+    toastRegion: '通知',
+    toastDismiss: '關閉通知',
     corrHexBadge: '十六進位',
     rpcNoCorrelation: '應答未帶關聯資料',
     ackCodeGrantedQos: '已授予 QoS {qos}',
@@ -2435,6 +2462,12 @@ export const translations: Record<Language, Translations> = {
     clearRetainedTitle: '保留訊息管理',
     retainedOnTopics: '以下主題存在保留訊息',
     clearAllRetained: '清除 {count} 個主題的保留訊息',
+    sourceQosLabel: '來源訂閱 QoS',
+    topicRewriteMode: '主題改寫方式',
+    forwardQosMode: '轉送 QoS 方式',
+    retainModeLabel: 'Retain 處理方式',
+    pickColor: '訂閱顏色',
+    clearPayloadDraft: '清空載具草稿',
     clearingRetained: '清除中…',
     retainClearNote: '向每個主題發布空載荷（retain=1）以清除 broker 保留狀態',
     schedulesTitle: '定時發布',
@@ -3026,6 +3059,8 @@ export const translations: Record<Language, Translations> = {
     corrHexHint: '相関データを生のバイト列の16進で表示',
     matchedByBrokerHint: 'ブローカーが購読識別子で返した一致サブスクライブ',
     matchedByLocalHint: 'ローカルで一致判定しました（ブローカーは識別子を返していません）',
+    toastRegion: '通知',
+    toastDismiss: '通知を閉じる',
     corrHexBadge: '16進',
     rpcNoCorrelation: '応答に相関データなし',
     ackCodeGrantedQos: 'QoS {qos} を許可',
@@ -3056,6 +3091,12 @@ export const translations: Record<Language, Translations> = {
     clearRetainedTitle: '保持メッセージ管理',
     retainedOnTopics: 'これらのトピックに保持メッセージがあります',
     clearAllRetained: '{count} トピックの保持を削除',
+    sourceQosLabel: 'ソース購読の QoS',
+    topicRewriteMode: 'トピック書き換え方式',
+    forwardQosMode: '転送 QoS の方式',
+    retainModeLabel: 'Retain の方式',
+    pickColor: 'サブスクライブの色',
+    clearPayloadDraft: 'ペイロード下書きを消す',
     clearingRetained: '削除中…',
     retainClearNote: '各トピックに空ペイロード（retain=1）を発行し、ブローカーの保持状態を解除します',
     schedulesTitle: '定期 Publish',
@@ -3120,3 +3161,18 @@ export const currentTranslations = (): Translations => {
   const lang = (raw === 'en' || raw === 'zh-TW' || raw === 'ja' || raw === 'zh-CN') ? raw : 'zh-CN';
   return translations[lang] ?? translations['zh-CN'];
 };
+
+/**
+ * Fill `{placeholder}` slots in a translated string.
+ *
+ * Placeholders are named per string across four locales (`{count}`, `{ms}`,
+ * `{delivered}` …), so this accepts whatever the string actually contains rather
+ * than keeping a central list in sync. A slot with no matching parameter is left
+ * as written: a missing value has to stay visible in the sentence, because
+ * silently deleting it turns "3 of 5 failed" into "of failed" and that is how a
+ * localisation bug hides.
+ */
+export const fill = (text: string, params: Record<string, string | number>): string =>
+  text.replace(/\{(\w+)\}/g, (whole, name: string) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : whole,
+  );

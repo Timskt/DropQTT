@@ -62,7 +62,7 @@ export const BrokerSysPanel: React.FC<BrokerSysPanelProps> = ({ rows, connected,
               {expanded ? t.collapse : t.expandAll}
             </button>
           )}
-          <button onClick={onClear} disabled={rows.length === 0} title={t.sysClear} className="btn-ghost !px-2 !py-1 text-[10px] flex items-center gap-1 disabled:opacity-40">
+          <button onClick={onClear} disabled={rows.length === 0} title={t.sysClear} aria-label={t.sysClear} className="btn-ghost !px-2 !py-1 text-[10px] flex items-center gap-1 disabled:opacity-40">
             <Trash2 className="w-3 h-3" />
           </button>
         </div>
@@ -105,7 +105,7 @@ export const BrokerSysPanel: React.FC<BrokerSysPanelProps> = ({ rows, connected,
             <div className="space-y-2 animate-fade-in">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-                <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t.sysFilter} className="field-input w-full pl-8" />
+                <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t.sysFilter} aria-label={t.sysFilter} className="field-input w-full pl-8" />
               </div>
               <div className="inset-box divide-y max-h-64 overflow-y-auto">
                 {filtered.map((r) => (

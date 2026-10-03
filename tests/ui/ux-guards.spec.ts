@@ -199,3 +199,35 @@ test('two feed rows can be compared field by field', async ({ page }) => {
   await expect(panel).toContainText('+ ');
   await expect(panel).toContainText('- ');
 });
+
+test('the retained popover opens by keyboard, moves focus inside, and Escape hands it back', async ({ page }) => {
+  await boot(page, 'mqttx');
+  await page.evaluate(() => {
+    (window as any).__fire('mqtt-messages', {
+      messages: [
+        {
+          id: 'r1', topic: 'device/online', payload: '1', payloadLen: 1,
+          payloadBase64: btoa('1'), truncated: false, qos: 0, retain: true,
+          timestamp: '10:00:00.000', timestampMs: Date.now(), direction: 'in',
+        },
+      ],
+      dropped: 0,
+    });
+  });
+
+  const toggle = page.getByRole('button', { name: 'Retained message manager' });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+
+  const popover = page.getByRole('group', { name: 'Retained messages on these topics' });
+  await expect(popover).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  // Focus has to move inside. A popover that can only be reached by mouse leaves a
+  // keyboard user standing on the toggle with nothing Tab reaches.
+  await expect(popover.getByRole('button', { name: /Clear retained on 1 topics/ })).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(popover).toHaveCount(0);
+  await expect(toggle).toBeFocused();
+});
