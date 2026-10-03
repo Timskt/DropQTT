@@ -1450,6 +1450,37 @@ vitest **67/67**、`tsc` 干净、`eslint` 0 error 10 warn。Rust 侧无改动�
 门：Rust harness **199/199**（rpc 20 条，新增 4 条）、`clippy --lib --tests` 干净、
 vitest **67/67**、`tsc` 干净、`eslint` 0 error 10 warn、Playwright 全套 **139/139**（rpc 10 条，新增 4 条）。
 
+### 4.47 线上 golden 测试：把我每次手写的 MQTT5 sink 变成仓库里的回归网（§7 T7，第十三轮 2026-10-04）
+
+审阅稿这条写得很准："我这轮为验证 v5 属性手写过一个 MQTT5 sink；那本该是仓库里的回归测试，
+而不是每次重新发明。" 落点是 `src-tauri/src/transport.rs` 的 `mod wire_golden`：
+用 vendored `mqttbytes` 的 `write()` 把包编出来，与**手算的 hex** 逐字节比对。
+
+**这一条最大的产出不是测试，而是三次"我记错了"。** 我先不看编码器、只按规范手算四个包，
+结果 4 个里 3 个对不上——**每一次都是我错，编码器是对的**：
+
+| 我以为 | 实际 | 我怎么确认的 |
+|---|---|---|
+| Response Topic = `0x0C`、Correlation Data = `0x10` | `0x08` / `0x09` | 查 vendored `PropertyType` 枚举（`v5/mod.rs:175-177`），与规范一致 |
+| 被拒的 PUBACK 是 `40 03 00 07 87` | `40 04 00 07 87 00` | §3.4.2：一旦带非 Success 原因码，属性长度字段就要显式写出来；只有 Success 可以走 4 字节短式 |
+| `Subscribe::new(...)` 的包号是 1 | 是 0（构造器不管包号，发送时才分配） | 看 `subscribe.rs` 的构造器 |
+
+还顺手撞到一条规范硬规则：**QoS1 的 PUBLISH 若 `pkid=0`，编码器直接返回 `PacketIdZero`**——
+这正是规范里的"非 QoS0 不得用 0 包号"，测试里写明而不是绕开。
+
+**为什么这些 hex 可信，而不是"编码器自己写的答案自己验"**：这些包不是我新造的，而是
+§4.9（v5 属性补全）与 §4.34（订阅标识符）里已经**对着 mosquitto 2.0.15 真机跑通过**的同一批字节——
+属性编号若错一个，broker 就会当作没有该属性。golden 测试的作用是把那次一次性取证**冻住**：
+以后谁改动导致 `0x09` 变成别的字节，测试当场红，而不用再写一个 sink 才发现。
+
+覆盖面（5 条）：QoS1 无属性 PUBLISH；带 Response Topic + **二进制** Correlation（`00 ff`，
+不是 UTF-8 也原样上墙）+ User Property 的 retain PUBLISH；带订阅标识符的 SUBSCRIBE；
+被拒的 PUBACK（长式）；成功的 PUBACK（短式）。CONNECT 的 will 属性没进来——它的结构体字段太多，
+手算成本高于收益，那部分继续由 §4.21 的真机双实例覆盖。
+
+门：Rust harness **204/204**（新增 5 条）、`clippy --lib --tests` 干净。
+纯测试改动，前端与 Playwright 无涉及（vitest 67/67、`tsc`、`eslint` 预算不变）。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

@@ -1359,3 +1359,106 @@ mod tests {
         assert_eq!(ack_reason_string(None::<&rumqttc::v5::mqttbytes::v5::SubAckProperties>), None);
     }
 }
+
+/// Golden wire bytes for the packets this app builds by hand.
+///
+/// Every v5 property in the review rounds so far was verified by writing a throwaway
+/// broker or sink and reading what came out — correct, but the test vanished with the
+/// script. These fixtures pin the byte layout instead, and the expected hex was
+/// computed from MQTT5 by hand (property ids, ordering, remaining lengths), not copied
+/// out of the encoder: a writer that starts dropping `Response Topic` or reordering
+/// `Correlation Data` fails here rather than in a support conversation.
+///
+/// Property *order* inside a packet is free per the spec; it is fixed here because a
+/// regression is only visible against something stable.
+#[cfg(test)]
+mod wire_golden {
+    use bytes::Bytes;
+    use bytes::BytesMut;
+    use rumqttc::v5::mqttbytes::v5::{
+        Filter, PubAck, PubAckReason, Publish, PublishProperties, Subscribe, SubscribeProperties,
+    };
+    use rumqttc::v5::mqttbytes::QoS;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn publish_qos1_without_properties() {
+        let mut pkt = Publish::new("sensors/a", QoS::AtLeastOnce, Bytes::from_static(b"hi"), None);
+        // A QoS 1 publish with no packet id is refused outright (`PacketIdZero`),
+        // which is the spec rule rather than a quirk worth papering over.
+        pkt.pkid = 7;
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        // 32 | 10 len(16) | 0009 + "sensors/a" | 0007 pkid | 00 no properties | 6869
+        assert_eq!(hex(&buf), "3210000973656e736f72732f610007006869");
+    }
+
+    #[test]
+    fn publish_carries_response_topic_correlation_and_user_property() {
+        let props = PublishProperties {
+            response_topic: Some("r".to_string()),
+            // Binary on purpose: 0x00 0xff is not text, and a correlation that only
+            // survives when it happens to be UTF-8 is the bug this pins down.
+            correlation_data: Some(Bytes::from(vec![0x00u8, 0xffu8])),
+            user_properties: vec![("k".to_string(), "v".to_string())],
+            ..Default::default()
+        };
+        let mut pkt = Publish::new("a/b", QoS::AtMostOnce, Bytes::from_static(b"hi"), Some(props));
+        pkt.retain = true;
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        // 31 retain | 18 len(24) | 0003 "a/b" | 10 properties length(16)
+        // | 08 0001 "r" | 09 0002 00ff | 26 0001 "k" 0001 "v" | 6869 payload
+        // Property ids are from MQTT5: Response Topic 0x08, Correlation Data 0x09,
+        // Subscription Identifier 0x0B, User Property 0x26.
+        assert_eq!(
+            hex(&buf),
+            concat!(
+                "31180003612f6210",
+                "08000172",
+                "09000200ff",
+                "2600016b000176",
+                "6869",
+            )
+        );
+    }
+
+    #[test]
+    fn subscribe_labels_its_filter_with_a_subscription_identifier() {
+        let mut pkt = Subscribe::new(
+            Filter::new("sensors/#", QoS::AtLeastOnce),
+            Some(SubscribeProperties { id: Some(7), user_properties: Vec::new() }),
+        );
+        // The client assigns the packet id at send time; the constructor leaves it 0.
+        pkt.pkid = 1;
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        // 82 | 11 len(17) | 0001 pkid | 02 properties length | 0b07 identifier
+        // | 0009 + "sensors/#" | 01 options (qos 1, rh 0, rap 0, nl 0)
+        assert_eq!(hex(&buf), "82110001020b07000973656e736f72732f2301");
+    }
+
+    #[test]
+    fn a_refused_publish_ack_is_one_byte_wider_than_a_plain_one() {
+        let pkt = PubAck { pkid: 7, reason: PubAckReason::NotAuthorized, properties: None };
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        // 40 | 04 len | 0007 pkid | 87 NotAuthorized | 00 property length
+        // A refused ack carries the property length explicitly; only the Success
+        // short form (below) may leave it off.
+        assert_eq!(hex(&buf), "400400078700");
+    }
+
+    #[test]
+    fn a_successful_ack_is_the_short_form() {
+        // Success is encoded without the reason byte at all, so a reader that
+        // assumes a fixed length would mispair the next packet in the stream.
+        let pkt = PubAck { pkid: 9, reason: PubAckReason::Success, properties: None };
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        assert_eq!(hex(&buf), "40020009");
+    }
+}
