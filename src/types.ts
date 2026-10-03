@@ -369,6 +369,21 @@ export interface HistoryStats {
   newestTs?: number | null;
   /** Rows the best-effort write path could not persist this session */
   lostRows?: number;
+  /** Age limit in days; 0 means only the row cap trims */
+  retentionDays?: number;
+  /** Rows the age policy deleted this session. Pruned history is still gone. */
+  prunedRows?: number;
+}
+
+/** One topic's share of a time window, from `history_topics`. */
+export interface HistoryTopicRow {
+  topic: string;
+  count: number;
+  inbound: number;
+  outbound: number;
+  bytes: number;
+  firstTs: number;
+  lastTs: number;
 }
 
 // ---- MQTT5 request / response ----

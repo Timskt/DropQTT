@@ -5,7 +5,7 @@ import {
   Archive, RefreshCw, Search, Trash2, ArrowUpRight, ArrowDownRight, Clock,
   Inbox, Send, Rss, Filter, Copy, Check, Zap, BarChart3, Download, ChevronRight,
 } from 'lucide-react';
-import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats } from '../../types';
+import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, HistoryTopicRow } from '../../types';
 import { Translations, fill } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
@@ -141,6 +141,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [series, setSeries] = useState<HistorySeriesPoint[]>([]);
   const [stats, setStats] = useState<HistoryStats>({ rows: 0, inbound: 0, outbound: 0 });
+  // Per-topic totals over the same window the list is showing
+  const [topics, setTopics] = useState<HistoryTopicRow[]>([]);
+  const [retentionDraft, setRetentionDraft] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -164,13 +167,15 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
       const until = Date.now();
       const since = win.ms ? until - win.ms : Math.min(st.oldestTs ?? until, until);
       const bucket = Math.max(1000, Math.ceil((until - since) / 60 / 1000) * 1000);
-      const [r, s] = await Promise.all([
+      const [r, s, tp] = await Promise.all([
         invoke<HistoryRow[]>('query_history', { search: debouncedSearch, direction, limit, sinceMs: since, untilMs: until }),
         invoke<HistorySeriesPoint[]>('history_series', { topic: debouncedSearch, direction, bucketMs: bucket, sinceMs: since, untilMs: until }),
+        invoke<HistoryTopicRow[]>('history_topics', { search: debouncedSearch, direction, sinceMs: since, untilMs: until, limit: 12 }),
       ]);
       if (requestId !== requestRef.current) return;
       setRows(r);
       setSeries(s.length ? fillHistorySeries(s, since, until, bucket) : []);
+      setTopics(tp ?? []);
       setStats(st);
       setError(null);
     } catch (e) {
@@ -178,6 +183,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
       setError(String(e));
       setRows([]);
       setSeries([]);
+      setTopics([]);
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
@@ -309,6 +315,42 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
           <select value={limit} onChange={(e) => setLimit(Number(e.target.value))} className="field-input" title={t.historyStatTotal} aria-label={t.historyStatTotal}>
             {[100, 200, 500, 1000, 2000].map((n) => (<option key={n} value={n}>{n}</option>))}
           </select>
+          <label
+            className="flex items-center gap-1 text-[10px]"
+            style={{ color: 'var(--text-muted)' }}
+            title={t.historyRetentionHint}
+          >
+            {t.historyRetention}
+            <input
+              type="number" min={0} max={3650}
+              className="field-input w-16 !py-1"
+              data-testid="history-retention"
+              aria-label={t.historyRetention}
+              value={retentionDraft ?? stats.retentionDays ?? 0}
+              onChange={(e) => setRetentionDraft(Math.max(0, Math.min(3650, parseInt(e.target.value, 10) || 0)))}
+            />
+            <button
+              type="button"
+              className="btn-ghost !px-2 !py-1"
+              data-testid="history-retention-apply"
+              disabled={retentionDraft === null || retentionDraft === (stats.retentionDays ?? 0)}
+              onClick={() => {
+                const days = retentionDraft;
+                if (days === null) return;
+                void (async () => {
+                  try {
+                    await invoke('set_history_retention', { days });
+                    setRetentionDraft(null);
+                    await load();
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                })();
+              }}
+            >
+              {t.historyRetentionApply}
+            </button>
+          </label>
           <button onClick={runSearch} className="btn-accent !py-1.5">{t.historyQuery}</button>
           <div className="flex gap-1 ml-auto" aria-label={t.historyExportResults}>
             {(['json', 'csv'] as const).map((format) => <button key={format} onClick={() => void handleExport(format)} disabled={!rows.length || loading || exporting || search !== debouncedSearch} className="btn-ghost !px-2 !py-1.5 flex items-center gap-1 disabled:opacity-40" title={t.historyExportResults}><Download className="w-3 h-3" />{format.toUpperCase()}</button>)}
@@ -353,12 +395,48 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
           )}
         </div>
 
+        {/* Per-topic totals over the same window. "Which device was noisy at 3 am"
+            is one question here and twenty pages of filtered history otherwise. */}
+        {topics.length > 0 && (
+          <div className="p-3" style={{ borderBottom: '1px solid var(--border-panel)' }}>
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+              <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                {t.historyByTopic} · {debouncedSearch || t.historyAllTopics}
+              </span>
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{t.historyByTopicHint}</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-1" data-testid="history-topics">
+              {topics.map((tp) => (
+                <button
+                  key={tp.topic}
+                  type="button"
+                  data-testid={`history-topic-${tp.topic}`}
+                  onClick={() => { setSearch(tp.topic); setDebouncedSearch(tp.topic); }}
+                  className="flex items-center justify-between gap-2 px-2 py-1 rounded text-[11px] font-mono text-left transition hover:opacity-100"
+                  style={{ color: 'var(--text-secondary)', background: 'var(--bg-inset)' }}
+                  title={`${t.historyStatIn}: ${tp.inbound.toLocaleString()} · ${t.historyStatOut}: ${tp.outbound.toLocaleString()} · ${fmtBytes(tp.bytes)} · ${new Date(tp.lastTs).toLocaleTimeString()}`}
+                >
+                  <span className="truncate">{tp.topic}</span>
+                  <span className="shrink-0" style={{ color: 'var(--sky)' }}>{tp.count.toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Results */}
         <div className="flex items-center justify-between px-3 py-1.5 text-[10px]" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-inset)' }}>
-          <span>{fill(t.historyShowing, { count: String(rows.length) })}</span>
+          <span className="flex items-center gap-2">
+            {fill(t.historyShowing, { count: String(rows.length) })}
+            {(stats.prunedRows ?? 0) > 0 && (
+              <span data-testid="history-pruned" style={{ color: 'var(--warn)' }}>
+                {fill(t.historyPruned, { count: String(stats.prunedRows ?? 0) })}
+              </span>
+            )}
+          </span>
           {loading && <span className="flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /> {t.refresh}</span>}
         </div>
-        <div className="max-h-[52vh] overflow-y-auto">
+        <div className="max-h-[52vh] overflow-y-auto" data-testid="history-results">
           {rows.length === 0 && !loading ? (
             <div className="p-10 text-center flex flex-col items-center gap-2">
               <Inbox className="w-8 h-8" style={{ color: 'var(--text-muted)' }} />

@@ -1030,20 +1030,46 @@ impl MqttManager {
         store.series(topic, direction, bucket_ms, since_ms, until_ms)
     }
 
+    /// Per-topic totals over the same window the list uses.
+    pub async fn history_topics(
+        &self,
+        search: &str,
+        direction: &str,
+        since_ms: i64,
+        until_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<crate::history::HistoryTopicRow>, String> {
+        let store = self
+            .history
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "message history is not available".to_string())?;
+        store.topics(search, direction, since_ms, until_ms, limit)
+    }
+
+    /// Age policy for the store, in days (0 = only the row cap trims).
+    pub async fn set_history_retention(&self, days: i64) -> Result<(), String> {
+        let store = self
+            .history
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "message history is not available".to_string())?;
+        store.set_retention_days(days)
+    }
+
     pub async fn history_stats(&self) -> crate::history::HistoryStats {
         self.history
             .read()
             .await
             .as_ref()
             .map(|h| h.stats())
-            .unwrap_or(crate::history::HistoryStats {
-                rows: 0,
-                inbound: 0,
-                outbound: 0,
-                oldest_ts: None,
-                newest_ts: None,
-                lost_rows: 0,
-            })
+            // An empty default, not a zeroed copy of the fields: a new counter
+            // added to the stats must not have to be repeated here.
+            .unwrap_or_default()
     }
 
     pub async fn clear_history(&self) {

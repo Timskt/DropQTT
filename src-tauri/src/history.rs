@@ -19,6 +19,11 @@ use crate::protocol::{MqttGenericMessage, PubProperties};
 const MAX_HISTORY_ROWS: i64 = 100_000;
 /// Trim only every N appends to keep the hot path cheap.
 const TRIM_EVERY_BATCHES: u64 = 50;
+/// Default age limit. 0 means "no age limit, only the row cap", which is what
+/// the store did before this existed; silently discarding a month of history
+/// because a new knob appeared would be the worse surprise.
+pub const DEFAULT_RETENTION_DAYS: i64 = 0;
+pub const MAX_RETENTION_DAYS: i64 = 3650;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,7 +51,24 @@ pub struct HistorySeriesPoint {
     pub count: i64,
 }
 
+/// One topic's share of a time window.
+///
+/// "Which device was talking at 3 am" is answered by counting per topic, and
+/// paging a filtered list to find it is how that question gets abandoned.
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryTopicRow {
+    pub topic: String,
+    pub count: i64,
+    pub inbound: i64,
+    pub outbound: i64,
+    /// Sum of payload lengths, so a noisy topic and a chatty small one separate
+    pub bytes: i64,
+    pub first_ts: i64,
+    pub last_ts: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryStats {
     pub rows: i64,
@@ -56,6 +78,11 @@ pub struct HistoryStats {
     pub newest_ts: Option<i64>,
     /// Rows dropped by the best-effort write path since this session opened
     pub lost_rows: u64,
+    /// Age limit currently applied; 0 means only the row cap trims
+    pub retention_days: i64,
+    /// Rows the retention policy has deleted since this session opened. History
+    /// that is deliberately pruned still has to be countable as gone.
+    pub pruned_rows: u64,
 }
 
 pub struct HistoryStore {
@@ -65,6 +92,10 @@ pub struct HistoryStore {
     /// purpose (a busy DB must never stall the live feed), but "best-effort"
     /// without a counter is indistinguishable from "complete".
     lost_rows: AtomicU64,
+    /// Age limit in days; 0 = no age limit. Kept in the DB so a restart cannot
+    /// quietly widen or narrow what the operator asked for.
+    retention_days: std::sync::atomic::AtomicI64,
+    pruned_rows: AtomicU64,
 }
 
 fn now_ms() -> i64 {
@@ -92,7 +123,11 @@ impl HistoryStore {
                 ts INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts DESC);
-             CREATE INDEX IF NOT EXISTS idx_messages_topic ON messages(topic);",
+             CREATE INDEX IF NOT EXISTS idx_messages_topic ON messages(topic);
+             CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+             );",
         )
         .map_err(|e| format!("schema: {e}"))?;
         // Additive migration preserves existing captures when upgrading.
@@ -108,15 +143,19 @@ impl HistoryStore {
             conn.execute("ALTER TABLE messages ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0", [])
                 .map_err(|e| format!("history migration: {e}"))?;
         }
+        let retention_days = read_retention(&conn);
         Ok(Self {
             conn: Mutex::new(conn),
             batches: Mutex::new(0),
             lost_rows: AtomicU64::new(0),
+            retention_days: std::sync::atomic::AtomicI64::new(retention_days),
+            pruned_rows: AtomicU64::new(0),
         })
     }
 
     /// Mirror one drained feed batch into the DB (transactional, cheap).
-    pub fn append(&self, batch: &[MqttGenericMessage]) {        if batch.is_empty() {
+    pub fn append(&self, batch: &[MqttGenericMessage]) {
+        if batch.is_empty() {
             return;
         }
         let fallback_ts = now_ms();
@@ -194,12 +233,47 @@ impl HistoryStore {
         }
     }
 
+    /// Age policy in days; 0 means the row cap is the only limit.
+    pub fn retention_days(&self) -> i64 {
+        self.retention_days.load(Ordering::SeqCst)
+    }
+
+    /// Set the age policy and apply it now. Clamped rather than rejected: this is
+    /// called from a text input, and "36500" meaning "forever" is closer to what
+    /// the operator meant than an error message.
+    pub fn set_retention_days(&self, days: i64) -> Result<(), String> {
+        let days = days.clamp(0, MAX_RETENTION_DAYS);
+        {
+            let conn = self.conn.lock().map_err(|_| "history store is unavailable".to_string())?;
+            write_retention(&conn, days);
+        }
+        self.retention_days.store(days, Ordering::SeqCst);
+        self.trim();
+        Ok(())
+    }
+
+    /// Apply both bounds: drop what is older than the age policy, then enforce the
+    /// row cap. What went is added to `pruned_rows` rather than returned, because
+    /// history that was deliberately deleted still has to be countable as gone —
+    /// otherwise a shrinking database is indistinguishable from a broken writer.
     fn trim(&self) {
-        if let Ok(conn) = self.conn.lock() {
-            let _ = conn.execute(
+        let Ok(conn) = self.conn.lock() else { return };
+        let days = self.retention_days.load(Ordering::SeqCst);
+        let mut pruned = 0u64;
+        if days > 0 {
+            let cutoff = now_ms() - days * 86_400_000;
+            pruned += conn
+                .execute("DELETE FROM messages WHERE ts < ?1", params![cutoff])
+                .unwrap_or(0) as u64;
+        }
+        pruned += conn
+            .execute(
                 "DELETE FROM messages WHERE rowid NOT IN (SELECT rowid FROM messages ORDER BY ts DESC LIMIT ?1)",
                 params![MAX_HISTORY_ROWS],
-            );
+            )
+            .unwrap_or(0) as u64;
+        if pruned > 0 {
+            self.pruned_rows.fetch_add(pruned, Ordering::SeqCst);
         }
     }
 
@@ -287,6 +361,8 @@ impl HistoryStore {
             oldest_ts: None,
             newest_ts: None,
             lost_rows: self.lost_rows.load(Ordering::SeqCst),
+            retention_days: self.retention_days.load(Ordering::SeqCst),
+            pruned_rows: self.pruned_rows.load(Ordering::SeqCst),
         };
         let Ok(conn) = self.conn.lock() else { return empty() };
         let rows: i64 = conn
@@ -311,7 +387,63 @@ impl HistoryStore {
             oldest_ts: oldest,
             newest_ts: newest,
             lost_rows: self.lost_rows.load(Ordering::SeqCst),
+            retention_days: self.retention_days.load(Ordering::SeqCst),
+            pruned_rows: self.pruned_rows.load(Ordering::SeqCst),
         }
+    }
+
+    /// Per-topic totals over a window, busiest first.
+    ///
+    /// Takes the same text, direction and time predicates as the list and the
+    /// chart: a strip that ignores the filter the user is looking at would be a
+    /// third, contradictory view of "what is in this window".
+    pub fn topics(
+        &self,
+        search: &str,
+        direction: &str,
+        since_ms: i64,
+        until_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<HistoryTopicRow>, String> {
+        let conn = self.conn.lock().map_err(|_| "history store is unavailable".to_string())?;
+        let limit = limit.clamp(1, 200);
+        let like = search_pattern(search);
+        let dir_filter = direction == "in" || direction == "out";
+        let sql = "SELECT topic, COUNT(*), \
+                      SUM(CASE WHEN direction = 'in' THEN 1 ELSE 0 END), \
+                      SUM(CASE WHEN direction = 'out' THEN 1 ELSE 0 END), \
+                      COALESCE(SUM(payload_len), 0), MIN(ts), MAX(ts) \
+                   FROM messages \
+                   WHERE (?1 = '' OR topic LIKE ?1 ESCAPE '\\' OR payload LIKE ?1 ESCAPE '\\') \
+                     AND (?2 = 0 OR direction = ?3) \
+                     AND ts >= ?4 AND ts <= ?5 \
+                   GROUP BY topic ORDER BY COUNT(*) DESC LIMIT ?6";
+        let mut stmt = conn.prepare(sql).map_err(|e| format!("history topics: {e}"))?;
+        let rows = stmt
+            .query_map(
+                params![
+                    if search.trim().is_empty() { "" } else { &like },
+                    dir_filter as i64,
+                    direction,
+                    since_ms,
+                    until_ms,
+                    limit
+                ],
+                |r| {
+                    Ok(HistoryTopicRow {
+                        topic: r.get(0)?,
+                        count: r.get(1)?,
+                        inbound: r.get(2)?,
+                        outbound: r.get(3)?,
+                        bytes: r.get(4)?,
+                        first_ts: r.get(5)?,
+                        last_ts: r.get(6)?,
+                    })
+                })
+            .map_err(|e| format!("history topics: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("history topic unreadable: {e}"))?;
+        Ok(rows)
     }
 
     pub fn clear(&self) {
@@ -319,6 +451,20 @@ impl HistoryStore {
             let _ = conn.execute("DELETE FROM messages", []);
         }
     }
+}
+
+fn read_retention(conn: &Connection) -> i64 {
+    conn.query_row("SELECT value FROM settings WHERE key = 'retention_days'", [], |r| r.get::<_, String>(0))
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_RETENTION_DAYS)
+}
+
+fn write_retention(conn: &Connection, days: i64) {
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('retention_days', ?1)",
+        params![days.to_string()],
+    );
 }
 
 fn search_pattern(search: &str) -> String {
@@ -354,6 +500,107 @@ mod tests {
             timestamp_ms: 0,
             direction: dir.to_string(),
         }
+    }
+
+    fn temp_store(name: &str) -> (HistoryStore, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("dropqtt_hist_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("h.db");
+        let store = HistoryStore::open(&path).expect("open");
+        (store, path)
+    }
+
+    /// A message carrying its own timestamp, which is what the age policy judges.
+    fn msg_at(id: &str, topic: &str, payload: &str, dir: &str, ts: i64) -> MqttGenericMessage {
+        let mut m = msg(id, topic, payload, dir);
+        m.timestamp_ms = ts;
+        m
+    }
+
+    #[test]
+    fn topics_aggregates_per_topic_over_the_window() {
+        let (store, _) = temp_store("topics");
+        let now = now_ms();
+        store.append(&[
+            msg_at("1", "device/a", "x", "in", now),
+            msg_at("2", "device/a", "yyyy", "out", now),
+            msg_at("3", "device/b", "z", "in", now - 60_000),
+        ]);
+        let rows = store.topics("", "all", 0, i64::MAX, 20).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].topic, "device/a", "busiest first");
+        assert_eq!(rows[0].count, 2);
+        assert_eq!((rows[0].inbound, rows[0].outbound), (1, 1));
+        assert_eq!(rows[0].bytes, 5, "payload lengths, not row counts");
+        assert_eq!(rows[0].first_ts, now, "both of a's rows are at `now`");
+        let b = rows.iter().find(|r| r.topic == "device/b").expect("b present");
+        assert_eq!(b.last_ts - b.first_ts, 0, "one row spans no time at all");
+        // A window that ends before the older row must not see it.
+        let late = store.topics("", "all", now - 1_000, i64::MAX, 20).unwrap();
+        assert_eq!(late.iter().find(|r| r.topic == "device/b").map(|r| r.count), None);
+        // The text filter narrows the strip exactly as it narrows the list.
+        let only_a = store.topics("device/a", "all", 0, i64::MAX, 20).unwrap();
+        assert_eq!(
+            only_a.iter().map(|r| r.topic.as_str()).collect::<Vec<_>>(),
+            vec!["device/a"]
+        );
+        let outs = store.topics("", "out", 0, i64::MAX, 20).unwrap();
+        assert_eq!(outs.iter().find(|r| r.topic == "device/a").map(|r| r.count), Some(1));
+    }
+
+    #[test]
+    fn age_policy_prunes_only_what_is_older_than_it() {
+        let (store, _) = temp_store("retention");
+        let now = now_ms();
+        store.append(&[
+            msg_at("old", "device/old", "x", "in", now - 10 * 86_400_000),
+            msg_at("new", "device/new", "y", "in", now - 3_600_000),
+        ]);
+        assert_eq!(store.stats().rows, 2);
+        assert_eq!(store.stats().retention_days, DEFAULT_RETENTION_DAYS);
+
+        store.set_retention_days(5).unwrap();
+        let stats = store.stats();
+        assert_eq!(stats.rows, 1, "the ten-day-old row is gone");
+        assert_eq!(stats.retention_days, 5);
+        assert_eq!(stats.pruned_rows, 1, "pruning is counted, not silent");
+        assert_eq!(
+            store.query("", "all", 10, 0, i64::MAX).unwrap()[0].topic,
+            "device/new"
+        );
+    }
+
+    #[test]
+    fn turning_the_age_policy_off_back_does_not_resurrect_or_evict() {
+        let (store, _) = temp_store("retention_off");
+        let now = now_ms();
+        store.append(&[msg_at("ancient", "device/a", "x", "in", now - 400 * 86_400_000)]);
+        store.set_retention_days(30).unwrap();
+        assert_eq!(store.stats().rows, 0, "400 days old is past any sane policy");
+        store.set_retention_days(0).unwrap();
+        assert_eq!(store.stats().rows, 0, "0 means stop pruning, not delete more");
+        assert_eq!(store.retention_days(), 0);
+    }
+
+    #[test]
+    fn the_age_policy_survives_reopening_the_store() {
+        // A restart that quietly reset retention would keep history the operator
+        // asked to discard, or worse, start discarding what they asked to keep.
+        let (store, path) = temp_store("retention_persist");
+        store.set_retention_days(14).unwrap();
+        drop(store);
+        let reopened = HistoryStore::open(&path).expect("reopen");
+        assert_eq!(reopened.retention_days(), 14);
+    }
+
+    #[test]
+    fn an_absurd_retention_is_clamped_not_rejected() {
+        let (store, _) = temp_store("retention_clamp");
+        store.set_retention_days(999_999).unwrap();
+        assert_eq!(store.retention_days(), MAX_RETENTION_DAYS);
+        store.set_retention_days(-5).unwrap();
+        assert_eq!(store.retention_days(), 0, "negative means no age limit");
     }
 
     #[test]

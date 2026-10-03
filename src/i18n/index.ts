@@ -84,6 +84,12 @@ export interface Translations {
   historySearchHint: string;
   historyQuery: string;
   historyTrend: string;
+  historyByTopic: string;
+  historyByTopicHint: string;
+  historyRetention: string;
+  historyRetentionHint: string;
+  historyRetentionApply: string;
+  historyPruned: string;
   historyAllTopics: string;
   historyNoTrend: string;
   historyWindowTotal: string;
@@ -719,6 +725,12 @@ export const translations: Record<Language, Translations> = {
     historySearchHint: '搜索主题或报文正文（回车查询）…',
     historyQuery: '查询',
     historyTrend: '趋势',
+    historyByTopic: '按主题统计',
+    historyByTopicHint: '点击任一主题即按它过滤',
+    historyRetention: '保留天数',
+    historyRetentionHint: '0 = 只按条数上限裁剪；点应用后立即生效',
+    historyRetentionApply: '应用',
+    historyPruned: '保留策略已清理 {count} 行',
     historyAllTopics: '全部主题',
     historyNoTrend: '所选时间范围内无数据',
     historyWindowTotal: '区间总数',
@@ -1351,6 +1363,12 @@ export const translations: Record<Language, Translations> = {
     historySearchHint: 'Search topic or payload (Enter to query)…',
     historyQuery: 'Query',
     historyTrend: 'Trend',
+    historyByTopic: 'By topic',
+    historyByTopicHint: 'click a topic to filter by it',
+    historyRetention: 'Keep days',
+    historyRetentionHint: '0 = only the row cap trims; applying takes effect at once',
+    historyRetentionApply: 'Apply',
+    historyPruned: 'retention pruned {count} rows',
     historyAllTopics: 'All topics',
     historyNoTrend: 'No data in the selected window',
     historyWindowTotal: 'Window total',
@@ -1983,6 +2001,12 @@ export const translations: Record<Language, Translations> = {
     historySearchHint: '搜尋主題或報文正文（Enter 查詢）…',
     historyQuery: '查詢',
     historyTrend: '趨勢',
+    historyByTopic: '按主題統計',
+    historyByTopicHint: '點擊任一主題即以它篩選',
+    historyRetention: '保留天數',
+    historyRetentionHint: '0 = 只按條數上限裁剪；點套用後立即生效',
+    historyRetentionApply: '套用',
+    historyPruned: '保留策略已清理 {count} 列',
     historyAllTopics: '全部主題',
     historyNoTrend: '所選時間範圍內無資料',
     historyWindowTotal: '區間總數',
@@ -2615,6 +2639,12 @@ export const translations: Record<Language, Translations> = {
     historySearchHint: 'トピックまたは本文を検索（Enter で実行）…',
     historyQuery: '実行',
     historyTrend: 'トレンド',
+    historyByTopic: 'トピック別',
+    historyByTopicHint: 'トピックをクリックすると絞り込まれます',
+    historyRetention: '保持日数',
+    historyRetentionHint: '0 = 件数の上限のみ。適用するとすぐに反映されます',
+    historyRetentionApply: '適用',
+    historyPruned: '保持ポリシーで {count} 行を削除しました',
     historyAllTopics: '全トピック',
     historyNoTrend: '選択範囲にデータがありません',
     historyWindowTotal: '期間合計',

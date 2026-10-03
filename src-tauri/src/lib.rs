@@ -256,6 +256,34 @@ async fn history_series(
     state.mqtt.history_series(&topic, direction.as_deref().unwrap_or("all"), bucket_ms, since_ms, until_ms.unwrap_or(i64::MAX)).await
 }
 
+/// Per-topic totals over the window the list is showing
+#[tauri::command]
+async fn history_topics(
+    state: State<'_, AppState>,
+    search: Option<String>,
+    direction: Option<String>,
+    since_ms: i64,
+    until_ms: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Vec<history::HistoryTopicRow>, String> {
+    state
+        .mqtt
+        .history_topics(
+            &search.unwrap_or_default(),
+            &direction.unwrap_or_else(|| "all".to_string()),
+            since_ms,
+            until_ms.unwrap_or(i64::MAX),
+            limit.unwrap_or(20),
+        )
+        .await
+}
+
+/// How old history may get before it is trimmed; 0 keeps only the row cap.
+#[tauri::command]
+async fn set_history_retention(state: State<'_, AppState>, days: i64) -> Result<(), String> {
+    state.mqtt.set_history_retention(days).await
+}
+
 #[tauri::command]
 async fn history_stats(state: State<'_, AppState>) -> Result<history::HistoryStats, String> {
     Ok(state.mqtt.history_stats().await)
@@ -553,6 +581,8 @@ pub fn run() {
             query_history,
             history_series,
             history_stats,
+            history_topics,
+            set_history_retention,
             clear_history,
             set_topic_stats_cap,
             get_topic_stats_cap,

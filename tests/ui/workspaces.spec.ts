@@ -29,6 +29,12 @@ test.beforeEach(async ({ page }) => {
         if (cmd === 'history_stats') return { rows: 3, inbound: 3, outbound: 0, oldestTs: now - 60_000, newestTs: now - 1000 };
         if (cmd === 'query_history') return rows.filter((r) => r.topic.includes(args.search));
         if (cmd === 'history_series') return [{ bucket: Math.floor((now - 1000) / args.bucketMs) * args.bucketMs, count: 3 }];
+        if (cmd === 'history_topics')
+          return w.topics ?? [
+            { topic: 'sensor/partial', count: 1234, inbound: 1200, outbound: 34, bytes: 987654, firstTs: now - 60_000, lastTs: now - 1000 },
+            { topic: 'rpc/request', count: 3, inbound: 2, outbound: 1, bytes: 15, firstTs: now - 50_000, lastTs: now - 2000 },
+          ];
+        if (cmd === 'set_history_retention') return null;
         if (cmd === 'bridge_status') return [];
         if (cmd === 'schedule_list') return [];
         if (cmd === 'get_topic_stats_cap') return 5000;
@@ -42,12 +48,14 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('history prevents partial replay and preserves empty and MQTT5 messages', async ({ page }) => {
-  await page.getByRole('button', { name: /sensor\/partial/ }).click();
+  // Scoped to the result list: the by-topic strip above also names these topics.
+  const results = page.getByTestId('history-results');
+  await results.getByRole('button', { name: /sensor\/partial/ }).click();
   await expect(page.getByRole('button', { name: 'Resend', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: /sensor\/empty/ }).click();
+  await results.getByRole('button', { name: /sensor\/empty/ }).click();
   await expect(page.getByRole('button', { name: 'Resend', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Resend', exact: true }).click();
-  await page.getByRole('button', { name: /rpc\/request/ }).click();
+  await results.getByRole('button', { name: /rpc\/request/ }).click();
   await page.getByRole('button', { name: 'HEX', exact: true }).click();
   await expect(page.locator('pre')).toContainText('68 65 6c 6c 6f');
   await page.getByRole('button', { name: 'Resend', exact: true }).click();
@@ -58,10 +66,11 @@ test('history prevents partial replay and preserves empty and MQTT5 messages', a
 });
 
 test('history uses identical filters for the list and chart and exports the selection', async ({ page }) => {
+  const results = page.getByTestId('history-results');
   await page.getByRole('textbox').fill('rpc');
   await page.getByRole('button', { name: '5m', exact: true }).click();
-  await expect(page.getByRole('button', { name: /sensor\/partial/ })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /rpc\/request/ })).toBeVisible();
+  await expect(results.getByRole('button', { name: /sensor\/partial/ })).toHaveCount(0);
+  await expect(results.getByRole('button', { name: /rpc\/request/ })).toBeVisible();
   const calls = await page.evaluate(() => (window as any).calls);
   const query = calls.filter((c: any) => c.cmd === 'query_history').at(-1).args;
   const series = calls.filter((c: any) => c.cmd === 'history_series').at(-1).args;
@@ -94,4 +103,37 @@ test('default and minimum windows keep content inside the viewport', async ({ pa
     await expect(page.getByRole('combobox', { name: 'Saved Profiles' })).toBeVisible();
   }
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).not.toBe('rgb(9, 11, 16)');
+});
+
+test('history reads per topic and prunes by age, not only by row count', async ({ page }) => {
+  await expect(page.getByTestId('history-topics')).toBeVisible();
+  const noisy = page.getByTestId('history-topic-sensor/partial');
+  await expect(noisy).toContainText('sensor/partial');
+  await expect(noisy).toContainText('1,234');
+  // The tooltip carries the split a triage question actually needs: which
+  // direction, how many bytes, and when the topic last spoke.
+  await expect(noisy).toHaveAttribute('title', /bytes|B .*\d\d:\d\d/);
+
+  await page.getByTestId('history-topic-rpc/request').click();
+  await expect
+    .poll(async () =>
+      (await page.evaluate(() => (window as any).calls)).filter((c: any) => c.cmd === 'query_history').at(-1).args.search,
+    )
+    .toBe('rpc/request');
+
+  await page.getByTestId('history-retention').fill('30');
+  await page.getByTestId('history-retention-apply').click();
+  await expect
+    .poll(async () =>
+      (await page.evaluate(() => (window as any).calls)).filter((c: any) => c.cmd === 'set_history_retention').at(-1),
+    )
+    .toMatchObject({ args: { days: 30 } });
+});
+
+test('the retention control starts from the policy the store reports, not from zero', async ({ page }) => {
+  await page.evaluate(() => {
+    (window as any).topics = [];
+  });
+  await page.reload();
+  await expect(page.getByTestId('history-retention')).toHaveValue('0');
 });
