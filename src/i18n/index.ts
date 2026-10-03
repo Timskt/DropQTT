@@ -528,6 +528,28 @@ export interface Translations {
   assertionsRecent: string;
   assertionsNoViolations: string;
   assertionsRulesAgree: string;
+  faultsTitle: string;
+  faultsHint: string;
+  faultsNeedsKnob: string;
+  faultsPreviousKept: string;
+  faultsEmpty: string;
+  faultsEnabled: string;
+  faultsNamePlaceholder: string;
+  faultsFilter: string;
+  faultsDirection: string;
+  faultsDirIn: string;
+  faultsDirOut: string;
+  faultsDirBoth: string;
+  faultsDrop: string;
+  faultsDelay: string;
+  faultsDuplicate: string;
+  faultsCorrupt: string;
+  faultsBadCorrelation: string;
+  faultsCounts: string;
+  faultsNoStats: string;
+  faultsResetHint: string;
+  faultsArmedWarning: string;
+  opsCheckFaults: string;
   noMessagesFiltered: string;
   truncatedNote: string;
   mdView: string;
@@ -1186,6 +1208,28 @@ export const translations: Record<Language, Translations> = {
     assertionsRecent: '最近的违规',
     assertionsNoViolations: '自上次清零以来，没有报文违反规则。',
     assertionsRulesAgree: '（{n} 条规则都认领了这条报文）',
+    faultsTitle: '故障注入',
+    faultsHint: '把这套界面本该扛住的失败主动造出来。比例是固定步进而非随机：25% 就是每第 4 条命中报文被损坏，所以丢包测试可以复现。入站故障发生在流量表、历史、报文流、请求/响应配对与断言**之前**，所以被丢掉的那条是真的哪儿都不在。',
+    faultsNeedsKnob: '至少要设一个比例或延迟，否则这条规则什么都不注入',
+    faultsPreviousKept: '此前生效的规则集仍在继续',
+    faultsEmpty: '没有注入规则。现在流量太规矩，反而没法验证那些为意外准备的通路。',
+    faultsEnabled: '生效',
+    faultsNamePlaceholder: '可选名称，例如"抖动网关"',
+    faultsFilter: '主题过滤器',
+    faultsDirection: '方向',
+    faultsDirIn: '入站',
+    faultsDirOut: '出站',
+    faultsDirBoth: '双向',
+    faultsDrop: '丢弃 %',
+    faultsDelay: '延迟 ms',
+    faultsDuplicate: '重复 %',
+    faultsCorrupt: '损坏 %',
+    faultsBadCorrelation: '错关联 %',
+    faultsCounts: '已见 {seen} · 丢弃 {dropped} · 延迟 {delayed} · 重复 {duplicated} · 损坏 {corrupted} · 错关联 {misCorrelated}',
+    faultsNoStats: '还没有计数',
+    faultsResetHint: '清零这些规则做过的事，但不解除它们的武装',
+    faultsArmedWarning: '故障注入正在生效：本次会话里丢失或损坏的流量可能是我们干的，不是网络。',
+    opsCheckFaults: '故障注入已生效',
     noMessagesFiltered: '没有匹配当前筛选的报文',
     truncatedNote: '载荷过大，已截断显示',
     mdView: 'Markdown 渲染视图',
@@ -1852,6 +1896,28 @@ export const translations: Record<Language, Translations> = {
     assertionsRecent: 'Recent violations',
     assertionsNoViolations: 'Nothing has broken a rule since the last reset.',
     assertionsRulesAgree: '({n} rules claimed this message)',
+    faultsTitle: 'Fault injection',
+    faultsHint: 'Produce the failures the rest of this app is supposed to survive. Rates are a stride, not a dice roll: 25% damages every fourth matching message, so a loss test reproduces. Inbound faults are applied before the traffic meter, history, the feed, request/response pairing and assertions, so a dropped message is really missing everywhere.',
+    faultsNeedsKnob: 'Set at least one rate or delay, or this rule would inject nothing',
+    faultsPreviousKept: 'the previous rule set stays armed',
+    faultsEmpty: 'No faults armed. Traffic is behaving itself, which makes it hard to test the paths that exist for when it does not.',
+    faultsEnabled: 'armed',
+    faultsNamePlaceholder: 'optional name, e.g. flaky gateway',
+    faultsFilter: 'Topic filter',
+    faultsDirection: 'Direction',
+    faultsDirIn: 'inbound',
+    faultsDirOut: 'outbound',
+    faultsDirBoth: 'both',
+    faultsDrop: 'drop %',
+    faultsDelay: 'delay ms',
+    faultsDuplicate: 'dup %',
+    faultsCorrupt: 'corrupt %',
+    faultsBadCorrelation: 'bad correlation %',
+    faultsCounts: 'seen {seen} · dropped {dropped} · delayed {delayed} · duplicated {duplicated} · corrupted {corrupted} · mis-correlated {misCorrelated}',
+    faultsNoStats: 'no counts yet',
+    faultsResetHint: 'Zero what these rules have done without disarming them',
+    faultsArmedWarning: 'Fault injection is armed: missing or damaged traffic in this session may be ours, not the network’s.',
+    opsCheckFaults: 'Fault injection armed',
     noMessagesFiltered: 'No messages matching current search filter.',
     truncatedNote: 'Payload too large — display truncated',
     mdView: 'Markdown rendered view',
@@ -2518,6 +2584,28 @@ export const translations: Record<Language, Translations> = {
     assertionsRecent: '最近的違規',
     assertionsNoViolations: '自上次清零以來，沒有報文違反規則。',
     assertionsRulesAgree: '（{n} 條規則都認領了這條報文）',
+    faultsTitle: '故障注入',
+    faultsHint: '把這套介面本該扛住的失敗主動做出來。比例是固定步進而非隨機：25% 就是每第 4 條命中報文被損壞，所以丟包測試可以重現。入站故障發生在流量表、歷史、報文流、請求/響應配對與斷言**之前**，所以被丟掉的那條是真的哪裡都不在。',
+    faultsNeedsKnob: '至少要設一個比例或延遲，否則這條規則什麼都不注入',
+    faultsPreviousKept: '此前生效的規則集仍在繼續',
+    faultsEmpty: '沒有注入規則。現在流量太規矩，反而沒辦法驗證那些為意外準備的通路。',
+    faultsEnabled: '生效',
+    faultsNamePlaceholder: '可選名稱，例如「抖動閘道」',
+    faultsFilter: '主題過濾器',
+    faultsDirection: '方向',
+    faultsDirIn: '入站',
+    faultsDirOut: '出站',
+    faultsDirBoth: '雙向',
+    faultsDrop: '丟棄 %',
+    faultsDelay: '延遲 ms',
+    faultsDuplicate: '重複 %',
+    faultsCorrupt: '損壞 %',
+    faultsBadCorrelation: '錯關聯 %',
+    faultsCounts: '已見 {seen} · 丟棄 {dropped} · 延遲 {delayed} · 重複 {duplicated} · 損壞 {corrupted} · 錯關聯 {misCorrelated}',
+    faultsNoStats: '還沒有計數',
+    faultsResetHint: '清零這些規則做过的事，但不解除它們的武裝',
+    faultsArmedWarning: '故障注入正在生效：本次工作階段裡遺失或損壞的流量可能是我們做的，不是網路。',
+    opsCheckFaults: '故障注入已生效',
     noMessagesFiltered: '沒有符合目前篩選的報文',
     truncatedNote: '載荷過大，已截斷顯示',
     mdView: 'Markdown 渲染視圖',
@@ -3184,6 +3272,28 @@ export const translations: Record<Language, Translations> = {
     assertionsRecent: '最近の違反',
     assertionsNoViolations: '前回のリセット以降、規則を破ったメッセージはありません。',
     assertionsRulesAgree: '（{n} 件の規則がこのメッセージをclaimしました）',
+    faultsTitle: 'フォールト注入',
+    faultsHint: 'このアプリが耐えるべき障害を意図的に発生させます。率は乱数ではなく等間隔: 25% は該当メッセージの 4 件ごとに損傷させるので、損失テストは再現します。着信側の注入は通信量メータ・履歴・フィード・要求/応答の対応付け・アサーションより**前**に適用されるため、失われた 1 件は本当にどこにも現れません。',
+    faultsNeedsKnob: '率または遅延を 1 つ以上設定してください。でなければこの規則は何も注入しません',
+    faultsPreviousKept: '以前の規則セットが引き続き有効です',
+    faultsEmpty: '注入規則がありません。トラフィックが素直すぎると、想定外の事態向けの経路を検証できません。',
+    faultsEnabled: '有効',
+    faultsNamePlaceholder: '任意の名前（例: 不安定ゲートウェイ）',
+    faultsFilter: 'トピックフィルター',
+    faultsDirection: '方向',
+    faultsDirIn: '着信',
+    faultsDirOut: '送信',
+    faultsDirBoth: '両方向',
+    faultsDrop: '破棄 %',
+    faultsDelay: '遅延 ms',
+    faultsDuplicate: '重複 %',
+    faultsCorrupt: '損傷 %',
+    faultsBadCorrelation: '相関破壊 %',
+    faultsCounts: '観測 {seen} · 破棄 {dropped} · 遅延 {delayed} · 重複 {duplicated} · 損傷 {corrupted} · 相関不一致 {misCorrelated}',
+    faultsNoStats: 'まだカウントなし',
+    faultsResetHint: '規則を有効にしたまま、これらの実績だけをリセットします',
+    faultsArmedWarning: 'フォールト注入が有効です: このセッションで行方不明・破損したトラフィックは我々の仕業で、ネットワークの異常ではない可能性があります。',
+    opsCheckFaults: 'フォールト注入が有効',
     noMessagesFiltered: 'フィルターに一致するメッセージがありません',
     truncatedNote: 'ペイロードが大きすぎるため表示を切り詰めました',
     mdView: 'Markdown レンダリング表示',

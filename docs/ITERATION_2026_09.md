@@ -1235,6 +1235,65 @@ localStorage 里不会留下半条规则；`sync_rules` 也是整集拒绝，所
 门：Rust harness **167/167**（其中 assertions 22 条）、`cargo clippy --lib --tests` 干净、
 vitest **60/60**（新增 6 条纯函数测试）、Playwright 全套 **98/98**（新增 8 条）、`tsc` 干净、`eslint` 0 error 10 warn。
 
+### 4.41 故障注入：能主动造出失败，"失败必须可见"才第一次可回归（§7 T2，第十二轮 2026-10-03）
+
+审阅稿把 T2 和 T3 并列为"只能再挑三件"的第一件，理由我完全接受：前三轮做的都是**观测端**
+（丢包要能看见、ack 被拒要能看见、超时要能看见），但仓库里没有任何东西能**制造**这些条件，
+所以那些结论每次只能靠我手写脚本临时证明一遍。T3 给了判定，T2 给判定的输入。
+
+**比例是步进，不是骰子**（`faults.rs` 模块头写了原因）：25% 就是每第 4 条命中报文被损坏，
+Bresenham 累加、无漂移、无随机。丢包测试要的是**可复现**，随机数只能证明"丢包是可能的"。
+
+**注入点在所有消费者之前**：入站路径上，drop/delay/duplicate/corrupt 发生在流量表、历史、
+feed、RPC 配对与断言**之前**。这是这个功能的全部意义——如果只在看板层丢，那测的是看板。
+一条被注入的重复**不再判一次**（否则一次投递会被计两次，而且重复的重复没有尽头），
+所以 `route_message` 拆成了"判定 + 1~2 次 `deliver`"，而不是递归（async 递归在这里要装箱，
+且高度不可控）。
+
+顺手挖出一个**先前就存在的诚实性缺口**：出站回显行原先是从 `params.payload_base64` **重新解码**
+拼出来的，也就是说如果载荷在发送前被损坏，界面会显示一份**没被损坏的副本**——
+那是"报告了一次自己没做过的发送"。现在回显的文本与 base64 都来自真正交给 rumqttc 的那串字节。
+
+**没做的两件事，理由要留在这里**：
+- **中途断连**：`disconnect()` 有，但重连目前只有前端能发起（`connect_broker` 命令由 UI 调）。
+  后端自己踢掉会话之后没人把它拉回来，注入就变成"把应用弄死"而不是"注入一次抖动"。
+  这需要一个"后端可发起的重连原语"，等 §1.10 把连接生命周期拆出来之后再做，不做半成品。
+- **ACL 拒绝 / 配额 / QoS 降级**：那是 broker 的决定，客户端注入不了。
+  `~/mqtt-lab/probe-broker.mjs` 已经能按主题前缀决定给 0x87 还是给降级，这类断言在那里取证。
+
+**诊断里必须说**：`MqttDiagnostics` 加了 `faultRules`/`faultActions`，`build_checks` 里新增
+`fault_injection` 检查——只要有任何规则生效就是 **warn**，文案直接写"丢失或损坏的流量可能是我们干的"。
+这条不是装饰：注入工具最大的风险是**忘了自己开着它**，然后花一下午查一台好 broker。
+
+**真机取证**（aedes 18830 + 注入器 8082，全程 loopback；历史库先备份后还原，三个文件 md5 与备份一致）：
+
+| 注入 | 发的 | 看到的 |
+|---|---|---|
+| `sensors/room1` 入站 drop 50% | 8 条 | feed 只有 **4 行**；规则自己报 `seen 8 · dropped 4`；**流量表也是 4 条 / 80 B** |
+| `sensors/room2` 入站 corrupt 100% | 2 条 `{"tempC":40}` | 两行都是 `? Unreadable`——**本该 PASS 的断言读不到载荷了**，证明注入在断言之前 |
+| `lab/up` 出站 drop 100% | 控制台点 3 次发布 | feed 里 **0 条 lab/up 出站行**；发布按钮旁直接写 `— publish dropped by fault injection`；规则报 `seen 3 · dropped 3` |
+| 三条都生效 | — | 面板 `armed 3/3` + 黄字警告；Ops 诊断 `3 fault rule(s) armed, 7 actions taken this session` |
+
+**一个 UI 自伤**：`Add rule` 最初创建的是"所有旋钮都为 0"的规则，而后端会**整集拒绝**这种集合——
+于是"点一下新增"会静默解除上一批规则的武装。现在新规则以 `drop 25%` 出生（合法且无害），
+且把最后一个旋钮归零会在**输入处**被拒（`faultsNeedsKnob`），不会等到 sync 才发现。
+
+门：Rust harness **181/181**（faults 16 条 + diagnostics 新增 1 条）、`clippy --lib --tests` 干净、
+vitest **60/60**、`tsc` 干净、`eslint` 0 error 10 warn、Playwright 全套 **108/108**（新增 10 条）。
+
+### 4.42 T9 复核：自我可观测这一项其实已经有了（§7 T9，第十二轮）
+
+审阅稿列 T9 为"诊断快照加几个字段即可"的小件。核对下来，**feed 延迟、DB 写入毫秒、事件循环滞后
+三项都已经在界面上**：`src-tauri/src/diagnostics.rs` 的 `SelfTiming`（`flush` / `lag` / `history` 三个
+`DurationStats`），由 `c0bff15 feat(ops): time the app's own hot paths instead of guessing about them`
+落地，`OpsPanel.tsx:301-314` 渲染 avg/max/样本数，`build_checks` 里的 `self_timing` 检查在
+max ≥ 500 ms 时升为 warn 并直说"the app itself is falling behind"。
+
+唯一没有的是 **tokio 任务数**：`Handle::metrics()` 需要 `--cfg tokio_unstable`，
+为一个数字改全局 RUSTFLAGS 不值当；而我们真正关心的自有后台任务数（调度中的发布、压测运行、
+进行中传输、待应答 RPC）已经分别在 `MqttDiagnostics` 与 `scheduledRuns`/`benchRuns` 等字段里。
+所以 T9 我按"已完成 + 一处明确不做"结案，不重复施工。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

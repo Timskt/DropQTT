@@ -202,6 +202,9 @@ pub struct MqttManager {
     pub silence_watchdog: Arc<SilenceWatchdog>,
     /// Message assertions: rules that judge inbound rows as they are routed
     pub assertions: Arc<crate::assertions::AssertionEngine>,
+    /// Fault injection: loss, latency, duplicates and damage on demand, so the
+    /// app's own failure paths can be tested rather than trusted
+    pub faults: Arc<crate::faults::FaultInjector>,
     /// Registry of backend-scheduled publishes for this session
     pub scheduler: Arc<SchedulerManager>,
     /// Registry of built-in publish stress runs (latency + ack accounting)
@@ -300,6 +303,7 @@ impl MqttManager {
             sys_metrics: Mutex::new(HashMap::new()),
             silence_watchdog: Arc::new(SilenceWatchdog::default()),
             assertions: Arc::new(crate::assertions::AssertionEngine::default()),
+            faults: Arc::new(crate::faults::FaultInjector::default()),
             scheduler: Arc::new(SchedulerManager::new()),
             bench: Arc::new(crate::bench::BenchManager::new()),
             rpc: Mutex::new(crate::rpc::RpcRegistry::default()),
@@ -388,6 +392,15 @@ impl MqttManager {
             let reg = self.rpc.lock().await;
             (reg.pending(), reg.timeouts())
         };
+        let faults = self.faults.stats();
+        let fault_rules = faults.iter().filter(|f| f.enabled).count();
+        let fault_actions: u64 = faults
+            .iter()
+            .map(|f| {
+                let c = f.counts;
+                c.dropped + c.delayed + c.duplicated + c.corrupted + c.mis_correlated
+            })
+            .sum();
         let timings = {
             let t = self.self_timing.lock().await;
             (
@@ -440,6 +453,8 @@ impl MqttManager {
             feed_flush: timings.0,
             feed_lag: timings.1,
             history_write: timings.2,
+            fault_rules,
+            fault_actions,
         }
     }
 
@@ -1420,11 +1435,20 @@ impl MqttManager {
             .await
             .clone()
             .ok_or_else(|| "MQTT client not connected".to_string())?;
-        let payload = base64::engine::general_purpose::STANDARD
+        let decoded = base64::engine::general_purpose::STANDARD
             .decode(params.payload_base64.as_bytes())
             .map_err(|e| format!("Invalid base64 payload: {}", e))?;
+        let mut payload: Bytes = Bytes::from(decoded);
+        // Judged before the broker-limit checks and before the feed echo, so what
+        // the console shows as sent is what actually went out — damaged or not.
+        let fault = self.faults.apply_outbound(&params.topic, &mut payload);
+        if fault.drop {
+            return Err("publish dropped by fault injection".to_string());
+        }
+        if fault.delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(fault.delay_ms)).await;
+        }
         let payload_len = payload.len();
-        let payload: Bytes = Bytes::from(payload);
         // Check the broker's advertised limits first: rumqttc treats an oversized
         // alias as a protocol violation and drops the whole connection for it.
         let caps = self.broker_caps.read().await.clone();
@@ -1461,23 +1485,28 @@ impl MqttManager {
         };
 
         client
-            .publish(&params.topic, params.qos, params.retain, payload, props.as_ref())
+            .publish(&params.topic, params.qos, params.retain, payload.clone(), props.as_ref())
             .await
             .map_err(|e| format!("Failed to publish: {}", e))?;
+        if fault.duplicate {
+            // From the wire's point of view a re-delivery and a second send are the
+            // same event, so this is the honest way to inject one.
+            let _ = client
+                .publish(&params.topic, params.qos, params.retain, payload.clone(), props.as_ref())
+                .await;
+        }
 
-        let display_text = {
-            let decoded: Vec<u8> = base64::engine::general_purpose::STANDARD
-                .decode(params.payload_base64.as_bytes())
-                .unwrap_or_default();
-            String::from_utf8_lossy(&decoded).to_string()
-        };
+        // Echoed from the bytes that were actually sent: an injected corruption has
+        // to show up in the console row too, or the app would be reporting a
+        // publish it did not perform.
+        let display_text = String::from_utf8_lossy(&payload).to_string();
 
         let msg = MqttGenericMessage {
             id: uuid::Uuid::new_v4().to_string(),
             topic: params.topic.clone(),
             payload: display_text,
             payload_len,
-            payload_base64: params.payload_base64.clone(),
+            payload_base64: base64::engine::general_purpose::STANDARD.encode(&payload),
             truncated: false,
             content_type: params.properties.content_type.clone(),
             user_properties: params.properties.user_properties.clone(),
@@ -1818,7 +1847,33 @@ impl MqttManager {
     // Message routing
     // ------------------------------------------------------------------
 
-    async fn route_message(self: &Arc<Self>, app: &AppHandle, publish: crate::transport::NormalizedPublish) {
+    async fn route_message(self: &Arc<Self>, app: &AppHandle, mut publish: crate::transport::NormalizedPublish) {
+        // Fault injection sits ahead of every consumer of the delivery, so a lost
+        // message is missing from the traffic meter, history, the feed, RPC pairing
+        // and the assertions alike. That is the point: this is what makes those
+        // paths testable rather than merely observable.
+        let mut copies = 1usize;
+        if self.faults.is_active() {
+            let plan = self.faults.apply_inbound(&mut publish);
+            if plan.drop {
+                return;
+            }
+            if plan.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(plan.delay_ms)).await;
+            }
+            if plan.duplicate {
+                copies = 2;
+            }
+        }
+        if copies > 1 {
+            // The injected copy is a re-delivery of the same publish, so it is not
+            // judged a second time — that would count one delivery twice.
+            self.deliver(app, publish.clone()).await;
+        }
+        self.deliver(app, publish).await;
+    }
+
+    async fn deliver(self: &Arc<Self>, app: &AppHandle, publish: crate::transport::NormalizedPublish) {
         let topic = publish.topic;
 
         // Silence watchdog needs every publish, including $SYS, to be able to

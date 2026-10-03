@@ -163,6 +163,12 @@ pub struct MqttDiagnostics {
     pub feed_lag: DurationStats,
     /// How long a history batch write took
     pub history_write: DurationStats,
+    /// Fault rules armed right now. Non-zero means this session's traffic conditions
+    /// are not the network's doing, and that has to be said before anyone spends an
+    /// afternoon diagnosing a broker that was fine.
+    pub fault_rules: usize,
+    /// Messages dropped, delayed, duplicated, corrupted or mis-correlated by us
+    pub fault_actions: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -446,6 +452,19 @@ fn build_checks(mqtt: &MqttDiagnostics, bridge: &BridgeDiagnostics) -> Vec<Diagn
     };
     checks.push(check("self_timing", timing_level, timing_detail));
 
+    let (fault_level, fault_detail) = if mqtt.fault_rules > 0 {
+        (
+            "warn",
+            format!(
+                "{} fault rule(s) armed, {} actions taken this session — missing or damaged traffic may be ours, not the network's",
+                mqtt.fault_rules, mqtt.fault_actions
+            ),
+        )
+    } else {
+        ("ok", "no fault injection armed".to_string())
+    };
+    checks.push(check("fault_injection", fault_level, fault_detail));
+
     let bridge_level =
         if (bridge.enabled_rules > 0 && bridge.connected_connections == 0) || bridge.errors > 0 {
             "warn"
@@ -589,6 +608,8 @@ mod tests {
             feed_flush: Timing::default().snapshot(),
             feed_lag: Timing::default().snapshot(),
             history_write: Timing::default().snapshot(),
+            fault_rules: 0,
+            fault_actions: 0,
         }
     }
 
@@ -636,5 +657,32 @@ mod tests {
         // The message has to name the fix, not just the symptom.
         assert!(check.detail.contains("ctrl/#"), "{}", check.detail);
         assert!(check.detail.contains('2'));
+    }
+
+    #[test]
+    fn armed_faults_are_announced_before_anyone_blames_the_network() {
+        let mut input = mqtt();
+        let clean = build_snapshot(input.clone(), BridgeDiagnostics::default());
+        assert_eq!(
+            clean
+                .checks
+                .iter()
+                .find(|c| c.id == "fault_injection")
+                .unwrap()
+                .level,
+            "ok",
+            "nothing armed is not a finding"
+        );
+        input.fault_rules = 2;
+        input.fault_actions = 17;
+        let snapshot = build_snapshot(input, BridgeDiagnostics::default());
+        let check = snapshot
+            .checks
+            .iter()
+            .find(|c| c.id == "fault_injection")
+            .unwrap();
+        assert_eq!(check.level, "warn");
+        assert!(check.detail.contains("2 fault rule"), "{}", check.detail);
+        assert!(check.detail.contains("17 actions"), "{}", check.detail);
     }
 }

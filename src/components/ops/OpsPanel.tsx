@@ -98,6 +98,7 @@ const checkTitle = (id: string, t: Translations): string => {
     case 'feed_pressure': return t.opsCheckFeed;
     case 'transfer_activity': return t.opsCheckTransfers;
     case 'bridge_health': return t.opsCheckBridge;
+    case 'fault_injection': return t.opsCheckFaults;
     default: return id;
   }
 };

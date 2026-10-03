@@ -38,8 +38,10 @@ import { useTransfers } from './hooks/useTransfers';
 import { useBatchSender } from './hooks/useBatchSender';
 import { useRpc } from './hooks/useRpc';
 import { useAssertions } from './hooks/useAssertions';
+import { useFaults } from './hooks/useFaults';
 import { RpcPanel } from './components/mqttx/RpcPanel';
 import { AssertionPanel } from './components/mqttx/AssertionPanel';
+import { FaultPanel } from './components/mqttx/FaultPanel';
 
 const MODE_TITLES: Record<WorkspaceMode, (t: Translations) => string> = {
   transfer: (t) => t.modeFileTransfer,
@@ -204,6 +206,7 @@ export function App() {
 
   // Rules stay armed in Rust when the console closes; only the tallies stop polling
   const assertions = useAssertions(activeMode === 'mqttx');
+  const faults = useFaults(activeMode === 'mqttx');
 
   return (
     <div className="min-h-screen flex overflow-hidden font-sans">
@@ -418,6 +421,18 @@ export function App() {
                 onRemove={assertions.removeRule}
                 onToggle={assertions.toggleRule}
                 onReset={assertions.reset}
+                t={t}
+              />
+
+              <FaultPanel
+                rules={faults.rules}
+                stats={faults.stats}
+                lastError={faults.lastError}
+                onAdd={faults.addRule}
+                onUpdate={faults.updateRule}
+                onRemove={faults.removeRule}
+                onToggle={faults.toggleRule}
+                onReset={faults.reset}
                 t={t}
               />
 

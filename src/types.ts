@@ -182,6 +182,64 @@ export interface AssertionSnapshot {
 
 export const emptyAssertStats: AssertStats = { matched: 0, passed: 0, violated: 0, unevaluable: 0 };
 
+export type FaultDirection = 'inbound' | 'outbound' | 'both';
+
+/** A fault-injection rule. Rates are a stride, not a coin flip: 25 drops exactly
+ * every fourth matching message, so a loss test reproduces. */
+export interface FaultRule {
+  id: string;
+  name: string;
+  filter: string;
+  direction: FaultDirection;
+  enabled: boolean;
+  dropPct: number;
+  delayMs: number;
+  duplicatePct: number;
+  corruptPct: number;
+  /** Inbound only: flips MQTT5 Correlation Data so a response stops matching. */
+  badCorrelationPct: number;
+}
+
+export const faultRuleDefaults: Omit<FaultRule, 'id' | 'name' | 'filter'> = {
+  direction: 'inbound',
+  enabled: true,
+  dropPct: 0,
+  delayMs: 0,
+  duplicatePct: 0,
+  corruptPct: 0,
+  badCorrelationPct: 0,
+};
+
+export interface FaultCounts {
+  seen: number;
+  dropped: number;
+  delayed: number;
+  duplicated: number;
+  corrupted: number;
+  misCorrelated: number;
+}
+
+export interface FaultRuleStats {
+  id: string;
+  name: string;
+  filter: string;
+  enabled: boolean;
+  counts: FaultCounts;
+}
+
+export const emptyFaultCounts: FaultCounts = {
+  seen: 0,
+  dropped: 0,
+  delayed: 0,
+  duplicated: 0,
+  corrupted: 0,
+  misCorrelated: 0,
+};
+
+/** Actions a rule actually took, for the "is this us or the network?" readout. */
+export const faultActionTotal = (counts: FaultCounts): number =>
+  counts.dropped + counts.delayed + counts.duplicated + counts.corrupted + counts.misCorrelated;
+
 /** MQTT v5 user-facing publish properties (ignored on v3.1.1) */
 export interface PubProperties {
   contentType?: string;
@@ -560,6 +618,9 @@ export interface MqttDiagnostics {
   feedFlush?: DurationStats;
   feedLag?: DurationStats;
   historyWrite?: DurationStats;
+  /** Fault rules armed right now; non-zero means this session's losses are ours */
+  faultRules?: number;
+  faultActions?: number;
   historyAvailable: boolean;
   history: HistoryStats;
   downloadDir: string;

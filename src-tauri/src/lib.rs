@@ -3,6 +3,7 @@ pub mod bench;
 pub mod acks;
 pub mod assertions;
 pub mod diagnostics;
+pub mod faults;
 pub mod history;
 pub mod mqtt_manager;
 pub mod protocol;
@@ -498,6 +499,28 @@ async fn assertions_reset(state: State<'_, AppState>) -> Result<assertions::Asse
     Ok(state.mqtt.assertions.snapshot())
 }
 
+/// Replace the fault-injection rule set. Every rule reports what it has actually
+/// done, because a fault nobody can count is indistinguishable from a network problem.
+#[tauri::command]
+async fn faults_sync_rules(
+    state: State<'_, AppState>,
+    rules: Vec<faults::FaultRule>,
+) -> Result<Vec<faults::FaultRuleStats>, String> {
+    state.mqtt.faults.sync_rules(rules)?;
+    Ok(state.mqtt.faults.stats())
+}
+
+#[tauri::command]
+async fn faults_stats(state: State<'_, AppState>) -> Result<Vec<faults::FaultRuleStats>, String> {
+    Ok(state.mqtt.faults.stats())
+}
+
+#[tauri::command]
+async fn faults_reset(state: State<'_, AppState>) -> Result<Vec<faults::FaultRuleStats>, String> {
+    state.mqtt.faults.reset();
+    Ok(state.mqtt.faults.stats())
+}
+
 #[tauri::command]
 async fn bridge_stats(
     state: State<'_, AppState>,
@@ -650,6 +673,9 @@ pub fn run() {
             assertions_parse_rule,
             assertions_state,
             assertions_reset,
+            faults_sync_rules,
+            faults_stats,
+            faults_reset,
             bridge_stats,
             bridge_reset_stats,
             bridge_test_transform
