@@ -1,5 +1,4 @@
-import type { HistoryRow, HistorySeriesPoint, MqttGenericMessage, TraceResult } from '../types';
-import { base64ToUint8, cborToDisplayJson, decodeCbor, uint8ToHexDump, uint8ToUtf8 } from './cbor';
+import type { HistoryRow, HistorySeriesPoint, MqttGenericMessage, TraceResult } from '../types';import { base64ToUint8, cborToDisplayJson, decodeCbor, uint8ToHexDump, uint8ToUtf8 } from './cbor';
 import { parseSenmlPack, senmlFromDecoded, senmlToTable } from './senml';
 
 export type HistoryView = 'text' | 'json' | 'senml' | 'hex' | 'base64' | 'cbor';
@@ -97,4 +96,15 @@ export function buildTraceExport(
     null,
     2,
   );
+}
+
+/**
+ * The token a trace should follow for one message: its correlation as text when
+ * it has one, otherwise the hex of the correlation bytes, otherwise its topic.
+ *
+ * Correlation first because it answers "this exchange"; the topic answers "this
+ * device", and the two are different questions that a trace must not conflate.
+ */
+export function traceTokenFor(msg: MqttGenericMessage): string {
+  return msg.correlationData?.trim() || msg.correlationHex?.trim() || msg.topic;
 }

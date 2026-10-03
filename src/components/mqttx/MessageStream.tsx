@@ -3,12 +3,15 @@ import {
   Search, Trash2, Copy, Check, ArrowDownRight, ArrowUpRight,
   Code2, AlignLeft, Binary, Braces, Box, Lock, FileText, Globe,
   Pause, Play, Download, Eraser, Pin, RotateCcw, Activity, AlertCircle, GitCompare,
+  Filter, Send, Terminal,
 } from 'lucide-react';
 import { MqttGenericMessage } from '../../types';
 import { usePersistentState, usePersistentString } from '../../hooks/usePersistentState';
 import { Translations, fill } from '../../i18n';
 import { useCodec } from '../../hooks/useCodec';
 import { MAX_MESSAGES } from '../../hooks/useMqttMessages';
+import { mosquittoCommand, mosquittoCommandText } from '../../utils/mqttCommand';
+import { traceTokenFor } from '../../utils/history';
 import {
   base64ToUint8, cborToDisplayJson, decodeCbor,
   uint8ToBase64, uint8ToHexDump, uint8ToUtf8,
@@ -31,6 +34,12 @@ interface MessageStreamProps {
   onReplay: (msg: MqttGenericMessage) => Promise<void>;
   /** Add this message's topic to the subscription registry */
   onQuickSubscribe: (topic: string) => void;
+  /** Where a copied command or a row-level request would go */
+  broker: { host: string; port: number; tls: boolean };
+  /** Follow this row's correlation (or its topic) in the history trace */
+  onTrace: (msg: MqttGenericMessage) => void;
+  /** Republish these bytes as an MQTT5 request and watch for the answer */
+  onSendAsRpc: (msg: MqttGenericMessage) => Promise<void>;
   connected: boolean;
   paused: boolean;
   pendingCount: number;
@@ -141,22 +150,31 @@ interface MessageRowProps {
   copied: boolean;
   replayed: boolean;
   connected: boolean;
+  /** Where a copied command or an RPC would go; kept as one object so the row memo
+   *  only breaks when the target actually changes. */
+  broker: { host: string; port: number; tls: boolean };
   /** Display-only payload codec; empty/absent disables it. */
   codecScript?: string;
   onCopy: (id: string, text: string) => void;
   onReplay: (msg: MqttGenericMessage) => void;
   onQuickSubscribe: (topic: string) => void;
+  /** Follow this row's correlation (or its topic) in the history trace */
+  onTrace: (msg: MqttGenericMessage) => void;
+  /** Republish these bytes as a request and watch for the answer */
+  onSendAsRpc: (msg: MqttGenericMessage) => void;
+  /** Filter the feed down to this row's topic */
+  onFilterTopic: (topic: string) => void;
   t: Translations;
 }
 
-/** How many saved filters the strip keeps before the oldest fall off. */
-const MAX_FILTER_PRESETS = 8;
+/** How many saved filters the strip keeps before the oldest fall off. */const MAX_FILTER_PRESETS = 8;
 
 const MessageRow = React.memo(function MessageRow({
-  msg, viewMode, copied, replayed, connected, codecScript, onCopy, onReplay, onQuickSubscribe,
-  t,
+  msg, viewMode, copied, replayed, connected, broker, codecScript, onCopy, onReplay, onQuickSubscribe,
+  onTrace, onSendAsRpc, onFilterTopic, t,
 }: MessageRowProps) {
   const [expanded, setExpanded] = useState(false);
+  const [cmdCopied, setCmdCopied] = useState(false);
   const isOut = msg.direction === 'out';
 
   const base = useMemo(() => resolveView(msg, viewMode), [msg, viewMode]);
@@ -280,6 +298,57 @@ const MessageRow = React.memo(function MessageRow({
           >
             {copied ? <Check className="w-3 h-3" style={{ color: 'var(--success)' }} /> : <Copy className="w-3 h-3" />}
           </button>
+          {/* The row is where the question arises, so the next moves live here rather
+              than three panels away. */}
+          <button
+            onClick={() => onTrace(msg)}
+            className="transition hover:opacity-100 opacity-60"
+            style={{ color: 'var(--accent)' }}
+            title={msg.correlationData || msg.correlationHex
+              ? fill(t.traceFromCorrelation, { token: traceTokenFor(msg) })
+              : fill(t.traceFromTopic, { topic: msg.topic })}
+            aria-label={t.traceRun}
+            data-testid={`trace-${msg.id}`}
+          >
+            <GitCompare className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => onFilterTopic(msg.topic)}
+            className="transition hover:opacity-100 opacity-60"
+            style={{ color: 'var(--accent)' }}
+            title={fill(t.feedFilterThisTopic, { topic: msg.topic })}
+            aria-label={t.feedFilterThisTopicShort}
+            data-testid={`feed-filter-${msg.id}`}
+          >
+            <Filter className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => onSendAsRpc(msg)}
+            disabled={!connected || msg.truncated}
+            className="transition hover:opacity-100 opacity-60 disabled:opacity-25 disabled:cursor-not-allowed"
+            style={{ color: 'var(--accent)' }}
+            title={msg.truncated ? t.rpcSendTruncated : connected ? t.rpcSendHint : t.whyNotConnected}
+            aria-label={t.rpcSend}
+            data-testid={`rpc-send-${msg.id}`}
+          >
+            <Send className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => {
+              void copyToClipboard(mosquittoCommandText(mosquittoCommand(msg, broker))).then((ok) => {
+                if (!ok) return;
+                setCmdCopied(true);
+                setTimeout(() => setCmdCopied(false), 1400);
+              });
+            }}
+            className="transition hover:opacity-100 opacity-60"
+            style={{ color: cmdCopied ? 'var(--success)' : 'var(--accent)' }}
+            title={t.copyAsCommandHint}
+            aria-label={t.copyAsCommand}
+            data-testid={`copy-cmd-${msg.id}`}
+          >
+            {cmdCopied ? <Check className="w-3 h-3" /> : <Terminal className="w-3 h-3" />}
+          </button>
         </div>
       </div>
 
@@ -345,7 +414,8 @@ const MessageRow = React.memo(function MessageRow({
   );
 }, (a, b) =>
   a.msg === b.msg && a.viewMode === b.viewMode && a.copied === b.copied &&
-  a.replayed === b.replayed && a.connected === b.connected && a.codecScript === b.codecScript);
+  a.replayed === b.replayed && a.connected === b.connected && a.codecScript === b.codecScript &&
+  a.broker === b.broker);
 
 export const MessageStream: React.FC<MessageStreamProps> = ({
   messages,
@@ -353,6 +423,9 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   onClearRetained,
   onReplay,
   onQuickSubscribe,
+  broker,
+  onTrace,
+  onSendAsRpc,
   connected,
   paused,
   pendingCount,
@@ -467,6 +540,18 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
       console.error('Replay failed:', e);
     }
   }, [onReplay]);
+
+  // Exact topic, not a substring the user has to finish typing. The filter box is
+  // plain text matching, so an exact topic is the narrowest thing it can hold.
+  const handleFilterTopic = useCallback((topic: string) => setSearchTerm(topic), []);
+
+  const handleSendAsRpc = useCallback(async (msg: MqttGenericMessage) => {
+    try {
+      await onSendAsRpc(msg);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [onSendAsRpc]);
 
   const filteredMessages = useMemo(() => {
     return messages.filter((msg) => {
@@ -939,6 +1024,10 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
               onCopy={handleCopy}
               onReplay={handleReplay}
               onQuickSubscribe={onQuickSubscribe}
+              broker={broker}
+              onTrace={onTrace}
+              onSendAsRpc={handleSendAsRpc}
+              onFilterTopic={handleFilterTopic}
               t={t}
             />
               </div>

@@ -101,6 +101,16 @@ export interface Translations {
   traceExport: string;
   traceExportHint: string;
   traceBoundary: string;
+  traceFromCorrelation: string;
+  traceFromTopic: string;
+  feedFilterThisTopic: string;
+  feedFilterThisTopicShort: string;
+  rpcSend: string;
+  rpcSendHint: string;
+  rpcSendTruncated: string;
+  rpcSendDone: string;
+  copyAsCommand: string;
+  copyAsCommandHint: string;
   matchedCorrelation: string;
   matchedTopic: string;
   matchedPayload: string;
@@ -907,6 +917,16 @@ export const translations: Record<Language, Translations> = {
     traceExport: '导出追踪',
     traceExportHint: '把这条时间线导出为自带载荷的 JSON',
     traceBoundary: '标为"同一报文"的靠 correlation 对上；"主题命中/内容命中"只是提到过这个标识。桥接转发与 Webhook 投递不在这条时间线里，它们看数据桥接页的日志。',
+    traceFromCorrelation: '追踪 {token}：这一条请求与它的应答',
+    traceFromTopic: '追踪 {topic}：这条主题上的全部往来',
+    feedFilterThisTopic: '只看 {topic}',
+    feedFilterThisTopicShort: '只看这条主题',
+    rpcSend: '作为请求发送',
+    rpcSendHint: '用同样的字节发一条带应答主题与新 correlation 的请求',
+    rpcSendTruncated: '载荷在 feed 里被截断，这些字节不是完整请求',
+    rpcSendDone: '已作为请求发出，等待应答',
+    copyAsCommand: '复制为命令',
+    copyAsCommandHint: '复制这一行等价的 mosquitto_pub 命令',
     matchedCorrelation: '同一报文',
     matchedTopic: '主题命中',
     matchedPayload: '内容命中',
@@ -1709,6 +1729,16 @@ export const translations: Record<Language, Translations> = {
     traceExport: 'Export trace',
     traceExportHint: 'Save this timeline as a JSON file that carries its own payloads',
     traceBoundary: 'A "same message" hop was matched by correlation; "topic match" and "payload match" hops only mention the token. Bridge forwards and webhook deliveries are not in this timeline — they are in the Data Bridge log.',
+    traceFromCorrelation: 'trace {token}: this request and its answer',
+    traceFromTopic: 'trace {topic}: everything on this topic',
+    feedFilterThisTopic: 'show only {topic} in the feed',
+    feedFilterThisTopicShort: 'Only this topic',
+    rpcSend: 'Send as request',
+    rpcSendHint: 'Republish these bytes with a response topic and a fresh correlation',
+    rpcSendTruncated: 'the payload was truncated in the feed, so these bytes are not the whole request',
+    rpcSendDone: 'sent as a request; waiting for the answer',
+    copyAsCommand: 'Copy as command',
+    copyAsCommandHint: 'Copy the equivalent mosquitto_pub command for this row',
     matchedCorrelation: 'same message',
     matchedTopic: 'topic match',
     matchedPayload: 'payload match',
@@ -2511,6 +2541,16 @@ export const translations: Record<Language, Translations> = {
     traceExport: '匯出追蹤',
     traceExportHint: '把這條時間線匯出為自帶載入的 JSON',
     traceBoundary: '標為「同一報文」的靠 correlation 對上；「主題命中／內容命中」只是提到過這個識別。橋接轉發與 Webhook 派送不在這條時間線裡，它們看資料橋接頁的日誌。',
+    traceFromCorrelation: '追蹤 {token}：這一則請求與它的應答',
+    traceFromTopic: '追蹤 {topic}：這條主題上的全部往來',
+    feedFilterThisTopic: '只看 {topic}',
+    feedFilterThisTopicShort: '只看這條主題',
+    rpcSend: '作為請求發送',
+    rpcSendHint: '用同樣的位元組發一則帶應答主題與新 correlation 的請求',
+    rpcSendTruncated: '載入在 feed 裡被截斷，這些位元組不是完整請求',
+    rpcSendDone: '已作為請求發送，等待應答',
+    copyAsCommand: '複製為命令',
+    copyAsCommandHint: '複製這一行等價的 mosquitto_pub 命令',
     matchedCorrelation: '同一報文',
     matchedTopic: '主題命中',
     matchedPayload: '內容命中',
@@ -3313,6 +3353,16 @@ export const translations: Record<Language, Translations> = {
     traceExport: '追跡を書き出す',
     traceExportHint: 'ペイロードを同梱した JSON としてこのタイムラインを保存します',
     traceBoundary: '「同一メッセージ」は correlation で一致したホップです。「トピック一致 / ペイロード一致」は語が含まれているだけで、同一のメッセージではありません。ブリッジ転送と Webhook 配信はこのタイムラインに含まれません（データブリッジのログを参照）。',
+    traceFromCorrelation: '{token} を追跡：この要求とその応答',
+    traceFromTopic: '{topic} を追跡：このトピックの全やり取り',
+    feedFilterThisTopic: '{topic} のみ表示',
+    feedFilterThisTopicShort: 'このトピックのみ',
+    rpcSend: '要求として送信',
+    rpcSendHint: '同じバイト列を、応答トピックと新しい correlation を付けて要求として再送信します',
+    rpcSendTruncated: 'フィードでペイロードが切り詰められており、このバイト列は要求全体ではありません',
+    rpcSendDone: '要求として送信しました。応答を待っています',
+    copyAsCommand: 'コマンドとしてコピー',
+    copyAsCommandHint: 'この行と等価な mosquitto_pub コマンドをコピーします',
     matchedCorrelation: '同一メッセージ',
     matchedTopic: 'トピック一致',
     matchedPayload: 'ペイロード一致',

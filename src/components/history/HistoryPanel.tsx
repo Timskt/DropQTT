@@ -16,6 +16,8 @@ import { exportMessages, ExportFormat, saveTextFile } from '../../utils/exportMe
 interface HistoryPanelProps {
   t: Translations;
   connected: boolean;
+  /** A token handed over from a feed row: trace it as soon as this page mounts */
+  requestTrace?: string | null;
   onPublish: (params: ConsolePublishParams) => Promise<void>;
   onSubscribe: (topic: string) => void;
 }
@@ -143,7 +145,9 @@ const PayloadViewer: React.FC<{ row: HistoryRow; t: Translations }> = ({ row, t 
   );
 };
 
-export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPublish, onSubscribe }) => {
+export const HistoryPanel: React.FC<HistoryPanelProps> = ({
+  t, connected, requestTrace, onPublish, onSubscribe,
+}) => {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [direction, setDirection] = useState<'all' | 'in' | 'out'>('all');
@@ -261,21 +265,22 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
     } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
   };
 
-  const traceWindow = () => {
+  const traceWindow = (windowMs: number) => {
     const untilMs = Date.now();
-    return { sinceMs: win.ms ? untilMs - win.ms : 0, untilMs };
+    return { sinceMs: windowMs ? untilMs - windowMs : 0, untilMs };
   };
 
-  const runTrace = async () => {
-    const token = traceToken.trim();
-    if (!token) {
-      setTrace(null);
-      setTraceError(t.traceNeedsToken);
-      return;
-    }
-    setTracing(true);
+  /**
+   * The runner every trace goes through: it awaits first and only then touches
+   * state, so a trace handed over from a feed row cannot render a half-applied
+   * result if the window is closed mid-flight.
+   */
+  const executeTrace = useCallback(async (rawToken: string, windowMs: number) => {
+    const token = rawToken.trim();
+    if (!token) return;
     try {
-      const result = await invoke<TraceResult>('history_trace', { token, limit: TRACE_LIMIT, ...traceWindow() });
+      const result = await invoke<TraceResult>('history_trace', { token, limit: TRACE_LIMIT, ...traceWindow(windowMs) });
+      setTraceToken(token);
       setTrace(result);
       setTraceError(null);
       setTraceExpanded(null);
@@ -285,12 +290,41 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
     } finally {
       setTracing(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [win.ms]);
+
+  const runTrace = () => {
+    if (!traceToken.trim()) {
+      // The box is the only place that can say what it is waiting for.
+      setTrace(null);
+      setTraceError(t.traceNeedsToken);
+      return;
+    }
+    setTracing(true);
+    void executeTrace(traceToken, win.ms);
   };
+
+  // A trace asked for from a feed row. The panel remembers which token it already
+  // ran so the hand-off is consumed here rather than by a callback that would
+  // re-render the app and cancel the pending run; leaving and coming back runs it
+  // again, which is a fresh query for the same question.
+  const ranRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requestTrace || ranRef.current === requestTrace) return;
+    const id = setTimeout(() => {
+      // Marked as run inside the timer, not before it: React can mount, unmount and
+      // remount this panel in one pass, and a guard set at schedule time would let
+      // the cleanup cancel the only run that was ever scheduled.
+      ranRef.current = requestTrace;
+      void executeTrace(requestTrace, win.ms);
+    }, 0);
+    return () => clearTimeout(id);
+  }, [requestTrace, executeTrace, win.ms]);
 
   const exportTrace = async () => {
     if (!trace) return;
     const token = traceToken.trim();
-    const text = buildTraceExport(token, win.id || 'all', traceWindow(), trace, new Date().toISOString());
+    const text = buildTraceExport(token, win.id || 'all', traceWindow(win.ms), trace, new Date().toISOString());
     const safe = token.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 40) || 'trace';
     if (await saveTextFile(`dropqtt-trace-${safe}.json`, text)) {
       toast.success(fill(t.exportDone, { count: String(trace.hits.length) }));

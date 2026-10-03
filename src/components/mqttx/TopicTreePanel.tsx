@@ -48,7 +48,7 @@ export const TopicTreePanel: React.FC<TopicTreePanelProps> = ({ rows, series, no
   // are one row until you ask to see them. The summary line says what is there,
   // and one click (or Expand all) goes deeper.
   const isNodeOpen = (node: TopicNode) => open.has(node.path);
-  const flat = useMemo(() => flattenTree(tree, isNodeOpen), [tree, open]);
+  const flat = useMemo(() => flattenTree(tree, (node) => open.has(node.path)), [tree, open]);
   const shown = flat.slice(0, MAX_RENDERED_NODES);
   const anyClosed = flat.some((f) => f.expandable && !open.has(f.node.path));
 

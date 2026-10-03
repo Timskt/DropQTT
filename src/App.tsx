@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { check } from '@tauri-apps/plugin-updater';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -23,7 +23,8 @@ import { SettingsModal } from './components/SettingsModal';
 import { ToastHost } from './components/ToastHost';
 import { OpsPanel } from './components/ops/OpsPanel';
 
-import { BrokerConfig } from './types';
+import { BrokerConfig, MqttGenericMessage } from './types';
+import { traceTokenFor } from './utils/history';
 import { LANGUAGES, Language, Translations, fill, translations } from './i18n';
 import { applyTheme, THEMES, Theme } from './themes';
 import { usePersistentString } from './hooks/usePersistentState';
@@ -142,6 +143,44 @@ export function App() {
       });
     }
   };
+
+  // ---- Feed row workbench ----
+  // A row is where "what was this answering?" arises, so the moves live there:
+  // follow its correlation in the history trace, filter the feed to its topic,
+  // republish its bytes as a request, or copy the equivalent CLI command.
+  const [traceRequest, setTraceRequest] = useState<string | null>(null);
+  // One object per connected broker: the row memo compares it by identity, so
+  // rebuilding it on every render would re-render the whole feed.
+  const brokerTarget = useMemo(
+    () => ({ host: broker.config.host, port: broker.config.port, tls: !!broker.config.useTls }),
+    [broker.config.host, broker.config.port, broker.config.useTls],
+  );
+
+  const handleTraceFromRow = useCallback((m: MqttGenericMessage) => {
+    setTraceRequest(traceTokenFor(m));
+    setModeStr('history');
+  }, [setModeStr]);
+
+  const handleSendRowAsRpc = useCallback(async (m: MqttGenericMessage) => {
+    // A new identity, deliberately: replaying a request with the *old* correlation
+    // would pair this answer with whoever asked first.
+    const correlation = `dq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    await invoke('rpc_request', {
+      spec: {
+        topic: m.topic,
+        payloadBase64: m.payloadBase64,
+        qos: m.qos,
+        retain: false,
+        timeoutMs: 5000,
+        attempts: 1,
+        responseTopic: m.responseTopic?.trim() || `${m.topic}/reply`,
+        correlationData: correlation,
+        contentType: m.contentType ?? undefined,
+        userProperties: m.userProperties ?? [],
+      },
+    });
+    toast.success(t.rpcSendDone);
+  }, [t.rpcSendDone]);
 
   const transferState = useTransfers();
   const batch = useBatchSender({
@@ -369,6 +408,7 @@ export function App() {
             <HistoryPanel
               t={t}
               connected={broker.isConnected}
+              requestTrace={traceRequest}
               onPublish={(params) => mqtt.publish(params)}
               onSubscribe={(topic) => {
                 mqtt.addSubscription(topic, 1).catch((e) => {
@@ -488,6 +528,9 @@ export function App() {
                   });
                 }}
                 paused={mqtt.paused}
+                broker={brokerTarget}
+                onTrace={handleTraceFromRow}
+                onSendAsRpc={handleSendRowAsRpc}
                 pendingCount={mqtt.pendingCount}
                 feedDropped={mqtt.feedDropped}
                 onTogglePaused={mqtt.togglePaused}
