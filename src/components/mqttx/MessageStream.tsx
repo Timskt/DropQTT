@@ -192,6 +192,23 @@ const MessageRow = React.memo(function MessageRow({
             </span>
           )}
           {msg.responseTopic && <span className="chip chip-sky shrink-0 hidden xl:inline" title={t.responseTopicLabel}>↩ {msg.responseTopic}</span>}
+          {/* Which subscription carried this in. Broker-reported when it echoed a
+              Subscription Identifier, ours when it did not — the two are different
+              claims and the chip is coloured differently. */}
+          {msg.matchedFilters && msg.matchedFilters.length > 0 && (
+            <span
+              className={`chip ${msg.subscriptionIds && msg.subscriptionIds.length > 0 ? 'chip-sky' : 'chip-neutral'} shrink-0 hidden lg:inline font-mono max-w-[14rem] truncate`}
+              data-testid="matched-chip"
+              title={`${
+                msg.subscriptionIds && msg.subscriptionIds.length > 0
+                  ? t.matchedByBrokerHint
+                  : t.matchedByLocalHint
+              }: ${msg.matchedFilters.join(', ')}`}
+            >
+              ⌕ {msg.matchedFilters[0]}
+              {msg.matchedFilters.length > 1 && ` +${msg.matchedFilters.length - 1}`}
+            </span>
+          )}
           {(msg.correlationData || msg.correlationHex) && (
             <span
               className="chip chip-neutral shrink-0 hidden xl:inline font-mono"

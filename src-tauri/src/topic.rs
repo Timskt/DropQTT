@@ -5,6 +5,8 @@
 //! which do not need a broker connection (notably `watchdog`) can depend on it
 //! without dragging the Tauri app handle along.
 
+use std::collections::HashMap;
+
 /// MQTT5 shared subscription marker (spec §4.8.2): `$share/<ShareName>/<TopicFilter>`.
 pub const SHARE_PREFIX: &str = "$share";
 
@@ -83,6 +85,39 @@ pub fn wildcard_match(filter: &str, topic: &str) -> bool {
 /// Longest topic name MQTT allows (two-byte length prefix in the packet).
 pub const MAX_TOPIC_LEN: usize = 65535;
 
+/// Which of our filters a publish matched, according to the broker.
+///
+/// A v5 broker that supports Subscription Identifiers tags each delivered
+/// publish with the ids of the subscriptions it matched (MQTT 5 §3.3.2.3.1).
+/// That is the broker's own match, so it is both cheaper than rescanning every
+/// filter and more accurate than guessing from the topic alone — but it only
+/// answers for ids we handed out. An id we do not recognise is left out rather
+/// than guessed at: inventing a filter here would attribute traffic to a
+/// subscription the user never made.
+pub fn matched_by_ids(ids: &[u32], by_id: &HashMap<u32, String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(filter) = by_id.get(id) {
+            if !out.contains(filter) {
+                out.push(filter.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Which of our filters a publish matches, computed here.
+///
+/// The fallback for v3.1.1 (no such property) and for brokers that were told
+/// they could not use it. Shared filters match on their inner filter, which
+/// `wildcard_match` already handles.
+pub fn matched_by_scan<'a, I: Iterator<Item = &'a String>>(topic: &str, filters: I) -> Vec<String> {
+    filters
+        .filter(|f| wildcard_match(f, topic))
+        .cloned()
+        .collect()
+}
+
 /// Why a string may not be used as a *publish* topic.
 ///
 /// Wildcards are illegal in a PUBLISH (MQTT 5 §3.3.2.2 / 3.1.1 §4.7): a broker
@@ -141,8 +176,66 @@ pub fn filter_topic_error(filter: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_topic_error, parse_shared, publish_topic_error, shared_filter_error, wildcard_match,
+        filter_topic_error, matched_by_ids, matched_by_scan, parse_shared, publish_topic_error,
+        shared_filter_error, wildcard_match,
     };
+    use std::collections::HashMap;
+
+    #[test]
+    fn broker_ids_resolve_to_the_filters_we_handed_them_out_for() {
+        let mut by_id = HashMap::new();
+        by_id.insert(1u32, "sensors/#".to_string());
+        by_id.insert(2u32, "sensors/room1/temp".to_string());
+        assert_eq!(
+            matched_by_ids(&[2, 1], &by_id),
+            vec!["sensors/room1/temp".to_string(), "sensors/#".to_string()]
+        );
+        // One delivery can legitimately carry the same id twice only if the broker
+        // repeated it; counting it once keeps a hit total from inflating.
+        assert_eq!(matched_by_ids(&[1, 1], &by_id), vec!["sensors/#".to_string()]);
+    }
+
+    #[test]
+    fn an_id_we_never_issued_is_left_out_instead_of_guessed_at() {
+        let mut by_id = HashMap::new();
+        by_id.insert(1u32, "a/#".to_string());
+        // 7 is not ours. Inventing a filter for it would attribute traffic to a
+        // subscription the user never made, which is worse than saying nothing.
+        assert_eq!(matched_by_ids(&[7], &by_id), Vec::<String>::new());
+        assert_eq!(matched_by_ids(&[7, 1], &by_id), vec!["a/#".to_string()]);
+    }
+
+    #[test]
+    fn the_broker_answer_is_trusted_over_our_own_match() {
+        // If the broker says id 1 matched, we report that filter even if our
+        // local matcher disagrees. The whole value of the identifier is that the
+        // broker owns the matching rules (shared groups, $-topic policy, etc).
+        let mut by_id = HashMap::new();
+        by_id.insert(1u32, "sensors/temp".to_string());
+        let matched = matched_by_ids(&[1], &by_id);
+        assert_eq!(matched, vec!["sensors/temp".to_string()]);
+        assert!(!wildcard_match("sensors/temp", "sensors/humidity"));
+    }
+
+    #[test]
+    fn the_local_scan_is_the_fallback_and_honours_shared_filters() {
+        let subs: Vec<String> = vec![
+            "$share/g1/sensors/+".to_string(),
+            "sensors/#".to_string(),
+            "other/x".to_string(),
+        ];
+        let mut matched = matched_by_scan("sensors/room1", subs.iter());
+        matched.sort();
+        assert_eq!(
+            matched,
+            vec!["$share/g1/sensors/+".to_string(), "sensors/#".to_string()],
+            "a shared group and a wildcard can both cover the same delivery"
+        );
+        let mut wide = matched_by_scan("sensors/room1/temp", subs.iter());
+        wide.sort();
+        assert_eq!(wide, vec!["sensors/#".to_string()]);
+        assert!(matched_by_scan("nothing/here", subs.iter()).is_empty());
+    }
 
     #[test]
     fn a_shared_filter_matches_on_its_inner_filter() {

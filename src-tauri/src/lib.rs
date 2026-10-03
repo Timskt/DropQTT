@@ -183,6 +183,15 @@ async fn reset_subscription_stats(state: State<'_, AppState>) -> Result<(), Stri
     Ok(())
 }
 
+/// Filter -> the Subscription Identifier we asked this broker to label it with.
+/// Filters absent from this map have their hits matched locally.
+#[tauri::command]
+async fn get_subscription_ids(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, u32>, String> {
+    Ok(state.mqtt.get_subscription_ids().await)
+}
+
 /// Live per-topic traffic table (count / bytes / msgs-per-sec), hottest first
 #[tauri::command]
 async fn get_topic_stats(
@@ -535,6 +544,7 @@ pub fn run() {
             get_subscription_ack_state,
             get_broker_capabilities,
             get_subscription_stats,
+            get_subscription_ids,
             reset_subscription_stats,
             get_topic_stats,
             reset_topic_stats,

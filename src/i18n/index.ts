@@ -472,6 +472,8 @@ export interface Translations {
   willDelay: string;
   willContentType: string;
   payloadFormatHint: string;
+  matchedByBrokerHint: string;
+  matchedByLocalHint: string;
   payloadFormatUnset: string;
   topicAliasLabel: string;
   topicAliasHint: string;
@@ -1162,6 +1164,8 @@ export const translations: Record<Language, Translations> = {
     compareTooLarge: '负载过大，无法逐行对齐 —— 只显示原文',
     benchNoSubscribers: '无订阅者',
     corrHexHint: '以原始字节的十六进制显示关联数据',
+    matchedByBrokerHint: 'broker 用订阅标识符报回的命中订阅',
+    matchedByLocalHint: '本地匹配的命中订阅（broker 未回传标识符）',
     corrHexBadge: '十六进制',
     rpcNoCorrelation: '应答未带关联数据',
     ackCodeGrantedQos: '已授予 QoS {qos}',
@@ -1780,6 +1784,8 @@ export const translations: Record<Language, Translations> = {
     compareTooLarge: 'payloads too large to align line by line — showing both verbatim',
     benchNoSubscribers: 'no subscribers',
     corrHexHint: 'Correlation data shown as hex of the raw bytes',
+    matchedByBrokerHint: 'subscription the broker said it matched',
+    matchedByLocalHint: 'matched here — the broker sent no Subscription Identifier',
     corrHexBadge: 'hex',
     rpcNoCorrelation: 'reply carried no correlation data',
     ackCodeGrantedQos: 'granted QoS {qos}',
@@ -2398,6 +2404,8 @@ export const translations: Record<Language, Translations> = {
     compareTooLarge: '載入過大，無法逐行對齊 —— 只顯示原文',
     benchNoSubscribers: '無訂閱者',
     corrHexHint: '以原始位元組的十六進位顯示關聯資料',
+    matchedByBrokerHint: 'broker 以訂閱識別號回報的命中訂閱',
+    matchedByLocalHint: '本機比對的命中訂閱（broker 未回傳識別號）',
     corrHexBadge: '十六進位',
     rpcNoCorrelation: '應答未帶關聯資料',
     ackCodeGrantedQos: '已授予 QoS {qos}',
@@ -3016,6 +3024,8 @@ export const translations: Record<Language, Translations> = {
     compareTooLarge: 'ペイロードが大きすぎて行単位で対応付けできません — 両方そのまま表示',
     benchNoSubscribers: '購読者なし',
     corrHexHint: '相関データを生のバイト列の16進で表示',
+    matchedByBrokerHint: 'ブローカーが購読識別子で返した一致サブスクライブ',
+    matchedByLocalHint: 'ローカルで一致判定しました（ブローカーは識別子を返していません）',
     corrHexBadge: '16進',
     rpcNoCorrelation: '応答に相関データなし',
     ackCodeGrantedQos: 'QoS {qos} を許可',

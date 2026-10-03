@@ -48,6 +48,8 @@ const fromState = (s: SubscriptionAckState): SubscriptionAck => {
 export function useSubscriptionStats(active: boolean) {
   const [stats, setStats] = useState<Record<string, number>>({});
   const [ack, setAck] = useState<SubscriptionAck>(emptyAck);
+  /** filter -> Subscription Identifier we asked the broker to label it with */
+  const [ids, setIds] = useState<Record<string, number>>({});
   // Refused publishes arrive as a stream; one toast per burst, not one per packet.
   const nackRef = useRef<{ count: number; code: number; timer: number | null }>({
     count: 0,
@@ -133,6 +135,7 @@ export function useSubscriptionStats(active: boolean) {
   useEffect(() => {
     if (!active) {
       setStats({});
+      setIds({});
       setAck(emptyAck);
       return;
     }
@@ -144,6 +147,12 @@ export function useSubscriptionStats(active: boolean) {
         if (!disposed) setStats(next);
       } catch {
         // Backend not connected / command unavailable: keep the previous snapshot
+      }
+      try {
+        const labelled = await invoke<Record<string, number>>('get_subscription_ids');
+        if (!disposed) setIds(labelled);
+      } catch {
+        // Same reasoning: an unknown labelling stays as it was last known.
       }
       try {
         const state = await invoke<SubscriptionAckState>('get_subscription_ack_state');
@@ -171,5 +180,5 @@ export function useSubscriptionStats(active: boolean) {
     });
   }, []);
 
-  return { stats, ack, resetStats };
+  return { stats, ids, ack, resetStats };
 }

@@ -201,11 +201,22 @@ pub struct SubOptions {
     /// 2 = never send retained
     #[serde(default)]
     pub retain_handling: u8,
+    /// MQTT5 Subscription Identifier (spec §3.3.2.3.1 / §3.8.13). The console
+    /// assigns these so the broker can tell it which filter matched a delivery;
+    /// `None` means we asked for none, which is what a v3.1.1 link always sends.
+    #[serde(default)]
+    pub subscription_id: Option<u32>,
 }
 
 impl Default for SubOptions {
     fn default() -> Self {
-        Self { qos: default_qos1(), no_local: false, retain_as_published: false, retain_handling: 0 }
+        Self {
+            qos: default_qos1(),
+            no_local: false,
+            retain_as_published: false,
+            retain_handling: 0,
+            subscription_id: None,
+        }
     }
 }
 
@@ -298,6 +309,17 @@ pub struct MqttGenericMessage {
     /// Payload Format Indicator the publisher declared (v5 only)
     #[serde(default)]
     pub payload_format: Option<u8>,
+    /// Which registered subscriptions this delivery arrived through. Filled from
+    /// the broker's Subscription Identifiers when it sent them, and from our own
+    /// filter match otherwise — so it is never empty on an inbound row that any
+    /// subscription covers. Outbound rows have none: the broker, not we, decides
+    /// who receives a publish.
+    #[serde(default)]
+    pub matched_filters: Vec<String>,
+    /// The raw Subscription Identifier bytes-wise values, kept beside the resolved
+    /// filters so a reader can tell the broker's answer from our own matching.
+    #[serde(default)]
+    pub subscription_ids: Vec<u32>,
     pub qos: u8,
     pub retain: bool,
     pub timestamp: String,

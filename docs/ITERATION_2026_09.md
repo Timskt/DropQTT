@@ -949,6 +949,41 @@ hex 关联数据与文本关联数据加了 `hex:` 前缀再比较，否则字�
    但 `SubFail` 错误里**没有 packet id**，所以"哪个过滤器被拒"是按在飞顺序推的。数不对时我记 `unattributed`
    并显示"无法对应的应答码"，而不是猜。
 
+### 4.34 让 broker 自己回答"是哪条订阅命中的"（§1.5，第十二轮 2026-10-03）
+
+MQTT5 允许客户端在 SUBSCRIBE 上贴一个整数（Subscription Identifier, §3.8.13），broker 会在
+每一条**因这条订阅而送达**的 PUBLISH 上把它回传（§3.3.2.3.1）。以前我们只能自己遍历所有过滤器
+做 `wildcard_match`——既慢，又只是对 broker 行为的猜测。
+
+**顺手纠正了一个真实的计数错误。** 旧路径不只是"效率低"：mosquitto 对两条重叠订阅
+（`sensors/#` 与 `sensors/+/temp`）会**各投一份**，而本地扫描把每一份都算给**所有**匹配的过滤器，
+于是 2 次投递记成 4 次命中。改用 id 归集后实测 `sensors/#: 1`、`sensors/+/temp: 1`——
+"这条订阅收到了多少条消息"从此才是它本来的意思。审阅稿 §1.5 说"既提速又提准确性"，
+实际分量比这句话更重。
+
+三条不肯含糊的规则：
+
+1. **只在 broker 允许时贴标签**。CONNACK 的 `subscription-ids-available` 为 0 就不发；
+   重放订阅时**重新判断**——换一个不支持的 broker 若照旧发 id，会收到 0xA1 拒绝，
+   而 §4.25 已经证明那种拒绝在 rumqttc 里是致命的。
+2. **不认识的 id 不猜**。broker 回了我们没发过的编号（会话被接管、或它自己的账本出错），
+   宁可退回本地匹配，也不把流量算到一条用户没建过的订阅上（`topic.rs::matched_by_ids` 有专测）。
+3. **界面区分"谁说的"**。行上的 ⌕ 命中徽章：sky 底色 = broker 报的，neutral 底色 = 本地匹配的；
+   订阅条上的 `id #N` 同理——没有徽章的过滤器，它的命中数就是本地算的。两种陈述不能共用一张脸。
+
+`ConnCapabilities::v3()` 同时被纠正：3.1.1 里共享订阅与订阅标识符**根本不存在**，
+之前从 `Default`（v5 语义）继承成 `true`，v3 配置会把 `$share/g/a` 当合法过滤器发出去——
+broker 只把它当一个字面主题名，于是订阅永远收不到东西且不报错。
+
+门：harness **136/136**（新增 4 项归集规则）、vitest **48/48**、Playwright **75/75**（新增 5 项：
+broker 报的命中 / 本地匹配的命中 / 多命中只显示第一条并计数 / OUT 行不认领任何订阅 /
+订阅条的 `id #N` 徽章）、`tsc` 干净、`eslint` 0 error 10 warn、clippy **0 warning**。
+
+**真机取证**（throwaway mosquitto 2.0.15 于 `127.0.0.1:18831`，不是用户自己的服务；跑完已停实例、
+还原历史库、删除临时 WebView2 档案）：三条订阅分别拿到 `id #2/#3/#4`，发布一条
+`sensors/room1/temp` 后两条 IN 行各自显示 `⌕ sensors/#` 与 `⌕ sensors/+/temp`，
+tooltip 为 "subscription the broker said it matched"，`get_subscription_stats` 报 `1 / 1 / 0`。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

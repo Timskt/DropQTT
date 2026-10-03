@@ -17,7 +17,6 @@ use tokio::task::JoinHandle;
 use crate::bench::{self, BenchManager, BenchProgress, BenchSpec, BenchStatus};
 use crate::protocol::*;
 use crate::scheduler::{self, RunStatus, ScheduleSpec, SchedulerManager};
-use crate::topic::wildcard_match;
 use crate::transport::{build_connection, MqttClient, NetEvent};
 use crate::silence::{self, SilenceAlertEvent, SilenceWatchdog};
 use crate::webhook;
@@ -236,6 +235,47 @@ pub struct MqttManager {
     /// violation the broker answers by dropping the session, so the forms and the
     /// publish path both consult this.
     broker_caps: RwLock<crate::transport::ConnCapabilities>,
+    /// Subscription identifiers handed to the broker, both directions.
+    sub_ids: Mutex<SubIds>,
+}
+
+/// MQTT 5 lets a client attach an integer to a subscription (Subscription
+/// Identifier, §3.8.13) and the broker echoes it on every delivery that matched
+/// (§3.3.2.3.1). That turns "which of my filters got this" from a local rescan of
+/// every subscription into a lookup — and, more importantly, makes the answer the
+/// broker's instead of our guess about its matching rules.
+#[derive(Default)]
+struct SubIds {
+    next: u32,
+    by_id: HashMap<u32, String>,
+    id_of: HashMap<String, u32>,
+}
+
+/// Largest value the wire can carry: a four-byte variable integer.
+const MAX_SUBSCRIPTION_ID: u32 = 268_435_455;
+
+impl SubIds {
+    /// The id to attach for this filter, allocating one on first use. A filter
+    /// keeps its id across reconnects, so the CONNACK replay does not hand the
+    /// broker a new label for the same subscription.
+    fn assign(&mut self, filter: &str) -> Option<u32> {
+        if let Some(id) = self.id_of.get(filter) {
+            return Some(*id);
+        }
+        if self.next >= MAX_SUBSCRIPTION_ID {
+            return None;
+        }
+        self.next += 1;
+        self.id_of.insert(filter.to_string(), self.next);
+        self.by_id.insert(self.next, filter.to_string());
+        Some(self.next)
+    }
+
+    fn forget(&mut self, filter: &str) {
+        if let Some(id) = self.id_of.remove(filter) {
+            self.by_id.remove(&id);
+        }
+    }
 }
 
 impl Default for MqttManager {
@@ -275,6 +315,7 @@ impl MqttManager {
             outgoing_transfers: Mutex::new(HashMap::new()),
             is_connected: AtomicBool::new(false),
             broker_caps: RwLock::new(crate::transport::ConnCapabilities::default()),
+            sub_ids: Mutex::new(SubIds::default()),
             confirm_timeouts: std::sync::atomic::AtomicU64::new(0),
             publish_rejected: std::sync::atomic::AtomicU64::new(0),
         }
@@ -457,6 +498,7 @@ impl MqttManager {
             while !flag.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
                     NetEvent::Connected(caps) => {
+                        let ids_allowed = caps.subscription_ids_available;
                         *this.broker_caps.write().await = caps;
                         // Start every silence timer from now: a gap while we were
                         // disconnected is our own outage, not the device's.
@@ -475,7 +517,17 @@ impl MqttManager {
                                     // rumqttc treats that as fatal, so replaying it
                                     // would drop the session again on every reconnect.
                                     .filter(|(t, _)| !tracker.is_quarantined(t))
-                                    .map(|(t, o)| (t.clone(), *o))
+                                    .map(|(t, o)| {
+                                        let mut o = *o;
+                                        if !ids_allowed {
+                                            // An id we asked for against a *different*
+                                            // broker must not be replayed here: a server
+                                            // that does not support the property answers
+                                            // with a refusal, and that refusal is fatal.
+                                            o.subscription_id = None;
+                                        }
+                                        (t.clone(), o)
+                                    })
                                     .collect()
                             };
                             // One SUBSCRIBE packet per filter, so each SUBACK's
@@ -709,6 +761,13 @@ impl MqttManager {
             return Err("a shared subscription cannot also set No Local".to_string());
         }
         let topic = topic.trim().to_string();
+        let mut opts = opts;
+        if self.broker_caps.read().await.subscription_ids_available {
+            // Ask the broker to label its deliveries. If it never answers, the
+            // hit accounting falls back to matching locally, so nothing here
+            // depends on the broker honouring the request.
+            opts.subscription_id = self.sub_ids.lock().await.assign(&topic);
+        }
         self.subscriptions.lock().await.insert(topic.clone(), opts);
         self.subscription_hits.lock().await.entry(topic.clone()).or_insert(0);
         if let Some(client) = self.client.read().await.clone() {
@@ -730,6 +789,7 @@ impl MqttManager {
         let topic = topic.trim().to_string();
         self.subscriptions.lock().await.remove(&topic);
         self.subscription_hits.lock().await.remove(&topic);
+        self.sub_ids.lock().await.forget(&topic);
         {
             let mut tracker = self.sub_acks.lock().await;
             // Our own verdict on it is finished business; anything still awaiting
@@ -1086,6 +1146,12 @@ impl MqttManager {
         self.subscription_hits.lock().await.clone()
     }
 
+    /// Which filters we asked the broker to label, and with what. An absent filter
+    /// means its hit count came from our own topic matching rather than its word.
+    pub async fn get_subscription_ids(&self) -> HashMap<String, u32> {
+        self.sub_ids.lock().await.id_of.clone()
+    }
+
     pub async fn reset_subscription_stats(&self) {
         let mut hits = self.subscription_hits.lock().await;
         for v in hits.values_mut() {
@@ -1394,6 +1460,10 @@ impl MqttManager {
                 .as_deref()
                 .map(|s| hex::encode(s.as_bytes())),
             payload_format: params.properties.payload_format,
+            // Our own publish: no subscription of ours matched it, and the broker
+            // attaches identifiers only to deliveries.
+            matched_filters: Vec::new(),
+            subscription_ids: Vec::new(),
             qos: params.qos,
             retain: params.retain,
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
@@ -1739,16 +1809,27 @@ impl MqttManager {
         // Per-topic traffic meter (count / bytes / per-second rate)
         self.record_topic(&topic, publish.payload.len() as u64).await;
 
-        // Subscription hit stats: which registered filters is this publish matching?
-        {
+        // Subscription hit stats. When the broker tagged this delivery with the
+        // ids of the subscriptions it matched, that is its own answer and costs a
+        // lookup. An id we do not recognise (a session takeover, or a broker that
+        // invents labels) falls back to our own match rather than reporting a
+        // delivery that apparently reached nobody.
+        let by_ids = if publish.subscription_ids.is_empty() {
+            Vec::new()
+        } else {
+            let ids = self.sub_ids.lock().await;
+            crate::topic::matched_by_ids(&publish.subscription_ids, &ids.by_id)
+        };
+        let matched = if by_ids.is_empty() {
             let subs = self.subscriptions.lock().await;
-            if !subs.is_empty() {
-                let mut hits = self.subscription_hits.lock().await;
-                for filter in subs.keys() {
-                    if wildcard_match(filter, &topic) {
-                        *hits.entry(filter.clone()).or_insert(0) += 1;
-                    }
-                }
+            crate::topic::matched_by_scan(&topic, subs.keys())
+        } else {
+            by_ids
+        };
+        if !matched.is_empty() {
+            let mut hits = self.subscription_hits.lock().await;
+            for filter in &matched {
+                *hits.entry(filter.clone()).or_insert(0) += 1;
             }
         }
 
@@ -1780,6 +1861,8 @@ impl MqttManager {
                 correlation_data: corr_text,
                 correlation_hex: corr_hex,
                 payload_format: publish.payload_format,
+                matched_filters: matched.clone(),
+                subscription_ids: publish.subscription_ids.clone(),
                 qos: publish.qos,
                 retain: publish.retain,
                 timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),

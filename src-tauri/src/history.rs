@@ -346,6 +346,8 @@ mod tests {
             response_topic: None,
             correlation_data: None,
             correlation_hex: None,
+            matched_filters: Vec::new(),
+            subscription_ids: Vec::new(),
             qos: 1,
             retain: false,
             timestamp: String::new(),

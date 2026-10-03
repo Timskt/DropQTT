@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use bytes::Bytes;
-use rumqttc::v5::mqttbytes::v5::{Filter, RetainForwardRule};
+use rumqttc::v5::mqttbytes::v5::{Filter, RetainForwardRule, SubscribeProperties};
 use rumqttc::{MqttOptions, QoS, Transport as RumqttcTransport};
 
 use crate::protocol::{BrokerConfig, PubProperties, SubOptions};
@@ -105,6 +105,10 @@ pub struct NormalizedPublish {
     pub correlation_data: Option<Vec<u8>>,
     /// MQTT5 Payload Format Indicator as the publisher declared it
     pub payload_format: Option<u8>,
+    /// MQTT5 Subscription Identifiers the broker attached to this delivery, i.e.
+    /// "these are the subscriptions of yours that I matched". Empty on v3.1.1,
+    /// and on any link where we did not ask for ids.
+    pub subscription_ids: Vec<u32>,
 }
 
 /// Which acknowledgement a broker refused.
@@ -222,12 +226,16 @@ impl Default for ConnCapabilities {
 }
 
 impl ConnCapabilities {
-    /// v3.1.1 has no capability negotiation. Aliases, shared and wildcard
-    /// *availability flags* do not exist either, but the topic-alias limit does
-    /// effectively: no alias may be sent, which is also `Default`'s 0.
+    /// v3.1.1 has no capability negotiation, so this table is the protocol itself.
+    /// Aliases cannot be sent at all; shared subscriptions and subscription
+    /// identifiers do not exist in the version, whatever the broker behind it
+    /// supports — a `$share/...` filter over 3.1.1 is just a literal topic name,
+    /// which is how a subscription silently receives nothing.
     pub fn v3() -> Self {
         Self {
             topic_alias_max: 0,
+            shared_available: false,
+            subscription_ids_available: false,
             ..Default::default()
         }
     }
@@ -674,7 +682,9 @@ impl MqttClient {
                 .await
                 .map_err(|e| format!("{:?}", e)),
             MqttClient::V5(client) => {
-                if !opts.no_local && !opts.retain_as_published && opts.retain_handling == 0 {
+                let plain =
+                    !opts.no_local && !opts.retain_as_published && opts.retain_handling == 0;
+                if plain && opts.subscription_id.is_none() {
                     return client
                         .subscribe(topic, qos_from_u8_v5(opts.qos))
                         .await
@@ -691,7 +701,26 @@ impl MqttClient {
                         _ => RetainForwardRule::OnEverySubscribe,
                     },
                 };
-                client.subscribe_many([filter]).await.map_err(|e| format!("{:?}", e))
+                // The identifier is a SUBSCRIBE *packet* property, so it applies to
+                // every filter in the packet. We send exactly one filter per
+                // SUBSCRIBE, which is what makes the broker's answer attributable
+                // to a single subscription rather than to a batch of them.
+                match opts.subscription_id {
+                    Some(id) => client
+                        .subscribe_many_with_properties(
+                            [filter],
+                            SubscribeProperties {
+                                id: Some(id as usize),
+                                user_properties: Vec::new(),
+                            },
+                        )
+                        .await
+                        .map_err(|e| format!("{:?}", e)),
+                    None => client
+                        .subscribe_many([filter])
+                        .await
+                        .map_err(|e| format!("{:?}", e)),
+                }
             }
         }
     }
@@ -739,6 +768,9 @@ impl MqttEventLoop {
                         response_topic: None,
                         correlation_data: None,
                         payload_format: None,
+                        // v3.1.1 has no Subscription Identifier; hit accounting
+                        // falls back to matching our own filters.
+                        subscription_ids: Vec::new(),
                     })
                 }
                 Ok(rumqttc::Event::Incoming(
@@ -766,6 +798,13 @@ impl MqttEventLoop {
                     NetEvent::Connected(ConnCapabilities::from_v5(a.properties.as_ref()))
                 }
                 Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(p))) => {
+                    let subscription_ids = p
+                        .properties
+                        .as_ref()
+                        .map(|pr| {
+                            pr.subscription_identifiers.iter().map(|i| *i as u32).collect()
+                        })
+                        .unwrap_or_default();
                     let (content_type, user_properties, response_topic, correlation_data, payload_format) =
                         match p.properties {
                             Some(vp) => (
@@ -787,6 +826,7 @@ impl MqttEventLoop {
                         response_topic,
                         correlation_data,
                         payload_format,
+                        subscription_ids,
                     })
                 }
                 Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::PubAck(a))) => {

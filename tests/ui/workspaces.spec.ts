@@ -21,6 +21,7 @@ test.beforeEach(async ({ page }) => {
         w.calls.push({ cmd, args });
         if (cmd === 'get_connection_status') return { connected: true, brokerHost: 'localhost', brokerPort: 1883, clientId: 'test' };
         if (cmd === 'get_default_download_dir') return 'D:/Downloads';
+        if (cmd === 'get_subscription_ids') return w.subIds ?? {};
         if (cmd === 'get_broker_capabilities')
           return w.caps ?? { topicAliasMax: 10, maxQos: 2, retainAvailable: true, wildcardAvailable: true, sharedAvailable: true, subscriptionIdsAvailable: true, receiveMax: 65535, maxPacketSize: null, serverKeepAlive: null, sessionExpiry: null, assignedClientId: null, responseInformation: null, serverReference: null };
         if (cmd === 'get_subscription_ack_state')

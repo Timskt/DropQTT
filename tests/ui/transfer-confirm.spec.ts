@@ -40,6 +40,7 @@ const boot = async (page: any) => {
         if (cmd === 'bridge_status' || cmd === 'list_transfers' || cmd === 'get_topic_stats'
           || cmd === 'get_broker_sys' || cmd === 'schedule_list' || cmd === 'bench_progress') return [];
         if (cmd === 'get_subscription_stats') return {};
+        if (cmd === 'get_subscription_ids') return w.subIds ?? {};
         if (cmd === 'get_broker_capabilities')
           return w.caps ?? { topicAliasMax: 10, maxQos: 2, retainAvailable: true, wildcardAvailable: true, sharedAvailable: true, subscriptionIdsAvailable: true, receiveMax: 65535, maxPacketSize: null, serverKeepAlive: null, sessionExpiry: null, assignedClientId: null, responseInformation: null, serverReference: null };
         if (cmd === 'get_subscription_ack_state')

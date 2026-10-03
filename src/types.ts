@@ -95,6 +95,10 @@ export interface MqttGenericMessage {
   correlationHex?: string;
   /** MQTT5 Payload Format Indicator as published: 0 = bytes, 1 = UTF-8 */
   payloadFormat?: number;
+  /** Which registered subscriptions this delivery arrived through. */
+  matchedFilters?: string[];
+  /** The raw Subscription Identifiers behind `matchedFilters`, when the broker sent any. */
+  subscriptionIds?: number[];
   qos: number;
   retain: boolean;
   timestamp: string;

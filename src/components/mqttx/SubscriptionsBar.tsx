@@ -12,6 +12,11 @@ interface SubscriptionsBarProps {
   onRemoveSubscription: (topic: string) => void;
   /** Topic filter -> inbound publish hit count (backend-maintained) */
   hitStats: Record<string, number>;
+  /**
+   * Topic filter -> Subscription Identifier we asked the broker to label it with.
+   * A filter missing here has its hits counted by our own topic matching.
+   */
+  subIds: Record<string, number>;
   /** What the broker actually said about each filter (SUBACK verdicts) */
   ack: SubscriptionAck;
   /** CONNACK capabilities: a filter the broker cannot serve is refused here. */
@@ -30,6 +35,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   onAddSubscription,
   onRemoveSubscription,
   hitStats,
+  subIds,
   ack,
   caps,
   onResetStats,
@@ -103,7 +109,13 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   };
 
   const activeFlags = (o?: SubOptions) =>
-    o ? [o.noLocal && 'noLocal', o.retainAsPublished && 'retainAsPublished', o.retainHandling !== 0 && `retainHandling=${o.retainHandling}`].filter(Boolean) : [];
+    o
+      ? [
+          o.noLocal && 'noLocal',
+          o.retainAsPublished && 'retainAsPublished',
+          o.retainHandling !== 0 && `retainHandling=${o.retainHandling}`,
+        ].filter(Boolean)
+      : [];
 
   return (
     <div className="panel p-4 space-y-3.5 font-mono">
@@ -312,6 +324,10 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           subscriptions.map((sub) => {
             const refusal = refusalNote(sub.topic);
             const capped = ack.capped[sub.topic];
+            // A labelled subscription's hit count is the broker's statement; an
+            // unlabelled one is our own topic match. The badge says which.
+            const id = subIds[sub.topic];
+            const flags = [...activeFlags(sub.options), ...(id ? [`id #${id}`] : [])];
             return (
             <div
               key={sub.topic}
@@ -359,12 +375,13 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
                   {t.ackCodeGrantedQos.replace('{qos}', String(capped))}
                 </span>
               )}
-              {activeFlags(sub.options).length > 0 && (
+              {flags.length > 0 && (
                 <span
                   className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
-                  title={activeFlags(sub.options).join(', ')}
+                  data-testid={`sub-flags-${sub.topic}`}
+                  title={flags.join(', ')}
                 >
-                  {activeFlags(sub.options).join(' · ')}
+                  {flags.join(' · ')}
                 </span>
               )}
               <span

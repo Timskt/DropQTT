@@ -342,6 +342,7 @@ export function App() {
                 onAddSubscription={mqtt.addSubscription}
                 onRemoveSubscription={mqtt.removeSubscription}
                 hitStats={subStats.stats}
+                subIds={subStats.ids}
                 ack={subStats.ack}
                 caps={brokerCaps}
                 onResetStats={subStats.resetStats}

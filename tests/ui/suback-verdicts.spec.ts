@@ -61,6 +61,7 @@ const boot = async (page: any, ackState?: unknown) => {
         if (cmd === 'get_subscription_stats') {
           return { 'edge/alive': 12, 'secret/telemetry': 0 };
         }
+        if (cmd === 'get_subscription_ids') return w.subIds ?? {};
         if (cmd === 'get_broker_capabilities')
           return w.caps ?? { topicAliasMax: 10, maxQos: 2, retainAvailable: true, wildcardAvailable: true, sharedAvailable: true, subscriptionIdsAvailable: true, receiveMax: 65535, maxPacketSize: null, serverKeepAlive: null, sessionExpiry: null, assignedClientId: null, responseInformation: null, serverReference: null };
         if (cmd === 'get_subscription_ack_state') {
