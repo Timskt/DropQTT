@@ -39,6 +39,8 @@ const boot = async (page: any) => {
         // Faithful shapes: every one of these is a collection in the real backend.
         if (cmd === 'bridge_status' || cmd === 'list_transfers' || cmd === 'get_topic_stats'
           || cmd === 'get_broker_sys' || cmd === 'schedule_list' || cmd === 'bench_progress') return [];
+        if (cmd === 'bridge_outbox_state') return w.outbox ?? { counts: { pending: 0, dead: 0, delivered: 0, retries: 0 }, error: null, preview: [], maxAttempts: 8 };
+        if (cmd === 'bridge_outbox_flush' || cmd === 'bridge_outbox_drop') return 0;
         if (cmd === 'get_subscription_stats') return {};
         if (cmd === 'get_subscription_ids') return w.subIds ?? {};
         if (cmd === 'assertions_sync_rules' || cmd === 'assertions_state' || cmd === 'assertions_reset')

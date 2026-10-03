@@ -63,6 +63,8 @@ const boot = async (page: any) => {
           return w.ackState ?? { rejected: [], refusedUnsubscribes: [], capped: [], unattributed: 0 };
         if (cmd === 'schedule_list') return [];
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];
+        if (cmd === 'bridge_outbox_state') return w.outbox ?? { counts: { pending: 0, dead: 0, delivered: 0, retries: 0 }, error: null, preview: [], maxAttempts: 8 };
+        if (cmd === 'bridge_outbox_flush' || cmd === 'bridge_outbox_drop') return 0;
         if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
         if (cmd === 'bridge_test_transform') {
           // Mirrors transform.rs: string passes through, null drops, throw rejects.

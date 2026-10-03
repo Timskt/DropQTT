@@ -861,7 +861,33 @@ export interface BridgeRuleStats {
   /** Skipped by exclusion filters or rate limiting */
   dropped: number;
   lastTopic: string;
+  /** Webhook bodies still owed a delivery, and dead letters that stopped trying */
+  queued?: number;
+  dead?: number;
 }
+
+export interface BridgeOutboxCounts {
+  pending: number;
+  dead: number;
+  delivered: number;
+  retries: number;
+}
+
+export interface BridgeOutboxState {
+  counts: BridgeOutboxCounts;
+  /** Set when retries are off because the queue could not be opened */
+  error?: string | null;
+  preview: [string, string, number, string][];
+  /** The backend's own attempt cap — the panel prints it, so it must not be a guess */
+  maxAttempts: number;
+}
+
+export const emptyBridgeOutboxState: BridgeOutboxState = {
+  counts: { pending: 0, dead: 0, delivered: 0, retries: 0 },
+  error: null,
+  preview: [],
+  maxAttempts: 0,
+};
 
 export interface BridgeEvent {
   ruleId: string;

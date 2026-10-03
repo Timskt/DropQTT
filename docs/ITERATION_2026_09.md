@@ -1481,6 +1481,60 @@ vitest **67/67**、`tsc` 干净、`eslint` 0 error 10 warn、Playwright 全套 *
 门：Rust harness **204/204**（新增 5 条）、`clippy --lib --tests` 干净。
 纯测试改动，前端与 Playwright 无涉及（vitest 67/67、`tsc`、`eslint` 预算不变）。
 
+### 4.48 桥接 Webhook 的磁盘 outbox：失败不再只是一个错误计数（§2 E4，第十四轮 2026-10-04）
+
+审阅稿的原话是"5xx/超时现在直接失败无重投"，这条我完全同意——`webhook.rs` 把**怎么发**
+（SSRF 边界、超时、响应体上限）做得很干净，缺的是**发不出去之后怎么办**。现在的答案是
+`src-tauri/src/outbox.rs`：一张 SQLite 表 + 指数退避 + 死信状态。
+
+**它刻意不是消息中间件。** 条目只活在本机这块盘上、按入队顺序被本进程重投，没有跨进程的
+投递语义、没有 at-least-once 承诺给任何订阅者。这一点写进模块首注释，也写进面板的提示句，
+免得用户以为它在替 MQTT 的 QoS 兜底。
+
+**三条设计决定值得单独说：**
+
+1. **不存 URL，只存 `rule_id`。** 目标地址属于规则，队列只记"这条是哪个规则欠的"。副产品
+   有两个：webhook 地址不会在盘上多出第二份拷贝；以及**修好规则之后再重试，投的是修好后的
+   地址**，而不是坏掉时那个。取证时我直接对 `dropqtt_outbox.db`/`-wal` 做字节搜索：
+   `8085`、`/events` 都不在，而 `sensors/temp` 与载荷在——载荷必须存，否则没法重投。
+2. **退避用 `1s→2s→4s…` 封顶 300s，8 次转死信**（`MAX_ATTEMPTS`）。死信**不自动清理**：
+   它是"这个端点曾经不可达"的唯一残留证据，所以面板上丢弃它需要两次点击，和删规则同级。
+   面板里的 `attempt 4/8` 那个 8 是后端随 `OutboxState.max_attempts` 一起发过来的，
+   不是前端抄的常量——改上限时提示句不会说谎。
+3. **打不开队列必须说出来。** `Outbox` 打开失败时 `error` 字段一路传到面板，显示
+   "Retries are off: …"，而不是显示一个干净的 0。零和"我不知道"是两件事。
+
+**顺手补的两处诚实性**（都在 `bridge.rs` 的 pump 里）：重投产生的转发日志以前写死
+`bytes: 0`，现在带真实字节数；而**重投失败不再推进规则的错误计数**——那个计数含义是
+"首次投递失败的消息数"，重试历史由队列自己以 `retries` / 预览行末次错误呈现，两者混在一起
+会让一次长故障把错误数刷成一片没有信息量的红。
+
+**门**：Rust harness **215/215**（outbox 11 条，含"重开数据库队列还在""死信永不再被 due"
+"预览不带载荷也不带 URL"）、`clippy --lib --tests` 干净、vitest 67/67、`tsc` 干净、
+`eslint` 0 error / 10 warning（预算未涨）、Playwright **145 passed**（新增
+`tests/ui/bridge-outbox.spec.ts` 6 条：空队列不占版面、计数与预览、按规则重试、死信两次点击、
+打不开时报错、提示句引用后端上限）。
+
+**真机取证**（gnu 构建 5m10s；桥接 src 连一次性 mosquitto `127.0.0.1:18831`，webhook 打到
+一次性 sink `127.0.0.1:8085`；**用户自己的 1883 服务全程未被触碰**，收尾后 18831/8085/9223
+均已无监听）：
+
+| 步骤 | 面板（DOM 读回） | sink 侧独立事实 |
+|---|---|---|
+| sink 返回 500，发一条 `sensors/temp` | `queued 1 · dead 0 · retries 4 · recovered 0`，预览 `attempt 4/8 · HTTP 500`，规则行 `⧗ 1` | 收到 **5 次** POST：1 次首发 + 4 次退避重投，节奏正是 1s/2s/4s/8s |
+| `taskkill /F` 硬杀进程后重启 | `pending 0, dead 1, retries 8`，预览 `attempt 8/8` | —— 队列从盘上回来，且**已经变成死信**而不是消失 |
+| sink 改 200，点"Retry now" | `queued 0 · dead 1 · recovered 1` | 收到 `{"payload":"{\"temp\":22.1,\"tag\":\"second\"}","qos":1,"topic":"sensors/temp",…}` —— **原始字节原样补投**，且死信没有被复活 |
+| 点"Drop dead letters" | 第一次点击只把按钮变成 `Confirm discard`，状态仍是 `dead 1`；第二次才 `dead 0`、预览清空 | —— |
+
+收尾：历史库三件套按备份还原并 md5 校验一致（`71e5d69f…` / `88730090…` / `970d5f44…`），
+演示用的 `dropqtt_outbox.db*` 与独立 WebView2 配置目录已删除。
+
+**这一条没做的事**：E5 的多 sink fan-out（一条规则同时投业务 API + 归档 + 告警）另做一批，
+outbox 的 `rule_id` 模型要为它加"哪个目标"这一维；以及把 outbox 表并进 `dropqtt_history.db`
+（审阅稿建议复用现有 SQLite）——我选择**另开一个 `dropqtt_outbox.db`**，理由是历史库会被
+保留策略 prune、也会被导出，而队列的生命周期与那些操作无关，混在一起等于让"清理历史"
+有机会顺手删掉待投的载荷。这条偏差要记在这里，而不是假装是照建议做的。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。
@@ -1498,7 +1552,7 @@ vitest **67/67**、`tsc` 干净、`eslint` 0 error 10 warn、Playwright 全套 *
 4. **B2 的收尾**：入站主题别名的线上验证（目前只有源码依据，见 §4.9）；桥接对 user-property 转发的字节级复核。
 5. **C2b 保存的定时任务**：把任务定义（不只是节奏默认值）持久化，支持"启动时自动恢复"。
 6. **C2c 定时任务的 CBOR 编码**：需要一个 Rust CBOR 编码器；在那之前界面明确拒绝，不做静默降级。
-7. **Webhook 可选可靠性**：失败落盘重投（N 次 / M 秒退避），明确它是本地文件队列而非消息中间件。
+7. ~~**Webhook 可选可靠性**~~ ✅ **第十四轮完成**（§4.48）：失败落盘 + 1s→300s 退避 + 死信，面板可"立即重试/清除死信"，并明确它是本地文件队列而非消息中间件。剩下的同类问题是**多 sink fan-out（E5）**——outbox 现在按 `rule_id` 记账，一条规则多个目标时要加"哪个目标"这一维。
 8. **系统代理开关**：按需启用 `reqwest/system-proxy`。
 9. **把 gnu 路线固化成本地开发方式**：加 `pnpm tauri:dev:gnu`（设 `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu`），让没有 Windows SDK 的机器也能一键联调。顺带记录：`cargo test --lib` 在本机 gnu 下能编译但测试进程加载 Tauri/WebView2 依赖会 `STATUS_ENTRYPOINT_NOT_FOUND`，所以 Rust 门只能走 §4.1 的 harness。
 10. **补 `bridge.rs` 的自动化测试**：它只被真机端到端覆盖过一次，没有可重复回归。可把 `resync_subs` 的期望集合计算抽成不依赖 Tauri 的纯函数。

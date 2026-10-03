@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod faults;
 pub mod history;
 pub mod mqtt_manager;
+pub mod outbox;
 pub mod protocol;
 pub mod rpc;
 pub mod responder;
@@ -544,6 +545,34 @@ async fn responder_reset(state: State<'_, AppState>) -> Result<Vec<responder::Re
     Ok(state.mqtt.responder.stats())
 }
 
+/// Queue state for the bridge panel: the counts come from SQLite, so a restart does
+/// not reset what is still owed.
+#[tauri::command]
+async fn bridge_outbox_state(
+    state: State<'_, AppState>,
+) -> Result<outbox::OutboxState, String> {
+    Ok(state.bridge.outbox_state())
+}
+
+/// Retry everything pending right now, or just one rule's share of it.
+#[tauri::command]
+async fn bridge_outbox_flush(
+    state: State<'_, AppState>,
+    rule_id: Option<String>,
+) -> Result<u64, String> {
+    state.bridge.outbox_flush(rule_id.as_deref())
+}
+
+/// Throw away the dead letters. Deliberately not automatic: a dead letter is the
+/// only evidence left that an endpoint was unreachable.
+#[tauri::command]
+async fn bridge_outbox_drop(
+    state: State<'_, AppState>,
+    rule_id: Option<String>,
+) -> Result<u64, String> {
+    state.bridge.outbox_drop_dead(rule_id.as_deref())
+}
+
 #[tauri::command]
 async fn bridge_stats(
     state: State<'_, AppState>,
@@ -637,6 +666,32 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("[dropqtt] app data dir unavailable: {e}"),
             }
+
+            // The webhook outbox needs the data dir too, and its absence has to be
+            // reported by the bridge panel rather than quietly disabling retries.
+            let bridge_for_outbox = app.state::<AppState>().bridge.clone();
+            let opened = match app.path().app_data_dir() {
+                Ok(dir) => {
+                    let _ = std::fs::create_dir_all(&dir);
+                    crate::outbox::Outbox::open(&dir.join("dropqtt_outbox.db")).map(Arc::new)
+                }
+                Err(e) => Err(format!("app data dir unavailable: {e}")),
+            };
+            let pump_error = opened.as_ref().err().cloned();
+            bridge_for_outbox.attach_outbox(opened);
+            if let Some(e) = pump_error {
+                eprintln!("[dropqtt] webhook outbox unavailable: {e}");
+            }
+            // One tick a second is enough: the backoff itself is seconds to minutes,
+            // and a pump that never returns would hold the shutdown path.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
+                    let state = app_handle.state::<AppState>();
+                    state.bridge.clone().pump_outbox(&app_handle).await;
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -703,6 +758,9 @@ pub fn run() {
             responder_stats,
             responder_reset,
             bridge_stats,
+            bridge_outbox_state,
+            bridge_outbox_flush,
+            bridge_outbox_drop,
             bridge_reset_stats,
             bridge_test_transform
         ])

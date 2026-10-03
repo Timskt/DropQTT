@@ -66,6 +66,8 @@ const boot = async (page: any, opts: { rules?: any[]; stats?: any[]; connected?:
           return { stats: { matched: 0, passed: 0, violated: 0, unevaluable: 0 }, rules: 0, recent: [] };
         if (cmd === 'faults_sync_rules' || cmd === 'faults_stats' || cmd === 'faults_reset') return [];
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];
+        if (cmd === 'bridge_outbox_state') return w.outbox ?? { counts: { pending: 0, dead: 0, delivered: 0, retries: 0 }, error: null, preview: [], maxAttempts: 8 };
+        if (cmd === 'bridge_outbox_flush' || cmd === 'bridge_outbox_drop') return 0;
         if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
         if (cmd === 'schedule_list' || cmd === 'bench_progress' || cmd === 'rpc_list') return [];
         if (cmd === 'responder_sync_rules') {

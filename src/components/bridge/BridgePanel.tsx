@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Download,
   GitBranch,
+  Inbox,
   Pencil,
   Play,
   Plus,
@@ -271,8 +272,9 @@ const BridgeConnCard: React.FC<{
 export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpenSettings, connected, t }) => {
   const silence = useSilence(true);
   const {
-    conns, rules, stats, events, busy, lastError, totalSent, remember, autoReconnect, setAutoReconnect,
+    conns, rules, stats, events, busy, lastError, totalSent, outbox, remember, autoReconnect, setAutoReconnect,
     connect, disconnect, addRule, updateRule, removeRule, toggleRule, importRules, resetStats, clearEvents,
+    flushOutbox, dropDeadLetters,
   } = bridge;
 
   const [showForm, setShowForm] = useState(false);
@@ -292,6 +294,9 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   // Two-step delete: one click should never destroy a rule the user spent
   // time writing, and a modal would be heavier than this needs.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // Dead letters are the only record that an endpoint was unreachable, so the
+  // button that throws them away needs the same two-click guard a rule delete has.
+  const [pendingDropDead, setPendingDropDead] = useState(false);
   const [testOk, setTestOk] = useState<boolean | null>(null);
 
   const runScriptTest = async () => {
@@ -448,6 +453,15 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     }
   };
   const targetDescription = (r: BridgeRule) => r.targetKind === 'http' ? r.webhook?.url || t.webhookUrl : topicRewriteDescription(r);
+
+  // A queue that has never been used stays out of the panel; it appears as soon as
+  // it holds work, holds evidence of work, or could not be opened at all.
+  const showOutbox =
+    !!outbox.error ||
+    outbox.counts.pending > 0 ||
+    outbox.counts.dead > 0 ||
+    outbox.counts.delivered > 0 ||
+    outbox.counts.retries > 0;
 
   const startRecipe = (kind: 'telemetry' | 'alert' | 'broker') => {
     const next = newRuleDraft('src', 'dst');
@@ -877,6 +891,83 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
           </div>
         )}
 
+        {/* ---- Webhook outbox: only appears once the queue has anything to say ---- */}
+        {showOutbox && (
+          <div className="inset-box mx-4 mt-4 px-3 py-2.5 space-y-1.5" data-testid="outbox-panel">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Inbox className="w-3.5 h-3.5 shrink-0" style={{ color: outbox.error ? 'var(--danger)' : 'var(--accent)' }} />
+              <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {t.outboxTitle}
+              </span>
+              <span className="text-[11px] font-mono select-text" style={{ color: 'var(--text-muted)' }}>
+                {fill(t.outboxCounters, {
+                  queued: String(outbox.counts.pending),
+                  dead: String(outbox.counts.dead),
+                  retries: String(outbox.counts.retries),
+                  recovered: String(outbox.counts.delivered),
+                })}
+              </span>
+              {!outbox.error && (outbox.counts.pending > 0 || outbox.counts.dead > 0) && (
+                <div className="ml-auto flex items-center gap-2">
+                  {outbox.counts.pending > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void flushOutbox()}
+                      className="btn-ghost text-[11px] flex items-center gap-1"
+                      title={t.outboxRetryNowHint}
+                      data-testid="outbox-flush"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      {t.outboxRetryNow}
+                    </button>
+                  )}
+                  {outbox.counts.dead > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (pendingDropDead) {
+                          setPendingDropDead(false);
+                          void dropDeadLetters();
+                          return;
+                        }
+                        setPendingDropDead(true);
+                        setTimeout(() => setPendingDropDead((cur) => (cur ? false : cur)), 4000);
+                      }}
+                      className="btn-ghost text-[11px] flex items-center gap-1"
+                      style={pendingDropDead ? { color: 'var(--danger)', borderColor: 'var(--danger)' } : undefined}
+                      title={pendingDropDead ? t.outboxDropDeadConfirmHint : t.outboxDropDeadHint}
+                      data-testid="outbox-drop-dead"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      {pendingDropDead ? t.outboxDropDeadConfirm : t.outboxDropDead}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {outbox.error ? (
+              <div className="text-[10px] font-mono leading-relaxed select-text" style={{ color: 'var(--danger)' }} data-testid="outbox-error">
+                {fill(t.outboxUnavailable, { error: outbox.error })}
+              </div>
+            ) : (
+              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                {fill(t.outboxHint, { max: String(outbox.maxAttempts) })}
+              </div>
+            )}
+            {outbox.preview.length > 0 && (
+              <ul className="space-y-0.5 pt-0.5" data-testid="outbox-preview">
+                {outbox.preview.slice(0, 3).map(([ruleId, topic, attempts, lastErr], i) => (
+                  <li key={`${ruleId}-${i}`} className="text-[10px] font-mono truncate select-text" style={{ color: 'var(--text-muted)' }}>
+                    {rules.find((r) => r.id === ruleId)?.name ?? ruleId} · {topic} ·{' '}
+                    {fill(t.outboxAttempt, { n: String(attempts), max: String(outbox.maxAttempts) })}
+                    {lastErr ? ` · ${lastErr}` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         <div className="p-4 space-y-2.5">
           {rules.length === 0 && (
             <div className="text-center py-8 text-[12px] font-mono" style={{ color: 'var(--text-muted)' }}>
@@ -935,6 +1026,38 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     >
                       ⊘ {s.dropped}
                     </span>
+                  )}
+                  {(s?.queued ?? 0) > 0 && (
+                    <span
+                      className="text-[11px] font-mono px-2 py-1 rounded select-text"
+                      title={fill(t.outboxQueuedTip, { max: String(outbox.maxAttempts) })}
+                      style={{ background: 'color-mix(in srgb, var(--warning) 14%, transparent)', color: 'var(--warning)' }}
+                      data-testid={`outbox-queued-${r.id}`}
+                    >
+                      ⧗ {s.queued}
+                    </span>
+                  )}
+                  {(s?.dead ?? 0) > 0 && (
+                    <span
+                      className="text-[11px] font-mono px-2 py-1 rounded select-text"
+                      title={fill(t.outboxDeadTip, { max: String(outbox.maxAttempts) })}
+                      style={{ background: 'color-mix(in srgb, var(--danger) 14%, transparent)', color: 'var(--danger)' }}
+                      data-testid={`outbox-dead-${r.id}`}
+                    >
+                      ✕ {s.dead}
+                    </span>
+                  )}
+                  {(s?.queued ?? 0) > 0 && (
+                    <button
+                      onClick={() => void flushOutbox(r.id)}
+                      className="p-1.5 rounded border transition"
+                      style={{ borderColor: 'var(--border-inset)', color: 'var(--warning)' }}
+                      title={t.outboxRetryRuleHint}
+                      aria-label={t.outboxRetryNow}
+                      data-testid={`outbox-retry-${r.id}`}
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
                   )}
                   <button
                     onClick={() => startEdit(r)}

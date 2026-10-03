@@ -399,6 +399,20 @@ export interface Translations {
   forwardV5Props: string;
   bridgeHint: string;
   forwarded: string;
+  outboxTitle: string;
+  outboxCounters: string;
+  outboxHint: string;
+  outboxUnavailable: string;
+  outboxAttempt: string;
+  outboxRetryNow: string;
+  outboxRetryNowHint: string;
+  outboxRetryRuleHint: string;
+  outboxDropDead: string;
+  outboxDropDeadConfirm: string;
+  outboxDropDeadHint: string;
+  outboxDropDeadConfirmHint: string;
+  outboxQueuedTip: string;
+  outboxDeadTip: string;
   bridgeLog: string;
   clearLog: string;
   noBridgeEvents: string;
@@ -1154,6 +1168,20 @@ export const translations: Record<Language, Translations> = {
     forwardV5Props: '转发 v5 属性',
     bridgeHint: '消息载荷原样转发；源与目标需为不同连接',
     forwarded: '已转发',
+    outboxTitle: 'Webhook 队列',
+    outboxCounters: '待发送 {queued} · 死信 {dead} · 重试 {retries} · 已补发 {recovered}',
+    outboxHint: '失败的 Webhook 会留在本机磁盘，按递增间隔重试；达到 {max} 次后转为死信，不再自动尝试。',
+    outboxUnavailable: '重试已关闭：{error}',
+    outboxAttempt: '第 {n}/{max} 次',
+    outboxRetryNow: '立即重试',
+    outboxRetryNowHint: '跳过等待间隔，马上重试全部待发条目',
+    outboxRetryRuleHint: '只重试这条规则的待发条目',
+    outboxDropDead: '清除死信',
+    outboxDropDeadConfirm: '确认清除',
+    outboxDropDeadHint: '死信是"端点不可达"的唯一记录，清除后无法找回',
+    outboxDropDeadConfirmHint: '再点一次才会丢弃这些载荷',
+    outboxQueuedTip: '仍留在本机等待下一次重试的 Webhook 载荷；最多尝试 {max} 次',
+    outboxDeadTip: '已尝试 {max} 次仍失败并停止重试；载荷仍在磁盘上',
     bridgeLog: '转发明细',
     clearLog: '清空日志',
     noBridgeEvents: '暂无转发事件 — 连接源/目标并开始发布后这里会实时滚动',
@@ -1905,6 +1933,20 @@ export const translations: Record<Language, Translations> = {
     forwardV5Props: 'Forward v5 properties',
     bridgeHint: 'Payloads forwarded verbatim; source & target must differ',
     forwarded: 'sent',
+    outboxTitle: 'Webhook queue',
+    outboxCounters: 'queued {queued} · dead {dead} · retries {retries} · recovered {recovered}',
+    outboxHint: 'A failed webhook stays on this disk and is retried with growing delays; after {max} attempts it becomes a dead letter and stops.',
+    outboxUnavailable: 'Retries are off: {error}',
+    outboxAttempt: 'attempt {n}/{max}',
+    outboxRetryNow: 'Retry now',
+    outboxRetryNowHint: 'Skip the waiting time and retry every queued entry now',
+    outboxRetryRuleHint: 'Retry only the entries queued by this rule',
+    outboxDropDead: 'Drop dead letters',
+    outboxDropDeadConfirm: 'Confirm discard',
+    outboxDropDeadHint: 'A dead letter is the only record that the endpoint was unreachable; discarding it is final',
+    outboxDropDeadConfirmHint: 'Click once more to discard these payloads',
+    outboxQueuedTip: 'Webhook payloads still on disk waiting for their next attempt, up to {max} in total',
+    outboxDeadTip: 'Failed {max} attempts and stopped retrying; the payload is still on disk',
     bridgeLog: 'Forward Log',
     clearLog: 'Clear log',
     noBridgeEvents: 'No events yet — connect source/target and publish to see live traffic',
@@ -2656,6 +2698,20 @@ export const translations: Record<Language, Translations> = {
     forwardV5Props: '轉發 v5 屬性',
     bridgeHint: '訊息載入原樣轉發；來源與目標須為不同連線',
     forwarded: '已轉發',
+    outboxTitle: 'Webhook 佇列',
+    outboxCounters: '待發送 {queued} · 死信 {dead} · 重試 {retries} · 已補發 {recovered}',
+    outboxHint: '失敗的 Webhook 會留在本機磁碟，依遞增間隔重試；達到 {max} 次後轉為死信，不再自動嘗試。',
+    outboxUnavailable: '重試已關閉：{error}',
+    outboxAttempt: '第 {n}/{max} 次',
+    outboxRetryNow: '立即重試',
+    outboxRetryNowHint: '跳過等待間隔，立即重試全部待發條目',
+    outboxRetryRuleHint: '只重試這條規則的待發條目',
+    outboxDropDead: '清除死信',
+    outboxDropDeadConfirm: '確認清除',
+    outboxDropDeadHint: '死信是端點不可達的唯一記錄，清除後無法找回',
+    outboxDropDeadConfirmHint: '再點一次才會真正丟棄這些載入',
+    outboxQueuedTip: '仍留在本機等待下次重試的 Webhook 載入；最多嘗試 {max} 次',
+    outboxDeadTip: '已嘗試 {max} 次仍失敗並停止重試；載入仍在磁碟上',
     bridgeLog: '轉發明細',
     clearLog: '清空日誌',
     noBridgeEvents: '尚無轉發事件 — 連線來源/目標並開始發佈後會即時捲動',
@@ -3407,6 +3463,20 @@ export const translations: Record<Language, Translations> = {
     forwardV5Props: 'v5 プロパティを転送',
     bridgeHint: 'ペイロードはそのまま転送。ソースと転送先は別の接続である必要があります',
     forwarded: '送信済',
+    outboxTitle: 'Webhook キュー',
+    outboxCounters: '待機 {queued} · デッドレター {dead} · 再送 {retries} · 復旧 {recovered}',
+    outboxHint: '失敗した Webhook はこのマシンのディスクに残り、間隔を延ばしながら再送されます。{max} 回でデッドレターになり、自動では再送しません。',
+    outboxUnavailable: '再送は無効です：{error}',
+    outboxAttempt: '{n}/{max} 回目',
+    outboxRetryNow: '今すぐ再送',
+    outboxRetryNowHint: '待機時間を飛ばして、キュー内の全項目を今すぐ再送します',
+    outboxRetryRuleHint: 'このルールが待機中の項目だけを再送します',
+    outboxDropDead: 'デッドレターを破棄',
+    outboxDropDeadConfirm: '破棄を確認',
+    outboxDropDeadHint: 'デッドレターは接続先に到達できなかった唯一の記録です。破棄すると元に戻せません',
+    outboxDropDeadConfirmHint: 'もう一度クリックするとこれらのペイロードを破棄します',
+    outboxQueuedTip: '次の再送を待って本機に残っている Webhook ペイロード（合計最大 {max} 回）',
+    outboxDeadTip: '{max} 回試みて失敗し、再送を停止しました。ペイロードはディスクに残っています',
     bridgeLog: '転送ログ',
     clearLog: 'ログをクリア',
     noBridgeEvents: '転送イベントはまだありません — 接続して発行するとライブ表示されます',

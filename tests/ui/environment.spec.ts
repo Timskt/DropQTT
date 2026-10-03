@@ -56,6 +56,8 @@ const boot = async (page: any, seed: Record<string, unknown> = {}) => {
         if (cmd === 'get_subscription_ack_state') return { rejected: [], refusedUnsubscribes: [], capped: [], unattributed: 0 };
         if (cmd === 'get_topic_stats' || cmd === 'get_broker_sys') return [];
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];
+        if (cmd === 'bridge_outbox_state') return w.outbox ?? { counts: { pending: 0, dead: 0, delivered: 0, retries: 0 }, error: null, preview: [], maxAttempts: 8 };
+        if (cmd === 'bridge_outbox_flush' || cmd === 'bridge_outbox_drop') return 0;
         if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
         if (cmd === 'schedule_list' || cmd === 'bench_progress' || cmd === 'rpc_list') return [];
         if (cmd === 'get_diagnostics_snapshot') {
