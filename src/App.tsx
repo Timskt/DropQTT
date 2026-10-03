@@ -24,8 +24,8 @@ import { ToastHost } from './components/ToastHost';
 import { OpsPanel } from './components/ops/OpsPanel';
 
 import { BrokerConfig } from './types';
-import { Language, Translations, fill, translations } from './i18n';
-import { applyTheme, Theme } from './themes';
+import { LANGUAGES, Language, Translations, fill, translations } from './i18n';
+import { applyTheme, THEMES, Theme } from './themes';
 import { usePersistentString } from './hooks/usePersistentState';
 import { useBroker } from './hooks/useBroker';
 import { useBridge } from './hooks/useBridge';
@@ -44,6 +44,7 @@ import { RpcPanel } from './components/mqttx/RpcPanel';
 import { AssertionPanel } from './components/mqttx/AssertionPanel';
 import { FaultPanel } from './components/mqttx/FaultPanel';
 import { ResponderPanel } from './components/mqttx/ResponderPanel';
+import { CommandPalette, PaletteCommand } from './components/CommandPalette';
 
 const MODE_TITLES: Record<WorkspaceMode, (t: Translations) => string> = {
   transfer: (t) => t.modeFileTransfer,
@@ -67,6 +68,11 @@ export function App() {
   const [themeStr, setThemeStr] = usePersistentString('dropqtt_theme', 'cyberpunk');
   const theme = themeStr as Theme;
 
+  // Row spacing, and the palette that opens with Ctrl/Cmd+K. The palette exists for
+  // discoverability, so its own entry point has to be visible too.
+  const [density, setDensity] = usePersistentString('dropqtt_density', 'cozy');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
   const t = translations[lang] || translations['zh-CN'];
 
   useEffect(() => {
@@ -76,6 +82,12 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
+
+  // Density is a view preference like the theme: one attribute on the root, and CSS
+  // tightens every row without a re-render of the feed.
+  useEffect(() => {
+    document.documentElement.dataset.density = density === 'compact' ? 'compact' : 'cozy';
+  }, [density]);
 
   // ---- File-transfer topic configuration ----
   const [publishTopic, setPublishTopic] = usePersistentString('dropqtt_publish_topic', 'dropqtt/public-lobby');
@@ -211,6 +223,72 @@ export function App() {
   const faults = useFaults(activeMode === 'mqttx');
   const responder = useResponder(activeMode === 'mqttx');
 
+  // Ctrl/Cmd+K opens the palette from anywhere, including while a panel has focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const paletteCommands: PaletteCommand[] = [
+    { id: 'go-transfer', group: t.paletteGroupWorkspace, label: t.modeFileTransfer, run: () => setModeStr('transfer') },
+    { id: 'go-mqttx', group: t.paletteGroupWorkspace, label: t.modeMqttClient, run: () => setModeStr('mqttx') },
+    { id: 'go-bridge', group: t.paletteGroupWorkspace, label: t.modeBridge, run: () => setModeStr('bridge') },
+    { id: 'go-history', group: t.paletteGroupWorkspace, label: t.modeHistory, run: () => setModeStr('history') },
+    { id: 'go-ops', group: t.paletteGroupWorkspace, label: t.modeOps, run: () => setModeStr('ops') },
+    {
+      id: 'toggle-connect',
+      group: t.paletteGroupConnection,
+      label: broker.isConnected ? t.paletteDisconnect : t.paletteConnect,
+      hint: `${broker.config.host}:${broker.config.port}`,
+      run: () => void broker.toggleConnect(),
+    },
+    { id: 'settings', group: t.paletteGroupConnection, label: t.paletteSettings, run: () => setIsSettingsOpen(true) },
+    {
+      id: 'pause-feed',
+      group: t.paletteGroupConsole,
+      label: mqtt.paused ? t.paletteResumeFeed : t.palettePauseFeed,
+      hint: `${mqtt.messages.length}`,
+      run: () => mqtt.togglePaused(),
+    },
+        {
+      id: 'bench',
+      group: t.paletteGroupConsole,
+      label: t.paletteOpenBench,
+      // The bench lab lives inside the traffic panel, so this is the two keystrokes
+      // a person would make by hand: go to the console, then press the control.
+      run: () => {
+        setModeStr('mqttx');
+        window.setTimeout(() => document.querySelector<HTMLButtonElement>('[data-testid=bench-toggle]')?.click(), 60);
+      },
+    },
+    {
+      id: 'theme',
+      group: t.paletteGroupView,
+      label: t.paletteTheme,
+      hint: theme,
+      run: () => setThemeStr(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]),
+    },
+    {
+      id: 'language',
+      group: t.paletteGroupView,
+      label: t.paletteLanguage,
+      hint: lang,
+      run: () => setLangStr(LANGUAGES[(LANGUAGES.indexOf(lang) + 1) % LANGUAGES.length]),
+    },
+    {
+      id: 'density',
+      group: t.paletteGroupView,
+      label: density === 'compact' ? t.paletteDensityCozy : t.paletteDensityCompact,
+      run: () => setDensity(density === 'compact' ? 'cozy' : 'compact'),
+    },
+  ];
+
   return (
     <div className="min-h-screen flex overflow-hidden font-sans">
       <a href="#main-content" className="skip-link select-none">{t.skipToContent}</a>
@@ -249,6 +327,7 @@ export function App() {
           onTestLatency={() => broker.testLatency(broker.config)}
           onToggleConnect={broker.toggleConnect}
           isConnecting={broker.isConnecting}
+          onOpenPalette={() => setPaletteOpen(true)}
           t={t}
         />
 
@@ -475,6 +554,13 @@ export function App() {
         </ErrorBoundary>
         </main>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        commands={paletteCommands}
+        onClose={() => setPaletteOpen(false)}
+        t={t}
+      />
 
       {/* Global toast surface */}
       <ToastHost />

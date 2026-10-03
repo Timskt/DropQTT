@@ -1373,6 +1373,40 @@ localStorage——**用例从此在测真实行为而不是我的替身**。
 门：vitest **67/67**（新增 7 条）、`tsc` 干净、`eslint` 0 error 10 warn、
 Playwright 全套 **124/124**（新增 6 条）。Rust 侧无改动，harness 保持 195/195。
 
+### 4.45 命令面板、保存的过滤器、紧凑密度（§8.1 第 5 条 + §8.2 两条，第十二轮 2026-10-03）
+
+审阅稿说这条"顺带解决功能可发现性——共享订阅、RPC 这些新能力藏在折叠面板里，我自己都得点开才看得见"。
+这句我认，因为我自己这两轮反复犯的"点了没反应"里，有一半其实是**找不到入口**。
+
+**面板只放非破坏性命令**。清消息、删规则这些一律不进面板：两段式确认的价值就在于
+"你 pointing 的是什么"看得见，一个命令名把它变成一次误按。这一点有测试钉住
+（输入 `clear` → 列表为空，而不是"差一点就清掉"）。
+
+**密度这个改动把我上了一课。** 最初我按直觉做成了 prop 透传：`App → MessageStream → MessageRow`，
+`className={dense ? 紧凑 : 舒适}`。测试里面板命令确实改了状态（`localStorage` 变成 `compact`、
+命令自己的标题也从"紧凑行距"翻成"舒适行距"），**工具条**的属性也变了，但那一行的 class 死活不变。
+我一路加调试属性查下来：`data-panel-dense=1` 而 `data-dense=0`——父的 JSX 明明写着 `dense={dense}`。
+真正的解释是 `React.memo`：报文行是被记忆化的，而密度这种"根上的视图偏好"根本不该参与逐行比较。
+最后改成**跟主题一样的做法**：`document.documentElement.dataset.density` + `index.css` 里一条
+`html[data-density='compact'] .msg-row{...}`。删掉四处 prop 透传，测试立刻过，
+而且用例名字也换成了它真正的意思：**密度改变不需要重渲染整个 feed**。
+（顺带：这一路我踩了三个自己挖的坑——Playwright 里覆盖 `window.location.reload` 不生效；
+`addInitScript` 的 seed 行缩进写错导致替换静默失败；grep 输出被 `head` 截断让我误判。
+共同点是**我都在猜，而每个问题的真相都在页面里**，最后一次我直接 dump DOM 属性链，三步就到底了。）
+
+**保存的过滤器**：报文流的搜索框旁边多了"保存过滤器"，chip 点一下就套上，删除走两段式。
+上限 8 个（超了从最旧的挤掉），同一个词不能存两次——按钮直接禁用并把原因写在 title 里
+（`already saved` / `Type something in the filter first`），这是 §4.39 那条规矩的延续。
+
+**面板自身的 lint**：React Compiler 的 lint 抓到两处我写得不干净的地方——
+在 `useEffect` 里 `setQuery('')/setCursor(0)` 重置，以及在 render 的 `.map()` 里改写一个外部变量
+`lastGroup` 来分组。改法都是把状态搬到"只在打开时挂载"的子组件里（初始值即空），
+分组标题改成 `cmd.group !== matches[index-1]?.group`。
+**eslint 预算因此仍然是 0 error / 10 warn**，这条预算的价值又一次体现在"新代码不能把水搅浑"。
+
+门：Playwright 全套 **135/135**（新增 11 条：面板 6 + 过滤器 4 + 面板无障碍审计 1）、
+vitest **67/67**、`tsc` 干净、`eslint` 0 error 10 warn。Rust 侧无改动。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

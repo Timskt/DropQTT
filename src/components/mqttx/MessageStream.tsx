@@ -5,7 +5,7 @@ import {
   Pause, Play, Download, Eraser, Pin, RotateCcw, Activity, AlertCircle, GitCompare,
 } from 'lucide-react';
 import { MqttGenericMessage } from '../../types';
-import { usePersistentString } from '../../hooks/usePersistentState';
+import { usePersistentState, usePersistentString } from '../../hooks/usePersistentState';
 import { Translations, fill } from '../../i18n';
 import { useCodec } from '../../hooks/useCodec';
 import { MAX_MESSAGES } from '../../hooks/useMqttMessages';
@@ -149,6 +149,9 @@ interface MessageRowProps {
   t: Translations;
 }
 
+/** How many saved filters the strip keeps before the oldest fall off. */
+const MAX_FILTER_PRESETS = 8;
+
 const MessageRow = React.memo(function MessageRow({
   msg, viewMode, copied, replayed, connected, codecScript, onCopy, onReplay, onQuickSubscribe,
   t,
@@ -166,7 +169,10 @@ const MessageRow = React.memo(function MessageRow({
   const overflow = display.length > 600 || display.split('\n').length > 12;
 
   return (
-    <div className="pt-2.5 text-xs group">
+    // `msg-row` is the hook the compact-density rule in index.css tightens; spacing
+    // lives in CSS rather than in a prop so a preference change does not have to
+    // re-render every row in the feed.
+    <div className="msg-row pt-2.5 text-xs group">
       <div className="flex items-center justify-between mb-1.5 gap-2">
         <div className="flex items-center gap-2 truncate min-w-0">
           <span className={`chip ${isOut ? 'chip-info' : 'chip-ok'} !font-bold`}>
@@ -358,6 +364,10 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   const [codecScript, setCodecScript] = usePersistentString('dropqtt_console_codec', '');
   const [codecOpen, setCodecOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  // Saved filters: field work is repetitive by nature, and retyping the same topic
+  // pattern every session is the part people said they hated.
+  const [filterPresets, setFilterPresets] = usePersistentState<string[]>('dropqtt_feed_filters', []);
+  const [confirmPreset, setConfirmPreset] = useState<string | null>(null);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('auto');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -746,6 +756,65 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
           {fill(t.feedDroppedNotice, { n: feedDropped.toLocaleString() })}
         </div>
       )}
+
+      {/* Saved filters. Field work repeats the same three patterns, and a filter you
+          have to retype is a filter you stop using. */}
+      <div className="px-3 py-1.5 flex items-center gap-1.5 flex-wrap text-[10px]" style={{ borderBottom: '1px solid var(--border-panel)' }}>
+        <button
+          type="button"
+          onClick={() => {
+            const value = searchTerm.trim();
+            if (!value || filterPresets.includes(value)) return;
+            setFilterPresets((prev) => [...prev, value].slice(-MAX_FILTER_PRESETS));
+          }}
+          disabled={!searchTerm.trim() || filterPresets.includes(searchTerm.trim())}
+          title={!searchTerm.trim() ? t.filterSaveEmpty : filterPresets.includes(searchTerm.trim()) ? t.filterSaveDuplicate : t.filterSaveHint}
+          className="px-1.5 py-0.5 rounded border inset-box transition hover:opacity-100 disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ color: 'var(--text-secondary)' }}
+          data-testid="filter-save"
+        >
+          {t.filterSave}
+        </button>
+        {filterPresets.length === 0 && (
+          <span style={{ color: 'var(--text-muted)' }} data-testid="filter-presets-empty">{t.filterPresetsEmpty}</span>
+        )}
+        {filterPresets.map((preset) => (
+          <span
+            key={preset}
+            className="chip chip-neutral font-mono max-w-[16rem]"
+            data-testid={`filter-preset-${preset}`}
+          >
+            <button
+              type="button"
+              onClick={() => setSearchTerm(preset)}
+              title={fill(t.filterApplyHint, { q: preset })}
+              className="truncate"
+              style={{ color: searchTerm === preset ? 'var(--accent)' : 'var(--text-secondary)' }}
+            >
+              {preset}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirmPreset !== preset) {
+                  setConfirmPreset(preset);
+                  return;
+                }
+                setFilterPresets((prev) => prev.filter((x) => x !== preset));
+                setConfirmPreset(null);
+                if (searchTerm === preset) setSearchTerm('');
+              }}
+              title={confirmPreset === preset ? t.deleteConfirmAgain : t.filterRemove}
+              aria-label={`${t.filterRemove} ${preset}`}
+              className="ml-1 opacity-70 hover:opacity-100"
+              style={{ color: confirmPreset === preset ? 'var(--bad)' : 'var(--text-muted)' }}
+              data-testid={`filter-remove-${preset}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
 
       {/* The list holds the newest N and the rest is in History. A panel that
           quietly stops growing looks like a stopped broker. */}

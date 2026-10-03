@@ -203,6 +203,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
             onClick={() => setBenchOpen((v) => !v)}
             className="btn-ghost !px-2.5 !py-1 flex items-center gap-1 text-[11px]"
             title={t.benchLab}
+            data-testid="bench-toggle"
           >
             <Zap className="w-3 h-3" style={{ color: 'var(--warning)' }} />
             {t.benchLab}

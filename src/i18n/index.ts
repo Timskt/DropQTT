@@ -1,5 +1,8 @@
 export type Language = 'zh-CN' | 'en' | 'zh-TW' | 'ja';
 
+/** Every locale the UI ships, in switcher order. */
+export const LANGUAGES: Language[] = ['zh-CN', 'en', 'zh-TW', 'ja'];
+
 export interface Translations {
   appName: string;
   tagline: string;
@@ -581,6 +584,32 @@ export interface Translations {
   envRedactionNote: string;
   envMerged: string;
   envReloadNote: string;
+  paletteTitle: string;
+  palettePlaceholder: string;
+  paletteHint: string;
+  paletteEmpty: string;
+  paletteGroupWorkspace: string;
+  paletteGroupConnection: string;
+  paletteGroupConsole: string;
+  paletteGroupView: string;
+  paletteConnect: string;
+  paletteDisconnect: string;
+  paletteSettings: string;
+  palettePauseFeed: string;
+  paletteResumeFeed: string;
+  paletteOpenBench: string;
+  paletteTheme: string;
+  paletteLanguage: string;
+  paletteDensityCompact: string;
+  paletteDensityCozy: string;
+  paletteOpen: string;
+  filterSave: string;
+  filterSaveHint: string;
+  filterSaveEmpty: string;
+  filterSaveDuplicate: string;
+  filterPresetsEmpty: string;
+  filterApplyHint: string;
+  filterRemove: string;
   noMessagesFiltered: string;
   truncatedNote: string;
   mdView: string;
@@ -1292,6 +1321,32 @@ export const translations: Record<Language, Translations> = {
     envRedactionNote: '其中 {n} 条规则的 webhook 目标已被移除，需要重新填写才会告警。',
     envMerged: '环境包已合并进本实验台',
     envReloadNote: '合并会写入设置并刷新本窗口；broker 连接不会断。',
+    paletteTitle: '命令面板',
+    palettePlaceholder: '输入命令…',
+    paletteHint: '↑ ↓ 移动 · Enter 执行 · Esc 关闭 · Ctrl/Cmd+K 开关',
+    paletteEmpty: '没有匹配的命令。',
+    paletteGroupWorkspace: '工作区',
+    paletteGroupConnection: '连接',
+    paletteGroupConsole: '控制台',
+    paletteGroupView: '视图',
+    paletteConnect: '连接 broker',
+    paletteDisconnect: '断开 broker',
+    paletteSettings: '打开设置',
+    palettePauseFeed: '暂停报文流',
+    paletteResumeFeed: '恢复报文流',
+    paletteOpenBench: '打开压测台',
+    paletteTheme: '下一个主题',
+    paletteLanguage: '下一个语言',
+    paletteDensityCompact: '紧凑行距',
+    paletteDensityCozy: '舒适行距',
+    paletteOpen: '命令（Ctrl+K）',
+    filterSave: '保存过滤器',
+    filterSaveHint: '把这个过滤器留给下次用',
+    filterSaveEmpty: '先在过滤器里输入内容',
+    filterSaveDuplicate: '已经保存过了',
+    filterPresetsEmpty: '还没有保存过过滤器',
+    filterApplyHint: '按 {q} 过滤报文流',
+    filterRemove: '删除过滤器',
     noMessagesFiltered: '没有匹配当前筛选的报文',
     truncatedNote: '载荷过大，已截断显示',
     mdView: 'Markdown 渲染视图',
@@ -2011,6 +2066,32 @@ export const translations: Record<Language, Translations> = {
     envRedactionNote: '{n} rule(s) arrive with the webhook target removed; type the target again before they can alert.',
     envMerged: 'Bundle merged into this bench',
     envReloadNote: 'Merging writes the settings and reloads this window; the broker session stays up.',
+    paletteTitle: 'Commands',
+    palettePlaceholder: 'Type a command…',
+    paletteHint: '↑ ↓ to move · Enter to run · Esc to close · Ctrl/Cmd+K toggles',
+    paletteEmpty: 'No command matches that.',
+    paletteGroupWorkspace: 'Workspace',
+    paletteGroupConnection: 'Connection',
+    paletteGroupConsole: 'Console',
+    paletteGroupView: 'View',
+    paletteConnect: 'Connect to the broker',
+    paletteDisconnect: 'Disconnect from the broker',
+    paletteSettings: 'Open settings',
+    palettePauseFeed: 'Pause the message feed',
+    paletteResumeFeed: 'Resume the message feed',
+    paletteOpenBench: 'Open the bench lab',
+    paletteTheme: 'Next theme',
+    paletteLanguage: 'Next language',
+    paletteDensityCompact: 'Compact rows',
+    paletteDensityCozy: 'Comfortable rows',
+    paletteOpen: 'Commands (Ctrl+K)',
+    filterSave: 'Save filter',
+    filterSaveHint: 'Keep this filter for next time',
+    filterSaveEmpty: 'Type something in the filter first',
+    filterSaveDuplicate: 'already saved',
+    filterPresetsEmpty: 'No saved filters yet',
+    filterApplyHint: 'Filter the feed by {q}',
+    filterRemove: 'Remove filter',
     noMessagesFiltered: 'No messages matching current search filter.',
     truncatedNote: 'Payload too large — display truncated',
     mdView: 'Markdown rendered view',
@@ -2730,6 +2811,32 @@ export const translations: Record<Language, Translations> = {
     envRedactionNote: '其中 {n} 條規則的 webhook 目標已被移除，需要重新填寫才會告警。',
     envMerged: '環境包已合併進本實驗台',
     envReloadNote: '合併會寫入設定並重新整理本視窗；broker 連線不會中斷。',
+    paletteTitle: '命令面板',
+    palettePlaceholder: '輸入命令…',
+    paletteHint: '↑ ↓ 移動 · Enter 執行 · Esc 關閉 · Ctrl/Cmd+K 開關',
+    paletteEmpty: '沒有符合的命令。',
+    paletteGroupWorkspace: '工作區',
+    paletteGroupConnection: '連線',
+    paletteGroupConsole: '控制台',
+    paletteGroupView: '檢視',
+    paletteConnect: '連線 broker',
+    paletteDisconnect: '中斷 broker',
+    paletteSettings: '開啟設定',
+    palettePauseFeed: '暫停報文流',
+    paletteResumeFeed: '恢復報文流',
+    paletteOpenBench: '開啟壓測台',
+    paletteTheme: '下一個主題',
+    paletteLanguage: '下一個語言',
+    paletteDensityCompact: '緊湊行距',
+    paletteDensityCozy: '舒適行距',
+    paletteOpen: '命令（Ctrl+K）',
+    filterSave: '儲存過濾器',
+    filterSaveHint: '把這個過濾器留給下次',
+    filterSaveEmpty: '請先在過濾器輸入內容',
+    filterSaveDuplicate: '已經儲存過了',
+    filterPresetsEmpty: '還沒有儲存過過濾器',
+    filterApplyHint: '依 {q} 過濾報文流',
+    filterRemove: '刪除過濾器',
     noMessagesFiltered: '沒有符合目前篩選的報文',
     truncatedNote: '載荷過大，已截斷顯示',
     mdView: 'Markdown 渲染視圖',
@@ -3449,6 +3556,32 @@ export const translations: Record<Language, Translations> = {
     envRedactionNote: '{n} 件の規則は webhook 宛先が除去されています。再入力するまで通知しません。',
     envMerged: 'バンドルをこのベンチに統合しました',
     envReloadNote: 'マージは設定を書き込んでこの画面を再読み込みします。broker 接続は維持されます。',
+    paletteTitle: 'コマンド',
+    palettePlaceholder: 'コマンドを入力…',
+    paletteHint: '↑ ↓ で移動 · Enter で実行 · Esc で閉じる · Ctrl/Cmd+K で開閉',
+    paletteEmpty: '一致するコマンドがありません。',
+    paletteGroupWorkspace: 'ワークスペース',
+    paletteGroupConnection: '接続',
+    paletteGroupConsole: 'コンソール',
+    paletteGroupView: '表示',
+    paletteConnect: 'ブローカーへ接続',
+    paletteDisconnect: 'ブローカーから切断',
+    paletteSettings: '設定を開く',
+    palettePauseFeed: 'メッセージ供給を一時停止',
+    paletteResumeFeed: 'メッセージ供給を再開',
+    paletteOpenBench: 'ベンチラボを開く',
+    paletteTheme: '次のテーマ',
+    paletteLanguage: '次の言語',
+    paletteDensityCompact: '行を詰める',
+    paletteDensityCozy: '行間を広げる',
+    paletteOpen: 'コマンド (Ctrl+K)',
+    filterSave: 'フィルターを保存',
+    filterSaveHint: 'このフィルターを次回用に保存します',
+    filterSaveEmpty: '先に入力してください',
+    filterSaveDuplicate: '既に保存済みです',
+    filterPresetsEmpty: '保存されたフィルターはありません',
+    filterApplyHint: '{q} でメッセージを絞り込む',
+    filterRemove: 'フィルターを削除',
     noMessagesFiltered: 'フィルターに一致するメッセージがありません',
     truncatedNote: 'ペイロードが大きすぎるため表示を切り詰めました',
     mdView: 'Markdown レンダリング表示',

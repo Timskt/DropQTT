@@ -1,5 +1,8 @@
 export type Theme = 'cyberpunk' | 'obsidian' | 'nord' | 'solaris';
 
+/** Cycling order used by the command palette's theme command. */
+export const THEMES: Theme[] = ['cyberpunk', 'obsidian', 'nord', 'solaris'];
+
 export interface ThemeTokens {
   '--bg-app': string;
   '--bg-panel': string;

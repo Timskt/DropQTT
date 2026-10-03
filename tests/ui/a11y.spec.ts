@@ -133,6 +133,17 @@ test('the bench lab and the rule editor name everything once expanded', async ({
   await expect.poll(async () => (await audit(page)).controls).toEqual([]);
 });
 
+test('the command palette names every control it shows', async ({ page }) => {
+  await boot(page, 'mqttx');
+  await page.keyboard.press('Control+k');
+  await expect(page.getByTestId('command-palette')).toBeVisible();
+  await expect.poll(async () => (await audit(page)).controls).toEqual([]);
+  await expect.poll(async () => (await audit(page)).buttons).toEqual([]);
+  // The listbox and its options must be reachable, not just labelled.
+  expect(await page.evaluate(() => document.querySelector('[role="dialog"]')?.getAttribute('aria-modal'))).toBe('true');
+  expect(await page.evaluate(() => document.querySelectorAll('[role="option"]').length)).toBeGreaterThan(0);
+});
+
 test('the settings dialog names every control it shows', async ({ page }) => {
   await boot(page, 'mqttx');
   await page.getByRole('button', { name: /Settings/ }).first().click();

@@ -15,6 +15,8 @@ interface BrokerStatusBarProps {
   onTestLatency: () => void;
   onToggleConnect: () => void;
   isConnecting: boolean;
+  /** Opens the command palette. Optional so a caller without one stays unchanged. */
+  onOpenPalette?: () => void;
   t: Translations;
 }
 
@@ -38,6 +40,7 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
   latency,
   isTesting,
   onTestLatency,
+  onOpenPalette,
   onToggleConnect,
   isConnecting,
   t,
@@ -102,6 +105,19 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
           />
           <span>{isTesting ? '...' : latency !== null ? `${latency}ms` : 'PING'}</span>
         </button>
+        {onOpenPalette && (
+          <button
+            type="button"
+            onClick={onOpenPalette}
+            title={t.paletteOpen}
+            aria-label={t.paletteOpen}
+            data-testid="palette-trigger"
+            className="px-2 py-1 rounded text-[10px] font-mono border transition hover:opacity-100"
+            style={{ borderColor: 'var(--border-inset)', color: 'var(--text-secondary)' }}
+          >
+            ⌘K
+          </button>
+        )}
 
         {/* Client ID pill */}
         <div className="hidden md:flex items-center space-x-1 text-[11px] inset-box px-2 py-0.5" style={{ color: 'var(--text-muted)' }}>

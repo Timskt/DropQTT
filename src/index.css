@@ -437,3 +437,12 @@
 
 /* Light-theme correctness now comes from semantic tokens (see themes/index.ts)
    consumed via .chip-* utility classes — no per-class !important overrides. */
+
+/* Compact density: a 1366-wide laptop at a cabinet shows more rows per screen.
+   Set on the document root by App, so it reaches rows React.memo has already
+   rendered without re-rendering the whole feed. */
+html[data-density='compact'] .msg-row {
+  padding-top: 0.125rem;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
