@@ -12,6 +12,27 @@ pub const MIN_TIMEOUT_MS: u64 = 100;
 pub const MAX_TIMEOUT_MS: u64 = 120_000;
 /// Keep at most this many finished calls on screen until the user clears them.
 const MAX_FINISHED_KEPT: usize = 100;
+/// Retries beyond this are a device that is not answering, not a flaky link.
+pub const MAX_ATTEMPTS: u8 = 5;
+/// A broadcast collection this wide is a load test; use the bench lab for that.
+pub const MAX_COLLECT: u8 = 32;
+
+/// 0 means "not specified", which is one for both of these.
+pub fn clamp_attempts(requested: u8) -> u8 {
+    if requested == 0 {
+        1
+    } else {
+        requested.min(MAX_ATTEMPTS)
+    }
+}
+
+pub fn clamp_collect(requested: u8) -> u8 {
+    if requested == 0 {
+        1
+    } else {
+        requested.min(MAX_COLLECT)
+    }
+}
 
 /// A timeout of 0 means "not specified"; anything else is clamped into the
 /// band where a timer is still meaningful and a mistake is still survivable.
@@ -63,6 +84,23 @@ pub struct RpcCall {
     /// Worth showing forever: it is a weaker claim than an exact match.
     #[serde(default)]
     pub paired_by_position: bool,
+    /// Which send this is, 0-based: a retried request keeps the same correlation so
+    /// a late answer to the first send still pairs.
+    #[serde(default)]
+    pub attempt: u8,
+    #[serde(default = "one")]
+    pub attempts_total: u8,
+    /// A broadcast request stays pending until this many answers arrive.
+    #[serde(default = "one")]
+    pub expected: u8,
+    /// Every answer received, in arrival order. `reply` stays the first one so
+    /// existing readers keep working.
+    #[serde(default)]
+    pub replies: Vec<RpcReply>,
+}
+
+fn one() -> u8 {
+    1
 }
 
 /// What the UI asks for. `response_topic` and `correlation_data` are optional:
@@ -92,6 +130,12 @@ pub struct RpcSpec {
     pub payload_format: Option<u8>,
     #[serde(default)]
     pub topic_alias: Option<u16>,
+    /// Sends allowed before the call is written off as unanswered (1 = no retry).
+    #[serde(default)]
+    pub attempts: Option<u8>,
+    /// Answers to wait for on a broadcast request (1 = one-to-one).
+    #[serde(default)]
+    pub collect: Option<u8>,
     #[serde(default)]
     pub message_expiry: Option<u32>,
 }
@@ -168,13 +212,35 @@ impl RpcRegistry {
         let (idx, paired_by_position) = pick?;
         let id = self.order.get(idx)?.clone();
         let call = self.calls.get_mut(&id)?;
-        call.state = RpcState::Resolved;
-        call.rtt_ms = Some((now_ms - call.sent_at_ms).max(0) as u64);
-        call.reply = Some(reply);
-        call.paired_by_position = paired_by_position;
+        if call.rtt_ms.is_none() {
+            // RTT is the first answer's, not the last: that is the number a person
+            // reads off the panel when asking "how fast does this device reply".
+            call.rtt_ms = Some((now_ms - call.sent_at_ms).max(0) as u64);
+            call.reply = Some(reply.clone());
+            call.paired_by_position = paired_by_position;
+        }
+        call.replies.push(reply);
+        if call.replies.len() as u8 >= call.expected {
+            call.state = RpcState::Resolved;
+        }
         let matched = call.clone();
         self.trim_finished();
         Some(matched)
+    }
+
+    /// Claim one more send for a still-pending call. True means "retry, same
+    /// correlation"; false means the call is finished or out of attempts, and the
+    /// caller should let it expire instead.
+    pub fn retry_slot(&mut self, id: &str) -> bool {
+        let Some(call) = self.calls.get_mut(id) else { return false };
+        if call.state != RpcState::Pending {
+            return false;
+        }
+        if call.attempt + 1 >= call.attempts_total {
+            return false;
+        }
+        call.attempt += 1;
+        true
     }
 
     /// Fail a call whose answer never came. Returns None when the reply won the
@@ -301,6 +367,10 @@ mod tests {
             rtt_ms: None,
             reply: None,
             paired_by_position: false,
+            attempt: 0,
+            attempts_total: 1,
+            expected: 1,
+            replies: Vec::new(),
         }
     }
 
@@ -315,6 +385,15 @@ mod tests {
             correlation_hex: correlation.map(hex::encode),
             content_type: None,
             timestamp_ms: 0,
+        }
+    }
+
+    /// The manager stamps arrivals with its own clock; a test that cares about
+    /// order has to say so per reply.
+    fn stamped(topic: &str, correlation: Option<&[u8]>, at: i64) -> RpcReply {
+        RpcReply {
+            timestamp_ms: at,
+            ..reply(topic, correlation)
         }
     }
 
@@ -550,5 +629,75 @@ mod tests {
         let rows = reg.snapshot();
         assert_eq!(rows.len(), MAX_FINISHED_KEPT + 1, "trimming caps finished rows");
         assert!(rows.iter().any(|c| c.id == "pending"), "pending rows are never dropped");
+    }
+
+    fn collecting(id: &str, expected: u8) -> RpcCall {
+        RpcCall {
+            expected,
+            ..call(id, "dev/resp", id, 1_000)
+        }
+    }
+
+    #[test]
+    fn a_broadcast_request_waits_for_every_answer_it_asked_for() {
+        let mut reg = RpcRegistry::default();
+        reg.record(collecting("c1", 3));
+        let first = reg
+            .match_reply("dev/resp", Some("c1".as_bytes()), 1_100, stamped("dev/resp", Some(b"c1"), 1_100))
+            .expect("paired");
+        assert_eq!(first.state, RpcState::Pending, "one of three is not an answer");
+        assert_eq!(first.rtt_ms, Some(100), "RTT is the first reply's");
+        let second = reg
+            .match_reply("dev/resp", Some("c1".as_bytes()), 1_200, stamped("dev/resp", Some(b"c1"), 1_200))
+            .expect("paired again");
+        assert_eq!(second.state, RpcState::Pending);
+        let third = reg
+            .match_reply("dev/resp", Some("c1".as_bytes()), 1_300, stamped("dev/resp", Some(b"c1"), 1_300))
+            .expect("third closes it");
+        assert_eq!(third.state, RpcState::Resolved);
+        assert_eq!(third.replies.len(), 3);
+        // The headline reply stays the first one, so a single-answer reader is unaffected.
+        assert_eq!(third.reply.expect("first reply").timestamp_ms, 1_100);
+        assert_eq!(third.rtt_ms, Some(100));
+    }
+
+    #[test]
+    fn a_broadcast_that_never_fills_up_reports_what_it_did_hear() {
+        let mut reg = RpcRegistry::default();
+        reg.record(collecting("c1", 3));
+        reg.match_reply("dev/resp", Some("c1".as_bytes()), 1_100, reply("dev/resp", Some(b"c1")));
+        let expired = reg.expire("c1").expect("still pending, so it expires");
+        assert_eq!(expired.state, RpcState::Timeout);
+        assert_eq!(expired.replies.len(), 1, "partial answers are not discarded");
+        assert_eq!(reg.timeouts(), 1);
+    }
+
+    #[test]
+    fn retry_slots_run_out_and_a_resolved_call_needs_another() {
+        let mut reg = RpcRegistry::default();
+        reg.record(RpcCall {
+            attempts_total: 3,
+            ..call("r1", "dev/resp", "r1", 1_000)
+        });
+        assert!(reg.retry_slot("r1"));
+        assert!(reg.retry_slot("r1"));
+        assert!(!reg.retry_slot("r1"), "three sends is what was asked for");
+        assert_eq!(reg.get("r1").unwrap().attempt, 2);
+
+        let mut reg = RpcRegistry::default();
+        reg.record(collecting("done", 1));
+        reg.match_reply("dev/resp", Some("done".as_bytes()), 1_100, reply("dev/resp", Some(b"done")));
+        assert!(!reg.retry_slot("done"), "it already answered");
+        assert!(!reg.retry_slot("ghost"), "a cleared call cannot be retried");
+    }
+
+    #[test]
+    fn the_clamps_keep_one_where_zero_means_unspecified() {
+        assert_eq!(clamp_attempts(0), 1);
+        assert_eq!(clamp_attempts(2), 2);
+        assert_eq!(clamp_attempts(200), MAX_ATTEMPTS);
+        assert_eq!(clamp_collect(0), 1);
+        assert_eq!(clamp_collect(8), 8);
+        assert_eq!(clamp_collect(255), MAX_COLLECT);
     }
 }

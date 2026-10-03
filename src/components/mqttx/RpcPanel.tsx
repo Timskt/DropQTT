@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Eraser, Loader2, CheckCircle2, XCircle } from 'lucide-react';
-import { RpcCall } from '../../types';
-import { Translations } from '../../i18n';
+import { RpcCall, RpcReply } from '../../types';
+import { fill, Translations } from '../../i18n';
 import { base64ToUint8 } from '../../utils/cbor';
 
 const STATE_COLOR: Record<RpcCall['state'], string> = {
@@ -16,13 +16,20 @@ const STATE_LABEL: Record<RpcCall['state'], (t: Translations) => string> = {
   timeout: (t) => t.rpcNoReply,
 };
 
-function decodeBody(call: RpcCall): string {
-  if (!call.reply) return '';
+function decodeBody(reply?: RpcReply | null): string {
+  if (!reply) return '';
   try {
-    return new TextDecoder('utf-8', { fatal: false }).decode(base64ToUint8(call.reply.payloadBase64));
+    return new TextDecoder('utf-8', { fatal: false }).decode(base64ToUint8(reply.payloadBase64));
   } catch {
     return '';
   }
+}
+
+/** Every answer that arrived. A one-to-one request has at most one; a broadcast
+ * collected several, and showing only the first would hide the point of asking. */
+function bodiesOf(call: RpcCall): RpcReply[] {
+  if (call.replies && call.replies.length > 0) return call.replies;
+  return call.reply ? [call.reply] : [];
 }
 
 interface RpcPanelProps {
@@ -76,10 +83,15 @@ export const RpcPanel: React.FC<RpcPanelProps> = ({ calls, onClearFinished, t })
         {calls.map((call) => {
           const color = STATE_COLOR[call.state];
           const Icon = call.state === 'pending' ? Loader2 : call.state === 'resolved' ? CheckCircle2 : XCircle;
-          const body = call.state === 'resolved' ? decodeBody(call) : '';
+          const bodies = bodiesOf(call);
           const expanded = openBody === call.id;
+          // A broadcast that got one answer of three did not get "no reply", and
+          // saying so is the difference between a slow device and a dead one.
+          const label = call.state === 'timeout' && bodies.length > 0
+            ? fill(t.rpcPartialTimeout, { n: String(bodies.length), m: String(call.expected ?? bodies.length) })
+            : STATE_LABEL[call.state](t);
           return (
-            <div key={call.id} className="space-y-0.5">
+            <div key={call.id} className="space-y-0.5" data-testid="rpc-row">
               <div className="flex items-center gap-2 text-[10px] font-mono">
                 <Icon
                   className={'w-3 h-3 shrink-0 ' + (call.state === 'pending' ? 'animate-spin' : '')}
@@ -105,13 +117,21 @@ export const RpcPanel: React.FC<RpcPanelProps> = ({ calls, onClearFinished, t })
                   #{call.correlation.slice(0, 8)}
                 </span>
                 <span className="ml-auto shrink-0" style={{ color }}>
-                  {STATE_LABEL[call.state](t)}
+                  {label}
                   {call.state === 'resolved' && call.rttMs !== null && call.rttMs !== undefined
                     ? ` · ${t.rpcRoundTrip} ${call.rttMs} ms`
                     : ''}
                   {call.reply ? ` · ${call.reply.payloadLen} B` : ''}
+                  {/* A broadcast that is still filling up says how many answers it has;
+                      a retry says which send this is. Both change what "pending" means. */}
+                  {(call.expected ?? 1) > 1
+                    ? ` · ${(call.replies ?? []).length}/${call.expected}`
+                    : ''}
+                  {(call.attemptsTotal ?? 1) > 1 && call.state === 'pending'
+                    ? ` · ${fill(t.rpcAttemptOf, { n: String((call.attempt ?? 0) + 1), m: String(call.attemptsTotal) })}`
+                    : ''}
                 </span>
-                {call.state === 'resolved' && body.length > 0 && (
+                {bodies.length > 0 && (
                   <button
                     type="button"
                     onClick={() => setOpenBody(expanded ? null : call.id)}
@@ -119,7 +139,7 @@ export const RpcPanel: React.FC<RpcPanelProps> = ({ calls, onClearFinished, t })
                     style={{ color: 'var(--text-muted)' }}
                     title={t.rpcReplyBody}
                   >
-                    {expanded ? '−' : '+'}
+                    {expanded ? '−' : `+ ${bodies.length}`}
                   </button>
                 )}
               </div>
@@ -128,14 +148,21 @@ export const RpcPanel: React.FC<RpcPanelProps> = ({ calls, onClearFinished, t })
                   {t.rpcPairedByPosition}
                 </div>
               )}
-              {expanded && (
+              {expanded && bodies.map((reply, i) => (
                 <div
+                  key={i}
                   className="pl-4 text-[10px] font-mono break-all whitespace-pre-wrap"
                   style={{ color: 'var(--text-secondary)' }}
+                  data-testid="rpc-reply-body"
                 >
-                  {body}
+                  {bodies.length > 1 && (
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      #{i + 1} {new Date(reply.timestampMs).toLocaleTimeString()} ·{' '}
+                    </span>
+                  )}
+                  {decodeBody(reply)}
                 </div>
-              )}
+              ))}
             </div>
           );
         })}

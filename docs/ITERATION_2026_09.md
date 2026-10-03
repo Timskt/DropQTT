@@ -1407,6 +1407,49 @@ Playwright 全套 **124/124**（新增 6 条）。Rust 侧无改动，harness �
 门：Playwright 全套 **135/135**（新增 11 条：面板 6 + 过滤器 4 + 面板无障碍审计 1）、
 vitest **67/67**、`tsc` 干净、`eslint` 0 error 10 warn。Rust 侧无改动。
 
+### 4.46 RPC 的两件现场事：重试与一问多答（§2 E3 的前两半，第十二轮 2026-10-03）
+
+审阅稿对 E3 的说法是"已能一问一答。现场需要：超时后重试策略、一问多答（广播收集）、
+把 RPC 接到脚本钩子/桥接"。前两条做了，第三条**明确不做**，理由写在下面。
+
+**重试沿用同一个 correlation id。** 这是有意的：如果每次重发都换关联值，第一次发送的迟到应答
+就配不上了——那等于惩罚慢设备而不是修网络。所以 `retry_slot` 只推进 `attempt`，
+`correlation` 不动；`sentAtMs` 也不动，于是 **RTT 仍然是"从第一次发送算起"**：
+真机上那条迟到的应答显示 `Round trip 3767 ms`，而不是最后一次发送的漂亮数字。
+
+**一问多答的语义是"没集满就还是 Pending"。** 关键改动在 `rpc_observe`：原来一匹配就
+`release` 应答主题（等于把订阅关掉），现在只有 `state != Pending` 才关——
+否则 `collect: 3` 永远只能收到第 1 条，而这正是最容易悄悄发生的那种错。
+`reply` 字段仍然只放**第一条**（老读者不受影响），全部应答进 `replies`，展开时逐条列出并带各自时间戳。
+
+**"没答完"不能说成"没答"。** 超时且一条都没回是 `No reply`；超时但回了 1/3 是
+`Incomplete answer (1 of 3)`（新键 `rpcPartialTimeout`）。这两种情况在现场是**不同的设备**：
+一个是死的，一个是慢的或者只有三分之一在听。
+
+**没做的那半：把 `rpc_request` 接进 transform/bridge 脚本。** QuickJS 沙箱是同步的、
+100 ms 预算，而一次 RPC 至少要以秒计——在脚本里 `await` 应答要么阻塞桥接任务，
+要么在应答到达之前就返回。正确的形状是"脚本**登记**一个请求，稍后另一个钩子消费回执"，
+那是场景引擎（§3.1 / T4）的编排问题，不是给沙箱加个异步口子能糊过去的。
+与其做一个会悄悄丢应答的接口，不如等那个引擎。
+
+**真机取证**（mosquitto 2.0.15 隔离实例 `127.0.0.1:18831`，`mosquitto_sub` 做**线上见证**；
+用户的 1883 没碰；历史库先备份后还原，三个文件 md5 与备份一致）：
+
+| 场景 | 界面 | 线上见证 |
+|---|---|---|
+| attempts=3、timeout 1500 ms、无人应答 | `Pending · send 3/3` | `dev/req {"cmd":"ping"}` **3 行** |
+| 3.4 s 后才回一条（不带 correlation） | `Answered · Round trip 3767 ms · paired by order` | — |
+| collect=3，逐条回答 | `Pending · 0/3` → `1/3` → `2/3` → `Answered · 3/3`，RTT 932 ms（第一条） | — |
+| collect=3，只回一条后超时 | `Incomplete answer (1 of 3) · 1/3` | — |
+
+顺带说明为什么这次用 mosquitto 而不是 aedes：**aedes 1.2 拒绝 MQTT 5 连接**，
+而 RPC 的 response topic / correlation 是 v5 属性；`mosquitto_pub` 又设不了标准 v5 属性
+（`--property` 只支持 user-property），所以应答**故意不带** correlation——
+这恰好把"按先后配对"这条较弱的路径也真机走了一遍。
+
+门：Rust harness **199/199**（rpc 20 条，新增 4 条）、`clippy --lib --tests` 干净、
+vitest **67/67**、`tsc` 干净、`eslint` 0 error 10 warn、Playwright 全套 **139/139**（rpc 10 条，新增 4 条）。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

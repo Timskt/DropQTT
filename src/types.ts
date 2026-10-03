@@ -590,6 +590,13 @@ export interface RpcCall {
   reply?: RpcReply | null;
   /** The reply carried no correlation data, so it was paired by send order */
   pairedByPosition: boolean;
+  /** Which send this is, 0-based; a retry keeps the same correlation id */
+  attempt?: number;
+  attemptsTotal?: number;
+  /** A broadcast request stays open until this many answers arrive */
+  expected?: number;
+  /** Every answer received, in arrival order; `reply` stays the first */
+  replies?: RpcReply[];
 }
 
 /** What the publisher sends when "wait for the answer" is on. */
@@ -606,10 +613,14 @@ export interface RpcSpec {
   payloadFormat?: number;
   topicAlias?: number;
   messageExpiry?: number;
+  /** Sends before the request is written off; 1 = no retry */
+  attempts?: number;
+  /** Answers to wait for on a broadcast; 1 = one-to-one */
+  collect?: number;
 }
 
 export interface RpcEvent {
-  kind: 'resolved' | 'timeout';
+  kind: 'resolved' | 'timeout' | 'retry' | 'partial';
   call: RpcCall;
 }
 

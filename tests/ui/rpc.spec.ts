@@ -199,6 +199,79 @@ test('no answer becomes a terminal row that clear can remove', async ({ page }) 
   await expect(page.getByText('No reply', { exact: true })).toHaveCount(0, { timeout: 5000 });
 });
 
+test('the retry and collection counts reach the backend spec', async ({ page }) => {
+  await boot(page);
+  await openV5Props(page);
+  await setPayload(page, '{"cmd":"ping"}');
+  await page.getByLabel('Await reply').check();
+  await page.getByTestId('rpc-attempts').fill('3');
+  await page.getByTestId('rpc-collect').fill('4');
+  await page.getByRole('button', { name: 'Publish Message' }).click();
+  const call = await lastCall(page, 'rpc_request');
+  expect(call.args.spec.attempts).toBe(3);
+  expect(call.args.spec.collect).toBe(4);
+});
+
+test('a broadcast stays open while answers arrive and lists every one', async ({ page }) => {
+  await boot(page);
+  await openV5Props(page);
+  await setPayload(page, '{"cmd":"who"}');
+  await page.getByLabel('Await reply').check();
+  await page.getByTestId('rpc-collect').fill('3');
+  await page.getByRole('button', { name: 'Publish Message' }).click();
+
+  await page.evaluate(() => {
+    const w = window as any;
+    const at = (n: number, body: string) => ({ topic: 'dev/reply', payloadBase64: body, payloadLen: 4, qos: 1, retain: false, correlationData: null, contentType: null, timestampMs: n });
+    const call = { ...w.rpcRows[0], state: 'pending', expected: 3, attemptsTotal: 1, attempt: 0,
+      rttMs: 12, reply: at(1, 'cQ=='), replies: [at(1, 'cQ=='), at(2, 'cg==')] };
+    w.rpcRows = [call, ...w.rpcRows.slice(1)];
+    w.__fire('rpc-event', { kind: 'partial', call });
+  });
+  // Two of three: the row must not read as answered.
+  await expect(page.getByText('2/3')).toBeVisible();
+  await page.getByTitle('Reply body').click();
+  // Both answers are listable; showing only the first would hide why it is open.
+  await expect(page.getByTestId('rpc-reply-body')).toHaveCount(2);
+});
+
+test('a retry says which send it is waiting on', async ({ page }) => {
+  await boot(page);
+  await openV5Props(page);
+  await setPayload(page, '{"cmd":"ping"}');
+  await page.getByLabel('Await reply').check();
+  await page.getByTestId('rpc-attempts').fill('3');
+  await page.getByRole('button', { name: 'Publish Message' }).click();
+  await page.evaluate(() => {
+    const w = window as any;
+    const call = { ...w.rpcRows[0], state: 'pending', attemptsTotal: 3, attempt: 1, expected: 1, replies: [] };
+    w.rpcRows = [call, ...w.rpcRows.slice(1)];
+    w.__fire('rpc-event', { kind: 'retry', call });
+  });
+  await expect(page.getByText('send 2/3')).toBeVisible();
+});
+
+test('a timeout that heard something keeps the answers it got', async ({ page }) => {
+  await boot(page);
+  await openV5Props(page);
+  await setPayload(page, '{"cmd":"who"}');
+  await page.getByLabel('Await reply').check();
+  await page.getByTestId('rpc-collect').fill('3');
+  await page.getByRole('button', { name: 'Publish Message' }).click();
+  await page.evaluate(() => {
+    const w = window as any;
+    const reply = { topic: 'dev/reply', payloadBase64: 'cQ==', payloadLen: 1, qos: 1, retain: false, correlationData: null, contentType: null, timestampMs: 1 };
+    const call = { ...w.rpcRows[0], state: 'timeout', expected: 3, attemptsTotal: 1, attempt: 0,
+      rttMs: 9, reply, replies: [reply] };
+    w.rpcRows = [call, ...w.rpcRows.slice(1)];
+    w.__fire('rpc-event', { kind: 'timeout', call });
+  });
+  const row = page.locator('[data-testid="rpc-row"]').first();
+  await expect(row).toContainText('1/3');
+  // "No reply" would be a lie when one of three came in.
+  await expect(row).toContainText('Incomplete answer (1 of 3)');
+});
+
 test('a request that was never opted in stays an ordinary publish', async ({ page }) => {
   await boot(page);
   await openV5Props(page);

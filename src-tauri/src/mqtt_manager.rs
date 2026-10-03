@@ -1614,6 +1614,8 @@ impl MqttManager {
             return Err("Request topic must not be empty".to_string());
         }
         let timeout_ms = crate::rpc::clamp_timeout(spec.timeout_ms);
+        let attempts_total = crate::rpc::clamp_attempts(spec.attempts.unwrap_or(0));
+        let expected = crate::rpc::clamp_collect(spec.collect.unwrap_or(0));
         let base_topic = self.base_topic.read().await.clone();
         let id = uuid::Uuid::new_v4().to_string();
         let correlation = spec
@@ -1657,6 +1659,8 @@ impl MqttManager {
             },
         };
         let sent_at_ms = chrono::Utc::now().timestamp_millis();
+        // A retry sends these same bytes again, with the same correlation.
+        let retry_params = params.clone();
         if let Err(e) = self.publish_console(app.clone(), params).await {
             // The request never went out, so the topic we opened is ours to close.
             let dead = self.rpc_watch.lock().await.release(&response_topic);
@@ -1677,29 +1681,80 @@ impl MqttManager {
             rtt_ms: None,
             reply: None,
             paired_by_position: false,
+            attempt: 0,
+            attempts_total,
+            expected,
+            replies: Vec::new(),
         };
         self.rpc.lock().await.record(call.clone());
 
         let manager = self.clone();
         let tid = call.id.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(timeout_ms)).await;
-            let expired = {
-                let mut reg = manager.rpc.lock().await;
-                reg.expire(&tid)
-            };
-            if let Some(call) = expired {
-                let dead = manager.rpc_watch.lock().await.release(&call.response_topic);
-                if let Some(dead) = dead {
-                    let _ = manager.unsubscribe_topic(dead).await;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(timeout_ms)).await;
+                let retry = {
+                    let mut reg = manager.rpc.lock().await;
+                    match reg.get(&tid) {
+                        // Answered, or cleared from the list, while we slept.
+                        Some(c) if c.state != crate::rpc::RpcState::Pending => None,
+                        None => None,
+                        Some(_) => Some(reg.retry_slot(&tid)),
+                    }
+                };
+                match retry {
+                    None => break,
+                    Some(false) => {
+                        let expired = manager.rpc.lock().await.expire(&tid);
+                        if let Some(call) = expired {
+                            let dead = manager.rpc_watch.lock().await.release(&call.response_topic);
+                            if let Some(dead) = dead {
+                                let _ = manager.unsubscribe_topic(dead).await;
+                            }
+                            let _ = app.emit(
+                                "rpc-event",
+                                RpcEvent {
+                                    kind: "timeout",
+                                    call,
+                                },
+                            );
+                        }
+                        break;
+                    }
+                    Some(true) => {
+                        // Same correlation on purpose: a device that answers the
+                        // first send late still pairs with this call.
+                        let current = manager.rpc.lock().await.get(&tid);
+                        if let Some(call) = current {
+                            let _ = app.emit(
+                                "rpc-event",
+                                RpcEvent {
+                                    kind: "retry",
+                                    call: call.clone(),
+                                },
+                            );
+                        }
+                        if manager.publish_console(app.clone(), retry_params.clone()).await.is_err() {
+                            // The retry could not be sent; that is the last attempt.
+                            let expired = manager.rpc.lock().await.expire(&tid);
+                            if let Some(call) = expired {
+                                let dead =
+                                    manager.rpc_watch.lock().await.release(&call.response_topic);
+                                if let Some(dead) = dead {
+                                    let _ = manager.unsubscribe_topic(dead).await;
+                                }
+                                let _ = app.emit(
+                                    "rpc-event",
+                                    RpcEvent {
+                                        kind: "timeout",
+                                        call,
+                                    },
+                                );
+                            }
+                            break;
+                        }
+                    }
                 }
-                let _ = app.emit(
-                    "rpc-event",
-                    RpcEvent {
-                        kind: "timeout",
-                        call,
-                    },
-                );
             }
         });
 
@@ -1764,14 +1819,19 @@ impl MqttManager {
         let Some(matched) = matched else {
             return;
         };
-        let dead = self.rpc_watch.lock().await.release(&matched.response_topic);
-        if let Some(dead) = dead {
-            let _ = self.unsubscribe_topic(dead).await;
+        // A broadcast request is not finished just because one answer came: closing
+        // the response topic there would silently cap the collection at one.
+        let finished = matched.state != crate::rpc::RpcState::Pending;
+        if finished {
+            let dead = self.rpc_watch.lock().await.release(&matched.response_topic);
+            if let Some(dead) = dead {
+                let _ = self.unsubscribe_topic(dead).await;
+            }
         }
         let _ = app.emit(
             "rpc-event",
             RpcEvent {
-                kind: "resolved",
+                kind: if finished { "resolved" } else { "partial" },
                 call: matched,
             },
         );

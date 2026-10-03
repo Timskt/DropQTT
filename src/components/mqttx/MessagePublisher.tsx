@@ -143,6 +143,10 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
     'dropqtt_console_rpc_timeout',
     5_000,
   );
+  // A flaky link wants a retry count; a broadcast wants an answer count. Both are
+  // per-publish choices, like the await toggle itself.
+  const [rpcAttempts, setRpcAttempts] = useState(1);
+  const [rpcCollect, setRpcCollect] = useState(1);
 
   // Scheduled publishing is driven by the backend; these are just the parameters
   // for the next run the user starts.
@@ -270,6 +274,8 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
           qos,
           retain,
           timeoutMs: Math.round(rpcTimeoutMs) || 5_000,
+          attempts: rpcAttempts,
+          collect: rpcCollect,
           responseTopic: props.responseTopic,
           correlationData: props.correlationData,
           contentType: props.contentType,
@@ -721,6 +727,34 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
                     onChange={(e) => setRpcTimeoutMs(Number(e.target.value) || 5_000)}
                     className="field-input text-[11px] w-24"
                     title={t.rpcHint}
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px]" htmlFor="dropqtt-rpc-attempts">
+                  <span style={{ color: 'var(--text-muted)' }}>{t.rpcAttemptsLabel}</span>
+                  <input
+                    type="number"
+                    id="dropqtt-rpc-attempts"
+                    min={1}
+                    max={5}
+                    value={rpcAttempts}
+                    onChange={(e) => setRpcAttempts(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
+                    className="field-input text-[11px] w-14"
+                    title={t.rpcAttemptsHint}
+                    data-testid="rpc-attempts"
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px]" htmlFor="dropqtt-rpc-collect">
+                  <span style={{ color: 'var(--text-muted)' }}>{t.rpcCollectLabel}</span>
+                  <input
+                    type="number"
+                    id="dropqtt-rpc-collect"
+                    min={1}
+                    max={32}
+                    value={rpcCollect}
+                    onChange={(e) => setRpcCollect(Math.max(1, Math.min(32, Number(e.target.value) || 1)))}
+                    className="field-input text-[11px] w-14"
+                    title={t.rpcCollectHint}
+                    data-testid="rpc-collect"
                   />
                 </label>
               </div>

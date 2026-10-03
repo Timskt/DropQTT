@@ -720,6 +720,12 @@ export interface Translations {
   rpcRoundTrip: string;
   rpcResponseTopicPh: string;
   rpcPairedByPosition: string;
+  rpcAttemptsLabel: string;
+  rpcAttemptsHint: string;
+  rpcCollectLabel: string;
+  rpcCollectHint: string;
+  rpcAttemptOf: string;
+  rpcPartialTimeout: string;
   rpcCorrelationLabel: string;
   rpcReplyBody: string;
   rpcClear: string;
@@ -1467,6 +1473,12 @@ export const translations: Record<Language, Translations> = {
     rpcRoundTrip: '往返',
     rpcResponseTopicPh: '留空自动生成',
     rpcPairedByPosition: '按先后配对（应答未带关联数据）',
+    rpcAttemptsLabel: '发送次数',
+    rpcAttemptsHint: '请求重试这么多次才算无应答；每次重试都沿用同一个 correlation id',
+    rpcCollectLabel: '应答数',
+    rpcCollectHint: '等这么多个应答而不是一个——发给共享订阅组的广播本来就会有多次应答',
+    rpcAttemptOf: '第 {n}/{m} 次发送',
+    rpcPartialTimeout: '无完整应答（只回了 {n}/{m}）',
     rpcCorrelationLabel: '关联数据',
     rpcReplyBody: '应答内容',
     rpcClear: '清除已结束',
@@ -2212,6 +2224,12 @@ export const translations: Record<Language, Translations> = {
     rpcRoundTrip: 'Round trip',
     rpcResponseTopicPh: 'blank = generated',
     rpcPairedByPosition: 'paired by order (reply carried no correlation data)',
+    rpcAttemptsLabel: 'sends',
+    rpcAttemptsHint: 'Retry the request this many times before calling it unanswered; each retry keeps the same correlation id',
+    rpcCollectLabel: 'answers',
+    rpcCollectHint: 'Wait for this many replies instead of one - a broadcast to a shared subscription group answers more than once',
+    rpcAttemptOf: 'send {n}/{m}',
+    rpcPartialTimeout: 'Incomplete answer ({n} of {m})',
     rpcCorrelationLabel: 'Correlation data',
     rpcReplyBody: 'Reply body',
     rpcClear: 'Clear finished',
@@ -2957,6 +2975,12 @@ export const translations: Record<Language, Translations> = {
     rpcRoundTrip: '往返',
     rpcResponseTopicPh: '留空自動產生',
     rpcPairedByPosition: '依先後配對（應答未帶關聯資料）',
+    rpcAttemptsLabel: '發送次數',
+    rpcAttemptsHint: '請求重試這麼多次才算無應答；每次重試都沿用同一個 correlation id',
+    rpcCollectLabel: '應答數',
+    rpcCollectHint: '等這麼多個應答而不是一個——發給共享訂閱組的廣播本來就會有多次應答',
+    rpcAttemptOf: '第 {n}/{m} 次發送',
+    rpcPartialTimeout: '無完整應答（只回了 {n}/{m}）',
     rpcCorrelationLabel: '關聯資料',
     rpcReplyBody: '應答內容',
     rpcClear: '清除已結束',
@@ -3702,6 +3726,12 @@ export const translations: Record<Language, Translations> = {
     rpcRoundTrip: '往復',
     rpcResponseTopicPh: '空欄で自動生成',
     rpcPairedByPosition: '順序で対応付け（応答に相関データなし）',
+    rpcAttemptsLabel: '送信回数',
+    rpcAttemptsHint: '応答なしと判定するまでにこれだけ再送します。各再送は同じ correlation id を使います',
+    rpcCollectLabel: '応答数',
+    rpcCollectHint: '1 件ではなくこれだけの応答を待ちます。共有サブスクリプショングループへのブロードキャストは複数応答します',
+    rpcAttemptOf: '送信 {n}/{m} 回目',
+    rpcPartialTimeout: '応答不完整 ({n}/{m})',
     rpcCorrelationLabel: '相関データ',
     rpcReplyBody: '応答内容',
     rpcClear: '完了をクリア',
