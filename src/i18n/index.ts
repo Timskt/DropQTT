@@ -40,6 +40,9 @@ export interface Translations {
   benchExpectMinRate: string;
   benchExpectP99: string;
   benchExpectLost: string;
+  benchMirror: string;
+  benchMirrorHint: string;
+  benchNotMirrored: string;
   benchVerdictPass: string;
   benchVerdictFail: string;
   benchVerdictPending: string;
@@ -672,6 +675,9 @@ export const translations: Record<Language, Translations> = {
     benchExpectMinRate: '最低速率 /s',
     benchExpectP99: '最高 p99 ms',
     benchExpectLost: '最多未确认',
+    benchMirror: '镜像到控制台',
+    benchMirrorHint: '关闭后压测流量不进控制台与历史：测的是 broker，不是我们自己的渲染管线',
+    benchNotMirrored: '未镜像',
     benchVerdictPass: '通过',
     benchVerdictFail: '未通过',
     benchVerdictPending: '进行中',
@@ -1301,6 +1307,9 @@ export const translations: Record<Language, Translations> = {
     benchExpectMinRate: 'min rate /s',
     benchExpectP99: 'max p99 ms',
     benchExpectLost: 'max unacked',
+    benchMirror: 'Mirror to console',
+    benchMirrorHint: 'Off keeps this run out of the feed and history: then the numbers measure the broker, not our own rendering pipeline',
+    benchNotMirrored: 'not mirrored',
     benchVerdictPass: 'PASS',
     benchVerdictFail: 'FAIL',
     benchVerdictPending: 'running',
@@ -1930,6 +1939,9 @@ export const translations: Record<Language, Translations> = {
     benchExpectMinRate: '最低速率 /s',
     benchExpectP99: '最高 p99 ms',
     benchExpectLost: '最多未確認',
+    benchMirror: '鏡像到控制台',
+    benchMirrorHint: '關閉後壓測流量不進控制台與歷史：測的是 broker，不是我們自己的渲染管線',
+    benchNotMirrored: '未鏡像',
     benchVerdictPass: '通過',
     benchVerdictFail: '未通過',
     benchVerdictPending: '進行中',
@@ -2559,6 +2571,9 @@ export const translations: Record<Language, Translations> = {
     benchExpectMinRate: '最低速率 /s',
     benchExpectP99: '最高 p99 ms',
     benchExpectLost: '最大未確認',
+    benchMirror: 'コンソールに反映',
+    benchMirrorHint: 'オフにするとこの実行はフィードと履歴に入りません。測るのはブローカーであって、私たちの描画パイプラインではありません',
+    benchNotMirrored: '未反映',
     benchVerdictPass: '合格',
     benchVerdictFail: '不合格',
     benchVerdictPending: '実行中',

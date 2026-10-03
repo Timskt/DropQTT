@@ -1833,9 +1833,13 @@ impl MqttManager {
             }
         }
 
-        // Console feed: surface everything except raw chunk data
+        // Console feed: surface everything except raw chunk data. A bench run
+        // started with mirror=false is a load generator rather than something to
+        // read, and routing its traffic through copy/encode/archive measures our
+        // own pipeline instead of the broker. Traffic stats and hit counts stay
+        // live: they are what the run is being judged on.
         let is_chunk_topic = topic.split('/').any(|seg| seg == "chunk");
-        if !is_chunk_topic {
+        if !is_chunk_topic && self.bench.mirrors(&topic) {
             let payload_len = publish.payload.len();
             let truncated = payload_len > CONSOLE_PAYLOAD_CAP;
             let stored_bytes: Vec<u8> = if truncated {

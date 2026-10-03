@@ -140,6 +140,8 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
   const [benchSize, setBenchSize] = useState(64);
   const [benchQos, setBenchQos] = useState(0);
   const [benchRetain, setBenchRetain] = useState(false);
+  // Mirroring is the default: a debugging run wants to see its own traffic.
+  const [benchMirror, setBenchMirror] = useState(true);
   const [benchDuration, setBenchDuration] = useState(30);
   const {
     runs: benchRuns,
@@ -159,6 +161,7 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
       size: Math.max(1, Math.min(4096, benchSize)),
       qos: benchQos,
       retain: benchRetain,
+      mirror: benchMirror,
       durationSec: Math.max(0, Math.min(3600, benchDuration)),
       expect:
         expectMinRate || expectP99 || expectLost
@@ -298,6 +301,21 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                 />
                 {t.retain}
               </label>
+              <label
+                className="flex items-center gap-1 text-[10px] font-mono"
+                style={{ color: 'var(--text-muted)' }}
+                title={t.benchMirrorHint}
+              >
+                <input
+                  type="checkbox"
+                  checked={benchMirror}
+                  onChange={(e) => setBenchMirror(e.target.checked)}
+                  style={{ accentColor: 'var(--accent)' }}
+                  data-testid="bench-mirror"
+                  aria-label={`${t.benchLab} ${t.benchMirror}`}
+                />
+                {t.benchMirror}
+              </label>
             </div>
           </div>
 
@@ -360,6 +378,15 @@ export const TopicTrafficPanel: React.FC<TopicTrafficPanelProps> = ({
                               ? t.benchVerdictPass
                               : `${t.benchVerdictFail} × ${r.verdict.failures.length}`
                             : t.benchVerdictPending}
+                        </span>
+                      )}
+                      {r.mirror === false && (
+                        <span
+                          className="shrink-0 chip chip-neutral"
+                          data-testid={`bench-quiet-${r.id}`}
+                          title={t.benchMirrorHint}
+                        >
+                          {t.benchNotMirrored}
                         </span>
                       )}
                       {(r.nacked > 0 || r.noSubscribers > 0) && (

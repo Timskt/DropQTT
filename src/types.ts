@@ -183,6 +183,8 @@ export interface BenchSpec {
   durationSec: number;
   /** Acceptance bar; absent means "no verdict", not "passed". */
   expect?: BenchExpect;
+  /** Default true. False keeps this traffic out of the console feed and history. */
+  mirror?: boolean;
 }
 
 export interface LatencySummary {
@@ -219,6 +221,8 @@ export interface BenchProgress {
   latency: LatencySummary;
   /** The bar this run was started with, echoed back. */
   expect?: BenchExpect;
+  /** False while the run is deliberately not mirrored into feed/history. */
+  mirror: boolean;
   /** Absent when no bar was set. */
   verdict?: BenchVerdict;
 }

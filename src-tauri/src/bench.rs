@@ -44,6 +44,16 @@ pub struct BenchSpec {
     /// number and a person decides. With them it answers "did this build pass".
     #[serde(default)]
     pub expect: Option<BenchExpect>,
+    /// Mirror this traffic into the console feed and the history store. On by
+    /// default because that is what a debugger wants; off is what a *load* run
+    /// wants, where the feed's copy/encode/archive work is the thing being
+    /// measured rather than the thing being observed.
+    #[serde(default = "default_mirror")]
+    pub mirror: bool,
+}
+
+fn default_mirror() -> bool {
+    true
 }
 
 /// A pass/fail bar for one bench run. Every field is optional; a run with no
@@ -300,6 +310,9 @@ pub struct BenchProgress {
     /// show what was required, not only what happened.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expect: Option<BenchExpect>,
+    /// False means this run's traffic is deliberately absent from the console and
+    /// the history store. Echoed so the row can say why nothing is arriving there.
+    pub mirror: bool,
     /// Absent when no thresholds were set or the run has no numbers yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verdict: Option<BenchVerdict>,
@@ -338,11 +351,48 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[derive(Default)]
 pub struct BenchManager {
     runs: Mutex<HashMap<String, Arc<BenchRun>>>,
+    /// How many runs are `Running` right now, mirrored from the map on every
+    /// change to it. The event path consults this before touching the map: an
+    /// idle lab must cost one atomic load per message, not a lock, because most
+    /// messages in this app's life arrive when nobody is stressing anything.
+    live: std::sync::atomic::AtomicUsize,
 }
 
 impl BenchManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Re-derive `live` from the map. Called with the guard held by every mutation,
+    /// so the counter cannot drift from reality.
+    fn refresh_live(&self, runs: &HashMap<String, Arc<BenchRun>>) {
+        self.live.store(
+            runs.values().filter(|r| r.status() == BenchStatus::Running).count(),
+            Ordering::SeqCst,
+        );
+    }
+
+    /// True while at least one run is publishing. Cheap enough to call per message.
+    pub fn is_benching(&self) -> bool {
+        self.live.load(Ordering::SeqCst) > 0
+    }
+
+    /// Whether the console should keep showing this topic.
+    ///
+    /// A run started with `mirror: false` is a load generator, not something to
+    /// read: feeding its traffic through copy/encode/archive measures our own UI
+    /// pipeline instead of the broker. Once the run is terminal, normal mirroring
+    /// resumes -- a finished run must not keep silencing a topic forever.
+    pub fn mirrors(&self, topic: &str) -> bool {
+        if !self.is_benching() {
+            return true;
+        }
+        let runs = lock(&self.runs);
+        !runs.values().any(|r| {
+            r.status() == BenchStatus::Running
+                && !r.spec.mirror
+                && r.spec.topics.iter().any(|t| t == topic)
+        })
     }
 
     pub fn preflight(&self, spec: &BenchSpec) -> Result<(), String> {
@@ -373,7 +423,12 @@ impl BenchManager {
                 finished_ms: None,
             }),
         });
-        let previous = lock(&self.runs).insert(run.spec.id.clone(), run);
+        let previous = {
+            let mut runs = lock(&self.runs);
+            let previous = runs.insert(run.spec.id.clone(), run);
+            self.refresh_live(&runs);
+            previous
+        };
         if let Some(old) = previous {
             old.cancel.store(true, Ordering::SeqCst);
             old.handle.abort();
@@ -409,6 +464,7 @@ impl BenchManager {
                     last_error: inner.last_error.clone(),
                     latency: inner.latency.summary(),
                     expect: r.spec.expect.clone(),
+                    mirror: r.spec.mirror,
                     verdict: {
                         // One sample per call: a verdict whose rate and counters
                         // straddle two loads can blame the run for a torn read.
@@ -438,6 +494,7 @@ impl BenchManager {
         run.cancel.store(true, Ordering::SeqCst);
         run.handle.abort();
         run.set_status(BenchStatus::Stopped, None);
+        self.refresh_live(&lock(&self.runs));
         true
     }
 
@@ -452,6 +509,7 @@ impl BenchManager {
                 stopped += 1;
             }
         }
+        self.refresh_live(&lock(&self.runs));
         stopped
     }
 
@@ -459,12 +517,16 @@ impl BenchManager {
         let mut runs = lock(&self.runs);
         let before = runs.len();
         runs.retain(|_, r| r.status() == BenchStatus::Running);
+        self.refresh_live(&runs);
         before - runs.len()
     }
 
     /// Count one looped-back copy and time it. Returns true when the payload was
     /// ours, so the caller can tell "measured" from "not a bench message".
     pub fn observe(&self, topic: &str, payload: &[u8], now_ms: i64) -> bool {
+        if !self.is_benching() {
+            return false;
+        }
         let runs = lock(&self.runs);
         let mut matched = false;
         for run in runs.values() {
@@ -486,6 +548,9 @@ impl BenchManager {
     }
 
     pub fn record_ack(&self) {
+        if !self.is_benching() {
+            return;
+        }
         let runs = lock(&self.runs);
         for run in runs.values() {
             if run.status() == BenchStatus::Running {
@@ -499,6 +564,9 @@ impl BenchManager {
     /// shows 100% acked while every publish was refused is exactly the failure
     /// this counter exists to make visible.
     pub fn record_nack(&self) {
+        if !self.is_benching() {
+            return;
+        }
         let runs = lock(&self.runs);
         for run in runs.values() {
             if run.status() == BenchStatus::Running {
@@ -511,6 +579,9 @@ impl BenchManager {
     /// the bench runs without the loopback subscription (or that subscription was
     /// itself refused), and it must not be read as either a delivery or a failure.
     pub fn record_no_subscribers(&self) {
+        if !self.is_benching() {
+            return;
+        }
         let runs = lock(&self.runs);
         for run in runs.values() {
             if run.status() == BenchStatus::Running {
@@ -530,8 +601,10 @@ impl BenchManager {
     }
 
     pub fn finish(&self, id: &str, status: BenchStatus, error: Option<String>) {
-        if let Some(run) = lock(&self.runs).get(id).cloned() {
+        let runs = lock(&self.runs);
+        if let Some(run) = runs.get(id).cloned() {
             run.set_status(status, error);
+            self.refresh_live(&runs);
         }
     }
 
@@ -576,6 +649,7 @@ mod tests {
             retain: false,
             duration_sec: 5,
             expect: None,
+            mirror: true,
         }
     }
 
@@ -752,6 +826,53 @@ mod tests {
         let v = s.evaluate(100, 100, 980, Some(12), true).expect("verdict");
         assert!(v.settled);
         assert!(v.failures.is_empty(), "{:?}", v.failures);
+    }
+
+    #[tokio::test]
+    async fn an_idle_lab_costs_no_lock_and_mirrors_everything() {
+        let mgr = BenchManager::new();
+        assert!(!mgr.is_benching());
+        assert!(mgr.mirrors("bench/hot"), "no run means nothing is being suppressed");
+        assert!(
+            !mgr.observe("bench/hot", b"{\"seq\":1,\"t\":1}", 1),
+            "an idle lab must not parse the payload either"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_quiet_run_silences_its_own_topics_and_nothing_else() {
+        let mgr = BenchManager::new();
+        let mut quiet = spec("r-quiet");
+        quiet.topics = vec!["bench/hot".to_string(), "bench/cold".to_string()];
+        quiet.mirror = false;
+        mgr.register(quiet, Arc::new(AtomicBool::new(false)), park_handle());
+        assert!(mgr.is_benching());
+        assert!(!mgr.mirrors("bench/hot"));
+        assert!(!mgr.mirrors("bench/cold"));
+        assert!(mgr.mirrors("bench/other"), "a run says nothing about topics it does not own");
+    }
+
+    #[tokio::test]
+    async fn a_finished_run_stops_silencing_the_topic() {
+        // The suppression belongs to the run, not to the topic's history. A lab that
+        // kept a topic quiet after it ended would hide traffic the user next
+        // subscribes in order to see.
+        let mgr = BenchManager::new();
+        let mut quiet = spec("r-done");
+        quiet.mirror = false;
+        mgr.register(quiet, Arc::new(AtomicBool::new(false)), park_handle());
+        assert!(!mgr.mirrors("bench/hot"));
+        mgr.finish("r-done", BenchStatus::Finished, None);
+        assert!(mgr.mirrors("bench/hot"));
+        assert!(!mgr.is_benching());
+    }
+
+    #[tokio::test]
+    async fn a_loud_run_mirrors_while_it_runs() {
+        let mgr = BenchManager::new();
+        mgr.register(spec("r-loud"), Arc::new(AtomicBool::new(false)), park_handle());
+        assert!(mgr.mirrors("bench/hot"));
+        assert!(mgr.is_benching());
     }
 
     #[tokio::test]

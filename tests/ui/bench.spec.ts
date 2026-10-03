@@ -229,3 +229,39 @@ test('a run without thresholds gets no verdict chip at all', async ({ page }) =>
   await page.evaluate((r) => (window as any).__fire('bench-progress', [r]), row());
   await expect(page.getByTestId(/^bench-verdict-/)).toHaveCount(0);
 });
+
+test('a quiet run asks the backend to keep its traffic out of the console', async ({ page }) => {
+  await boot(page);
+  await openBench(page);
+  await page.getByPlaceholder(/Bench topics/).fill('bench/hot');
+  await page.getByTestId('bench-mirror').uncheck();
+  await page.getByRole('button', { name: 'Start bench' }).click();
+
+  const spec = (
+    await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'bench_start').pop())
+  ).args.spec;
+  expect(spec.mirror).toBe(false);
+});
+
+test('mirroring is on unless the operator turns it off', async ({ page }) => {
+  await boot(page);
+  await openBench(page);
+  await page.getByPlaceholder(/Bench topics/).fill('bench/hot');
+  await expect(page.getByTestId('bench-mirror')).toBeChecked();
+  await page.getByRole('button', { name: 'Start bench' }).click();
+  const spec = (
+    await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'bench_start').pop())
+  ).args.spec;
+  expect(spec.mirror).toBe(true);
+});
+
+test('a quiet run says so on its own row, so an empty console is not read as a failure', async ({ page }) => {
+  await boot(page);
+  await openBench(page);
+  await page.evaluate((r) => (window as any).__fire('bench-progress', [{ ...r, mirror: false }]), row());
+  const chip = page.getByTestId('bench-quiet-bench-1');
+  await expect(chip).toHaveText('not mirrored');
+  // A mirrored run must not grow the same claim.
+  await page.evaluate((r) => (window as any).__fire('bench-progress', [{ ...r, mirror: true }]), row());
+  await expect(page.getByTestId(/^bench-quiet-/)).toHaveCount(0);
+});
