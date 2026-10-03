@@ -1,4 +1,4 @@
-import type { HistoryRow, HistorySeriesPoint, MqttGenericMessage } from '../types';
+import type { HistoryRow, HistorySeriesPoint, MqttGenericMessage, TraceResult } from '../types';
 import { base64ToUint8, cborToDisplayJson, decodeCbor, uint8ToHexDump, uint8ToUtf8 } from './cbor';
 import { parseSenmlPack, senmlFromDecoded, senmlToTable } from './senml';
 
@@ -52,4 +52,49 @@ export function fillHistorySeries(points: HistorySeriesPoint[], since: number, u
     filled.push({ bucket, count: counts.get(bucket) ?? 0 });
   }
   return filled;
+}
+
+/**
+ * A trace as one portable file. Whoever receives it has to be able to read the
+ * story without this app open, so each hop keeps the reason it is in the list
+ * alongside both renderings of its payload: `payload` is what the bytes say as
+ * text, `payloadBase64` is what they actually were.
+ */
+export function buildTraceExport(
+  token: string,
+  windowLabel: string,
+  window: { sinceMs: number; untilMs: number },
+  result: TraceResult,
+  exportedAt: string,
+): string {
+  return JSON.stringify(
+    {
+      kind: 'dropqtt-trace',
+      version: 1,
+      token,
+      window: { label: windowLabel, sinceMs: window.sinceMs, untilMs: window.untilMs },
+      exportedAt,
+      summary: result.summary,
+      hops: result.hits.map((hit) => ({
+        ts: hit.ts,
+        iso: new Date(hit.ts).toISOString(),
+        direction: hit.direction,
+        topic: hit.topic,
+        qos: hit.qos,
+        retain: hit.retain,
+        matchedBy: hit.matchedBy,
+        truncated: hit.truncated,
+        payloadLen: hit.payloadLen,
+        payload: hit.payload,
+        payloadBase64: hit.payloadBase64,
+        contentType: hit.contentType ?? hit.properties?.contentType ?? null,
+        responseTopic: hit.properties?.responseTopic ?? null,
+        correlationData: hit.properties?.correlationData ?? null,
+        correlationHex: hit.properties?.correlationHex ?? null,
+        userProperties: hit.properties?.userProperties ?? [],
+      })),
+    },
+    null,
+    2,
+  );
 }

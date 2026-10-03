@@ -1600,6 +1600,77 @@ vitest **68/68**、`tsc` 干净、`eslint` 0 error / 10 warning（预算未涨�
 定义"条件为假时这条 sink 算不算投递"，没定之前不做。以及 sink 级独立限流（现在 `rateLimit`
 仍是规则级）。
 
+### 4.50 报文级追踪：给一个标识，把它的一生串起来（§2 E10 + §9 第 7 条一半，第十四轮 2026-10-04）
+
+审阅稿把这行标成"现场最强需求之一"，我认为它是对的：现场问的是"这台设备昨晚到底发生了什么"，
+而不是"这个主题第 37 页是什么"。落点是 History 页新增的 **Message trace** 卡：输入一个
+deviceId 或 correlation 值，得到一条**从旧到新**的时间线，跨主题、跨方向。
+
+**correlation 必须成为可查的键，而不是每次读 JSON。** `messages` 表加一列 `correlation`
+（小写 hex，带索引），写入时从 `correlation_hex`/`correlation_data` 归一化得到。理由不是性能：
+JSON 里本来就有这两个字段，`json_extract` 也能查——但**"文本形式的 correlation"和"字节形式的
+correlation"在两个方向上会长得不一样**，把它们折成同一个 hex 键才是"同一条报文"的判据。
+`correlation_key()` 就是这个折叠，它有独立单元测试。
+
+**三种命中被刻意分开，而且分开显示。** 每一跳带 `matchedBy`：
+`correlation`（同一报文）/ `topic`（主题里提到过）/ `payload`（内容里提到过）。面板把它们
+渲染成不同的措辞与颜色，并在结尾一句话说明差别。这不是装饰：把"提到过 edge-7"画成"edge-7 的一生"
+就是这台仪器最可能的说谎方式。同理，摘要里的 `correlations` 若**多于一个键**，界面会明说
+"这个标识跨了好几个请求，不是一条对话"——而不是把两次会话画成一条连续剧情。
+
+**歧义是承认的，不是藏起来的。** 一个 token 若长得像 hex（`0a`、`1234`），它既可能是 correlation
+的字节形式，也可能只是主题里的两个字符。`token_to_key()` 按 hex 解释它，于是 correlation 命中
+可能落空，但 topic/payload 分支仍然命中，而每一跳的 `matchedBy` 会如实告诉你发生了什么。
+
+**老库的 key 是补回来的，不是放弃的。** 迁移用 `ALTER TABLE ADD COLUMN` + 一次
+`UPDATE ... json_extract(properties, '$.correlationHex' / '$.correlationData')` 回填。
+"只对升级之后抓到的流量有效"的追踪是个陷阱：它会让人以为"这台设备没说过话"。
+（顺带确认：本机 bundled SQLite 有 JSON1，所以回填能写在 SQL 里。）
+
+**导出即自证（§9 第 7 条的一半）。** `buildTraceExport()` 产出的 JSON 自带 token、时间窗、
+摘要、以及每一跳的 `payload` **和** `payloadBase64` 与 v5 属性——收到文件的人不必打开这个 app
+也能读完整条故事，二进制那一跳的 base64 是真值、文本形式只是"它读起来像什么"。
+
+**门**：Rust harness **224/224**（新增 5 条：同一字节的两种写法折成同一键、跨主题跨方向串起来、
+每跳说明它凭什么在这里、**升级前写入的行仍可追踪**、以及"只返回前 N 跳"必须自报）、
+`clippy --lib --tests` 干净、vitest **70/70**（新增 2 条导出结构断言）、`tsc` 干净、
+`eslint` 0 error / 10 warning（预算未涨）、Playwright 新增 `tests/ui/trace.spec.ts` **6 条**
+（顺序、三种命中标签、多 correlation 警告、截断自报、空窗说"没有"而不是沉默、按钮禁用时说缺什么）。
+
+**真机取证 · 第一部分：迁移跑在他真实的历史库上**（先把 `%APPDATA%` 里的库**整份复制**到临时目录，
+用 harness 直接对副本执行 `HistoryStore::open`，原件全程未动）：
+
+```
+rows 48713 -> 48713;  column pre-existing false;  keys recovered 51
+trace "3438356339…" -> 2 hops, matched ["correlation","correlation"], topics ["lab/rpc/deaf"]
+trace "edge"        -> 5 hops, matched ["topic","topic","topic","topic","topic"]
+```
+
+48,713 行一行不少；51 条历史报文从 properties JSON 里补出了 correlation 键；拿补出来的 UUID 去追，
+一次拿到**请求 + 应答两跳且都标为"同一报文"**——这些是升级之前抓的流量，当时根本没有这一列。
+
+**真机取证 · 第二部分：实时链路**（一次性 mosquitto `127.0.0.1:18831` + 独立第三方 mqtt.js 5 应答端，
+**用户自己的 1883 未被触碰**）：发一个 `correlationData=trace-demo-1` 的 RPC（27 ms 内 resolved，
+对端 hex 回 `74726163652d64656d6f2d31`），再发一条主题里含同一标识的消息，然后在 History 页追踪：
+
+```
+3 hops · 3 topics · 1 in / 2 out · 2s end to end
+03:41:54 ↗ lab/rpc/trace-demo        {"cmd":"ping"}                     [same message]
+03:41:54 ↘ lab/rpc/trace-demo/reply  {"answeredBy":"mqtt.js-5",…}       [same message]
+03:41:56 ↗ devices/trace-demo-1/state hello                             [topic match]
+```
+
+第三跳只因为主题里有这个词就被列进来，而界面把它标成 `topic match`——这正是这条时间线不说谎的方式。
+另外在真实库里追一个**上一轮会话**留下的 `corr-bare`，也拿到了它那一跳（`lab/rpc/req-bare`，
+04:46:42，早于本次构建），回填在 app 里同样成立。
+
+**这一条没做的事，以及为什么**：
+1. **桥接转发与 Webhook 投递不在这条时间线里。** 它们是 `bridge.rs` 的另一个 manager，不写 history；
+   要并进来得先决定"一次 fan-out 到 3 个 sink 算 1 跳还是 3 跳"，以及桥接的载荷要不要进历史库
+   （它现在不进）。面板末尾那句话就是这条边界，而不是等用户自己发现。
+2. **`trace` 只读历史**，不订阅实时：先让"过去的一生"可信，再谈"跟着看"。
+3. 主题树/设备视图（§8.1 的另外三项）仍未做；本条只覆盖了 E10 与 §9 第 7 条里"追踪导出"那一半。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

@@ -249,7 +249,7 @@ test('a disabled control says which condition it is stuck on', async ({ page }) 
 
 test('an unsubmitted search box is the reason export is dead', async ({ page }) => {
   await boot(page, 'history');
-  await page.getByRole('textbox').fill('sensor');
+  await page.getByTestId('history-search').fill('sensor');
   const json = page.getByRole('button', { name: 'JSON', exact: true });
   await expect(json).toBeDisabled();
   await expect(json).toHaveAttribute('title', /unsubmitted text/);

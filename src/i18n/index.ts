@@ -89,6 +89,21 @@ export interface Translations {
   historyTrend: string;
   historyByTopic: string;
   historyByTopicHint: string;
+  traceTitle: string;
+  tracePlaceholder: string;
+  traceRun: string;
+  traceRunHint: string;
+  traceNeedsToken: string;
+  traceEmpty: string;
+  traceSummary: string;
+  traceCorrelations: string;
+  traceTruncated: string;
+  traceExport: string;
+  traceExportHint: string;
+  traceBoundary: string;
+  matchedCorrelation: string;
+  matchedTopic: string;
+  matchedPayload: string;
   historyRetention: string;
   historyRetentionHint: string;
   historyRetentionApply: string;
@@ -868,6 +883,21 @@ export const translations: Record<Language, Translations> = {
     historyTrend: '趋势',
     historyByTopic: '按主题统计',
     historyByTopicHint: '点击任一主题即按它过滤',
+    traceTitle: '报文追踪',
+    tracePlaceholder: '设备 ID 或 correlation 值（文本或 hex）',
+    traceRun: '追踪',
+    traceRunHint: '把一个标识跨主题、跨方向的经过串成时间线',
+    traceNeedsToken: '先输入要追踪的设备 ID 或 correlation 值',
+    traceEmpty: '这个时间窗内没有任何报文提到它',
+    traceSummary: '{count} 跳 · {topics} 个主题 · 收 {in} / 发 {out} · 全程 {span}',
+    traceCorrelations: '出现 {n} 个不同的 correlation — 这个标识跨了好几个请求，不是一条对话',
+    traceTruncated: '只取最早的 {n} 跳，后面还有',
+    traceExport: '导出追踪',
+    traceExportHint: '把这条时间线导出为自带载荷的 JSON',
+    traceBoundary: '标为"同一报文"的靠 correlation 对上；"主题命中/内容命中"只是提到过这个标识。桥接转发与 Webhook 投递不在这条时间线里，它们看数据桥接页的日志。',
+    matchedCorrelation: '同一报文',
+    matchedTopic: '主题命中',
+    matchedPayload: '内容命中',
     historyRetention: '保留天数',
     historyRetentionHint: '0 = 只按条数上限裁剪；点应用后立即生效',
     historyRetentionApply: '应用',
@@ -1643,6 +1673,21 @@ export const translations: Record<Language, Translations> = {
     historyTrend: 'Trend',
     historyByTopic: 'By topic',
     historyByTopicHint: 'click a topic to filter by it',
+    traceTitle: 'Message trace',
+    tracePlaceholder: 'a deviceId or correlation value (text or hex)',
+    traceRun: 'Trace',
+    traceRunHint: 'Follow one token across every topic and both directions, oldest first',
+    traceNeedsToken: 'type a deviceId or correlation value to follow',
+    traceEmpty: 'nothing recorded in this window mentions that token',
+    traceSummary: '{count} hops · {topics} topics · {in} in / {out} out · {span} end to end',
+    traceCorrelations: '{n} different correlation keys — this token covers several requests, not one conversation',
+    traceTruncated: 'showing the first {n} hops; more were found',
+    traceExport: 'Export trace',
+    traceExportHint: 'Save this timeline as a JSON file that carries its own payloads',
+    traceBoundary: 'A "same message" hop was matched by correlation; "topic match" and "payload match" hops only mention the token. Bridge forwards and webhook deliveries are not in this timeline — they are in the Data Bridge log.',
+    matchedCorrelation: 'same message',
+    matchedTopic: 'topic match',
+    matchedPayload: 'payload match',
     historyRetention: 'Keep days',
     historyRetentionHint: '0 = only the row cap trims; applying takes effect at once',
     historyRetentionApply: 'Apply',
@@ -2418,6 +2463,21 @@ export const translations: Record<Language, Translations> = {
     historyTrend: '趨勢',
     historyByTopic: '按主題統計',
     historyByTopicHint: '點擊任一主題即以它篩選',
+    traceTitle: '報文追蹤',
+    tracePlaceholder: '裝置 ID 或 correlation 值（文字或 hex）',
+    traceRun: '追蹤',
+    traceRunHint: '把一個識別跨主題、跨方向串成時間線',
+    traceNeedsToken: '先輸入要追蹤的裝置 ID 或 correlation 值',
+    traceEmpty: '這個時間窗內沒有報文提到它',
+    traceSummary: '{count} 跳 · {topics} 個主題 · 收 {in} / 發 {out} · 全程 {span}',
+    traceCorrelations: '出現 {n} 個不同的 correlation — 這個識別跨了好幾個請求，不是一條對話',
+    traceTruncated: '只取最早的 {n} 跳，後面還有',
+    traceExport: '匯出追蹤',
+    traceExportHint: '把這條時間線匯出為自帶載入的 JSON',
+    traceBoundary: '標為「同一報文」的靠 correlation 對上；「主題命中／內容命中」只是提到過這個識別。橋接轉發與 Webhook 派送不在這條時間線裡，它們看資料橋接頁的日誌。',
+    matchedCorrelation: '同一報文',
+    matchedTopic: '主題命中',
+    matchedPayload: '內容命中',
     historyRetention: '保留天數',
     historyRetentionHint: '0 = 只按條數上限裁剪；點套用後立即生效',
     historyRetentionApply: '套用',
@@ -3193,6 +3253,21 @@ export const translations: Record<Language, Translations> = {
     historyTrend: 'トレンド',
     historyByTopic: 'トピック別',
     historyByTopicHint: 'トピックをクリックすると絞り込まれます',
+    traceTitle: 'メッセージ追跡',
+    tracePlaceholder: 'deviceId または correlation 値（テキスト / hex）',
+    traceRun: '追跡',
+    traceRunHint: '1 つの識別子を全トピック・双方向で古い順にたどります',
+    traceNeedsToken: '追跡する deviceId または correlation 値を入力してください',
+    traceEmpty: 'この時間窓にその語を含むメッセージはありません',
+    traceSummary: '{count} ホップ · トピック {topics} · 受信 {in} / 送信 {out} · 所要 {span}',
+    traceCorrelations: 'correlation が {n} 種類 — この語は複数のリクエストにまたがっています',
+    traceTruncated: '先頭 {n} ホップのみ表示（まだあります）',
+    traceExport: '追跡を書き出す',
+    traceExportHint: 'ペイロードを同梱した JSON としてこのタイムラインを保存します',
+    traceBoundary: '「同一メッセージ」は correlation で一致したホップです。「トピック一致 / ペイロード一致」は語が含まれているだけで、同一のメッセージではありません。ブリッジ転送と Webhook 配信はこのタイムラインに含まれません（データブリッジのログを参照）。',
+    matchedCorrelation: '同一メッセージ',
+    matchedTopic: 'トピック一致',
+    matchedPayload: 'ペイロード一致',
     historyRetention: '保持日数',
     historyRetentionHint: '0 = 件数の上限のみ。適用するとすぐに反映されます',
     historyRetentionApply: '適用',

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { canReplayHistory, fillHistorySeries, historyMessage, historyPayload } from '../../src/utils/history';
+import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload } from '../../src/utils/history';
 import { messagesToJson } from '../../src/utils/exportMessages';
-import type { HistoryRow } from '../../src/types';
+import type { HistoryRow, TraceResult } from '../../src/types';
 
 const row: HistoryRow = {
   id: '1', topic: 'rpc/request', payload: 'hello', payloadBase64: 'aGVsbG8=', payloadLen: 5,
@@ -35,5 +35,40 @@ describe('history replay and inspection', () => {
       { bucket: 1000, count: 2 }, { bucket: 2000, count: 0 }, { bucket: 3000, count: 0 }, { bucket: 4000, count: 1 },
     ]);
     expect(fillHistorySeries([], 2000, 1000, 1000)).toEqual([]);
+  });
+});
+
+const trace: TraceResult = {
+  hits: [
+    { ...row, id: 'a', direction: 'out', ts: 1_000, matchedBy: 'correlation' },
+    { ...row, id: 'b', topic: 'devices/edge-1/state', payload: '', payloadBase64: '/wAB', payloadLen: 3, ts: 2_500, matchedBy: 'topic' },
+  ],
+  summary: {
+    count: 2, topics: ['rpc/request', 'devices/edge-1/state'], firstMs: 1_000, lastMs: 2_500,
+    inbound: 1, outbound: 1, correlations: ['3432'], truncated: false,
+  },
+};
+
+describe('buildTraceExport', () => {
+  it('carries the token, the window and both renderings of every payload', () => {
+    const parsed = JSON.parse(buildTraceExport('42', '24h', { sinceMs: 100, untilMs: 9_000 }, trace, '2026-10-04T02:00:00.000Z'));
+    expect(parsed).toMatchObject({
+      kind: 'dropqtt-trace', version: 1, token: '42',
+      window: { label: '24h', sinceMs: 100, untilMs: 9_000 },
+      exportedAt: '2026-10-04T02:00:00.000Z',
+    });
+    expect(parsed.summary.correlations).toEqual(['3432']);
+    // Base64 is the truth for a binary hop; the text form is only what it says.
+    expect(parsed.hops[1]).toMatchObject({ payloadBase64: '/wAB', payload: '', iso: '1970-01-01T00:00:02.500Z' });
+    expect(parsed.hops[0].correlationData).toBe('42');
+    expect(parsed.hops[1].userProperties).toEqual([['device', 'edge-1']]);
+  });
+
+  it('keeps the reason a hop is in the list attached to the hop', () => {
+    const parsed = JSON.parse(buildTraceExport('edge', 'all', { sinceMs: 0, untilMs: 1 }, trace, 'x'));
+    expect(parsed.hops.map((h: { topic: string; matchedBy: string }) => [h.topic, h.matchedBy])).toEqual([
+      ['rpc/request', 'correlation'],
+      ['devices/edge-1/state', 'topic'],
+    ]);
   });
 });

@@ -4,13 +4,14 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   Archive, RefreshCw, Search, Trash2, ArrowUpRight, ArrowDownRight, Clock,
   Inbox, Send, Rss, Filter, Copy, Check, Zap, BarChart3, Download, ChevronRight,
+  GitCompareArrows,
 } from 'lucide-react';
-import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, HistoryTopicRow } from '../../types';
+import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, HistoryTopicRow, TraceResult } from '../../types';
 import { Translations, fill } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
-import { canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView } from '../../utils/history';
-import { exportMessages, ExportFormat } from '../../utils/exportMessages';
+import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView } from '../../utils/history';
+import { exportMessages, ExportFormat, saveTextFile } from '../../utils/exportMessages';
 
 interface HistoryPanelProps {
   t: Translations;
@@ -26,6 +27,16 @@ const WINDOWS = [
   { id: '1h', ms: 60 * 60_000, label: '1h' },
   { id: '24h', ms: 24 * 60 * 60_000, label: '24h' },
 ];
+
+/** How many hops one trace returns; the panel says so when it stops short. */
+const TRACE_LIMIT = 500;
+
+/** Which claim put this hop in the list — the same message, or merely related. */
+const matchLabel = (matched: string, t: Translations): string =>
+  matched === 'correlation' ? t.matchedCorrelation : matched === 'topic' ? t.matchedTopic : t.matchedPayload;
+
+const matchColor = (matched: string): string =>
+  matched === 'correlation' ? 'var(--accent)' : 'var(--text-muted)';
 
 const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString();
 const fmtDateTime = (ms: number) => new Date(ms).toLocaleString();
@@ -150,6 +161,12 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  // One token's whole life, over the same window the list is showing.
+  const [traceToken, setTraceToken] = useState('');
+  const [trace, setTrace] = useState<TraceResult | null>(null);
+  const [traceError, setTraceError] = useState<string | null>(null);
+  const [tracing, setTracing] = useState(false);
+  const [traceExpanded, setTraceExpanded] = useState<string | null>(null);
   const requestRef = useRef(0);
 
   useEffect(() => {
@@ -244,6 +261,42 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
     } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
   };
 
+  const traceWindow = () => {
+    const untilMs = Date.now();
+    return { sinceMs: win.ms ? untilMs - win.ms : 0, untilMs };
+  };
+
+  const runTrace = async () => {
+    const token = traceToken.trim();
+    if (!token) {
+      setTrace(null);
+      setTraceError(t.traceNeedsToken);
+      return;
+    }
+    setTracing(true);
+    try {
+      const result = await invoke<TraceResult>('history_trace', { token, limit: TRACE_LIMIT, ...traceWindow() });
+      setTrace(result);
+      setTraceError(null);
+      setTraceExpanded(null);
+    } catch (e) {
+      setTrace(null);
+      setTraceError(String(e));
+    } finally {
+      setTracing(false);
+    }
+  };
+
+  const exportTrace = async () => {
+    if (!trace) return;
+    const token = traceToken.trim();
+    const text = buildTraceExport(token, win.id || 'all', traceWindow(), trace, new Date().toISOString());
+    const safe = token.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 40) || 'trace';
+    if (await saveTextFile(`dropqtt-trace-${safe}.json`, text)) {
+      toast.success(fill(t.exportDone, { count: String(trace.hits.length) }));
+    }
+  };
+
   return (
     <div className="space-y-4 max-w-6xl mx-auto flex flex-col">
       {/* Header */}
@@ -293,6 +346,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
               aria-label={t.historySearchHint}
               placeholder={t.historySearchHint}
               className="field-input w-full pl-8"
+              data-testid="history-search"
             />
           </div>
           <div className="seg-box">
@@ -423,6 +477,121 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ t, connected, onPubl
             </div>
           </div>
         )}
+
+        {/* One token's life: a deviceId or a correlation value, across every topic
+            and both directions, oldest first. */}
+        <div className="p-3 space-y-2" style={{ borderBottom: '1px solid var(--border-panel)' }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <GitCompareArrows className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--accent)' }} />
+            <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>{t.traceTitle}</span>
+            <input
+              className="field-input flex-1 min-w-[12rem] font-mono"
+              aria-label={t.traceTitle}
+              placeholder={t.tracePlaceholder}
+              value={traceToken}
+              spellCheck={false}
+              data-testid="trace-token"
+              onChange={(e) => setTraceToken(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void runTrace(); }}
+            />
+            <button
+              type="button"
+              className="btn-accent !px-3 !py-1 text-[11px]"
+              onClick={() => void runTrace()}
+              disabled={tracing || !traceToken.trim()}
+              title={traceToken.trim() ? t.traceRunHint : t.traceNeedsToken}
+              data-testid="trace-run"
+            >
+              {t.traceRun}
+            </button>
+            {trace && trace.hits.length > 0 && (
+              <button
+                type="button"
+                className="btn-ghost !px-2 !py-1 text-[11px] flex items-center gap-1"
+                onClick={() => void exportTrace()}
+                title={t.traceExportHint}
+                data-testid="trace-export"
+              >
+                <Download className="w-3 h-3" />
+                {t.traceExport}
+              </button>
+            )}
+          </div>
+
+          {traceError && (
+            <div className="text-[11px] font-mono select-text" style={{ color: 'var(--danger)' }} data-testid="trace-error">
+              {traceError}
+            </div>
+          )}
+
+          {trace && (
+            <div className="space-y-1.5" data-testid="trace-result">
+              <div className="text-[10px] font-mono select-text" style={{ color: 'var(--text-muted)' }} data-testid="trace-summary">
+                {fill(t.traceSummary, {
+                  count: String(trace.summary.count),
+                  topics: String(trace.summary.topics.length),
+                  in: String(trace.summary.inbound),
+                  out: String(trace.summary.outbound),
+                  span: fmtSpan(trace.summary.firstMs, trace.summary.lastMs),
+                })}
+              </div>
+              {/* Several correlation keys under one token is several conversations;
+                  drawing them as one timeline would invent a story. */}
+              {trace.summary.correlations.length > 1 && (
+                <div className="text-[10px]" style={{ color: 'var(--warning)' }} data-testid="trace-multi">
+                  {fill(t.traceCorrelations, { n: String(trace.summary.correlations.length) })}
+                </div>
+              )}
+              {trace.summary.truncated && (
+                <div className="text-[10px]" style={{ color: 'var(--warning)' }} data-testid="trace-truncated">
+                  {fill(t.traceTruncated, { n: String(TRACE_LIMIT) })}
+                </div>
+              )}
+              {trace.hits.length === 0 ? (
+                <div className="text-[11px] italic" style={{ color: 'var(--text-muted)' }} data-testid="trace-empty">
+                  {t.traceEmpty}
+                </div>
+              ) : (
+                <ol className="space-y-1">
+                  {trace.hits.map((hit, i) => (
+                    <li key={`${hit.id}-${i}`} data-testid={`trace-hop-${hit.id}`}>
+                      <button
+                        type="button"
+                        onClick={() => setTraceExpanded((cur) => (cur === hit.id ? null : hit.id))}
+                        aria-expanded={traceExpanded === hit.id}
+                        className="w-full text-left px-2 py-1.5 rounded flex items-start gap-2"
+                        style={{ background: 'var(--bg-inset)' }}
+                      >
+                        <span className="text-[10px] font-mono shrink-0 pt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          {fmtTime(hit.ts)}
+                        </span>
+                        {hit.direction === 'out'
+                          ? <ArrowUpRight className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: 'var(--accent)' }} />
+                          : <ArrowDownRight className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: 'var(--ok)' }} />}
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[11px] font-mono truncate select-text" style={{ color: 'var(--text-primary)' }}>{hit.topic}</span>
+                          <span className="block text-[10px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>{previewOf(hit, t)}</span>
+                        </span>
+                        <span
+                          className="text-[9px] font-mono px-1.5 py-0.5 rounded shrink-0"
+                          style={{ background: 'var(--bg-code)', color: matchColor(hit.matchedBy) }}
+                        >
+                          {matchLabel(hit.matchedBy, t)}
+                        </span>
+                      </button>
+                      {traceExpanded === hit.id && (
+                        <div className="px-2 pt-1.5 pb-1 inset-box">
+                          <PayloadViewer row={hit} t={t} />
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>{t.traceBoundary}</div>
+            </div>
+          )}
+        </div>
 
         {/* Results */}
         <div className="flex items-center justify-between px-3 py-1.5 text-[10px]" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-inset)' }}>

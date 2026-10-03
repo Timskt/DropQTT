@@ -1034,6 +1034,24 @@ impl MqttManager {
         store.query(search, direction, limit, since_ms, until_ms)
     }
 
+    /// One token's life across everything the store recorded, oldest first.
+    pub async fn trace_history(
+        &self,
+        token: &str,
+        limit: i64,
+        since_ms: i64,
+        until_ms: i64,
+    ) -> Result<crate::history::TraceResult, String> {
+        let store = self
+            .history
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "message history is not available".to_string())?;
+        store.trace(token, limit, since_ms, until_ms)
+    }
+
     pub async fn history_series(
         &self,
         topic: &str,

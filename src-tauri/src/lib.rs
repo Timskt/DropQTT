@@ -247,6 +247,22 @@ async fn query_history(
     state.mqtt.query_history(&search, &direction, limit, since_ms.unwrap_or(0), until_ms.unwrap_or(i64::MAX)).await
 }
 
+/// One token's whole life: a deviceId or a correlation value, every topic and
+/// both directions, oldest first. Each hit says which claim put it in the list.
+#[tauri::command]
+async fn history_trace(
+    state: State<'_, AppState>,
+    token: String,
+    limit: i64,
+    since_ms: Option<i64>,
+    until_ms: Option<i64>,
+) -> Result<history::TraceResult, String> {
+    state
+        .mqtt
+        .trace_history(&token, limit, since_ms.unwrap_or(0), until_ms.unwrap_or(i64::MAX))
+        .await
+}
+
 /// Per-bucket message counts for the history trend chart
 #[tauri::command]
 async fn history_series(
@@ -721,6 +737,7 @@ pub fn run() {
             query_history,
             history_series,
             history_stats,
+            history_trace,
             history_topics,
             set_history_retention,
             clear_history,

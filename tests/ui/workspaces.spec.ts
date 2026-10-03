@@ -75,7 +75,7 @@ test('history prevents partial replay and preserves empty and MQTT5 messages', a
 
 test('history uses identical filters for the list and chart and exports the selection', async ({ page }) => {
   const results = page.getByTestId('history-results');
-  await page.getByRole('textbox').fill('rpc');
+  await page.getByTestId('history-search').fill('rpc');
   await page.getByRole('button', { name: '5m', exact: true }).click();
   await expect(results.getByRole('button', { name: /sensor\/partial/ })).toHaveCount(0);
   await expect(results.getByRole('button', { name: /rpc\/request/ })).toBeVisible();

@@ -2,9 +2,9 @@
 //!
 //! The console feed already batches inbound/outbound publishes on a 100 ms
 //! cadence; each drained batch is mirrored here so history survives restarts
-//! and can be searched / charted long after the live feed scrolled away.
-//! Writes happen inside a single transaction per batch to stay cheap even at
-//! thousands of messages per second. A row-count cap keeps the DB bounded.
+//! and can be searched / charted / traced long after the live feed scrolled
+//! away. Writes happen inside a single transaction per batch to stay cheap even
+//! at thousands of messages per second. A row-count cap keeps the DB bounded.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -49,6 +49,73 @@ pub struct HistorySeriesPoint {
     /// Bucket start (epoch ms, aligned to the requested interval)
     pub bucket: i64,
     pub count: i64,
+}
+
+/// A row that joined a trace, and *why* it joined. The reason is part of the
+/// evidence: matching a correlation key says "this is the same request", while
+/// matching a substring of a payload only says "these look related".
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceHit {
+    #[serde(flatten)]
+    pub row: HistoryRow,
+    /// `correlation` | `topic` | `payload`
+    pub matched_by: String,
+}
+
+/// What one token's life looks like across everything this store recorded.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceResult {
+    /// Oldest first: a story is read forward, unlike the history list.
+    pub hits: Vec<TraceHit>,
+    pub summary: TraceSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceSummary {
+    pub count: usize,
+    /// Distinct topics touched, in first-seen order.
+    pub topics: Vec<String>,
+    pub first_ms: Option<i64>,
+    pub last_ms: Option<i64>,
+    pub inbound: usize,
+    pub outbound: usize,
+    /// Distinct correlation keys in the result. More than one means the token
+    /// covered several requests, and blending them into one timeline would be a
+    /// lie worth showing.
+    pub correlations: Vec<String>,
+    pub truncated: bool,
+}
+
+/// The correlation of a message as lowercase hex of **its bytes**.
+///
+/// `correlation_hex` is only filled in when the wire bytes were not valid UTF-8,
+/// so the text form has to be folded back to bytes — otherwise a request whose
+/// correlation was typed as text and an answer that arrived as those same bytes
+/// would look like two unrelated messages.
+pub fn correlation_key(hex_form: Option<&str>, text_form: Option<&str>) -> Option<String> {
+    if let Some(hex) = hex_form.map(str::trim).filter(|h| !h.is_empty()) {
+        return Some(hex.to_ascii_lowercase());
+    }
+    let text = text_form.map(str::trim).filter(|t| !t.is_empty())?;
+    Some(hex::encode(text.as_bytes()))
+}
+
+/// What to compare a typed token against. A person may paste the hex from the
+/// RPC panel or type the correlation they set in a form, so both spellings of
+/// the same bytes resolve to one key.
+pub fn token_to_key(token: &str) -> String {
+    let trimmed = token.trim();
+    let looks_hex = !trimmed.is_empty()
+        && trimmed.len().is_multiple_of(2)
+        && trimmed.bytes().all(|b| b.is_ascii_hexdigit());
+    if looks_hex {
+        trimmed.to_ascii_lowercase()
+    } else {
+        hex::encode(trimmed.as_bytes())
+    }
 }
 
 /// One topic's share of a time window.
@@ -143,6 +210,24 @@ impl HistoryStore {
             conn.execute("ALTER TABLE messages ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0", [])
                 .map_err(|e| format!("history migration: {e}"))?;
         }
+        if !columns.iter().any(|c| c == "correlation") {
+            conn.execute("ALTER TABLE messages ADD COLUMN correlation TEXT", [])
+                .map_err(|e| format!("history migration: {e}"))?;
+            // Rows written before the column existed still carry their correlation
+            // inside the `properties` JSON, so the key is recovered rather than left
+            // null. A trace that only works for traffic captured after an upgrade is
+            // a trap: the gap looks like "this device never spoke".
+            conn.execute(
+                "UPDATE messages SET correlation = COALESCE( \
+                    nullif(lower(json_extract(properties, '$.correlationHex')), ''), \
+                    nullif(lower(hex(json_extract(properties, '$.correlationData'))), '') \
+                 ) WHERE correlation IS NULL AND properties IS NOT NULL AND properties <> '{}'",
+                [],
+            )
+            .map_err(|e| format!("history correlation backfill: {e}"))?;
+        }
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_corr ON messages(correlation)", [])
+            .map_err(|e| format!("history index: {e}"))?;
         let retention_days = read_retention(&conn);
         Ok(Self {
             conn: Mutex::new(conn),
@@ -190,8 +275,8 @@ impl HistoryStore {
             if conn
                 .execute(
                 "INSERT OR REPLACE INTO messages \
-                 (id, topic, payload, payload_b64, payload_len, qos, retain, content_type, direction, ts, properties, truncated) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                 (id, topic, payload, payload_b64, payload_len, qos, retain, content_type, direction, ts, properties, truncated, correlation) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
                 params![
                     m.id,
                     m.topic,
@@ -204,7 +289,8 @@ impl HistoryStore {
                     m.direction,
                     ts,
                     serde_json::to_string(&properties).unwrap_or_default(),
-                    m.truncated
+                    m.truncated,
+                    correlation_key(m.correlation_hex.as_deref(), m.correlation_data.as_deref())
                 ],
             )
                 .is_ok()
@@ -303,33 +389,55 @@ impl HistoryStore {
                     since_ms,
                     until_ms
                 ],
-                |r| {
-                    let payload_base64: String = r.get(3)?;
-                    let payload_len = r.get::<_, i64>(4)? as usize;
-                    let truncated = r.get::<_, bool>(11)?
-                        || base64::engine::general_purpose::STANDARD.decode(&payload_base64)
-                            .map(|bytes| bytes.len() != payload_len).unwrap_or(true);
-                    Ok(HistoryRow {
-                        id: r.get(0)?,
-                        topic: r.get(1)?,
-                        payload: r.get(2)?,
-                        payload_base64,
-                        payload_len,
-                        qos: r.get::<_, i64>(5)? as u8,
-                        retain: r.get::<_, i64>(6)? != 0,
-                        content_type: r.get(7)?,
-                        properties: serde_json::from_str(&r.get::<_, String>(10)?).unwrap_or_default(),
-                        truncated,
-                        direction: r.get(8)?,
-                        ts: r.get(9)?,
-                    })
-                },
+                read_history_row,
             );
         let rows = rows
             .map_err(|e| format!("history query: {e}"))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("history row unreadable: {e}"))?;
         Ok(rows)
+    }
+
+    /// One token's life, oldest first: every row whose correlation matches it
+    /// exactly, plus the rows that merely mention it in their topic or payload.
+    /// The three are kept apart in `matched_by` because they are three different
+    /// claims, and a timeline that blends them reads as proof when it is only a
+    /// hint.
+    pub fn trace(&self, token: &str, limit: i64, since_ms: i64, until_ms: i64) -> Result<TraceResult, String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err("a trace needs something to follow".to_string());
+        }
+        let conn = self.conn.lock().map_err(|_| "history store is unavailable".to_string())?;
+        let limit = limit.clamp(1, 2000);
+        let like = search_pattern(token);
+        let key = token_to_key(token);
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, topic, payload, payload_b64, payload_len, qos, retain, content_type, direction, ts, properties, truncated, \
+                 CASE WHEN correlation = ?1 THEN 'correlation' \
+                      WHEN topic LIKE ?2 ESCAPE '\\' THEN 'topic' \
+                      ELSE 'payload' END \
+                 FROM messages \
+                 WHERE (correlation = ?1 OR topic LIKE ?2 ESCAPE '\\' OR payload LIKE ?2 ESCAPE '\\') \
+                   AND ts >= ?3 AND ts <= ?4 \
+                 ORDER BY ts ASC, rowid ASC LIMIT ?5",
+            )
+            .map_err(|e| format!("history trace: {e}"))?;
+        let hits = stmt
+            .query_map(params![key, like, since_ms, until_ms, limit], |r| {
+                Ok(TraceHit {
+                    row: read_history_row(r)?,
+                    matched_by: r.get(12)?,
+                })
+            })
+            .map_err(|e| format!("history trace: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("history row unreadable: {e}"))?;
+        Ok(TraceResult {
+            summary: summarize(&hits, limit as usize),
+            hits,
+        })
     }
 
     /// Uses the same text, direction and time predicates as the result list.
@@ -465,6 +573,70 @@ fn write_retention(conn: &Connection, days: i64) {
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('retention_days', ?1)",
         params![days.to_string()],
     );
+}
+
+/// Reads the twelve storage columns every list query selects. The history list
+/// and the trace need the same row, and two copies of this mapping is how one of
+/// them eventually starts lying about `truncated`.
+fn read_history_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRow> {
+    let payload_base64: String = r.get(3)?;
+    let payload_len = r.get::<_, i64>(4)? as usize;
+    let truncated = r.get::<_, bool>(11)?
+        || base64::engine::general_purpose::STANDARD
+            .decode(&payload_base64)
+            .map(|bytes| bytes.len() != payload_len)
+            .unwrap_or(true);
+    Ok(HistoryRow {
+        id: r.get(0)?,
+        topic: r.get(1)?,
+        payload: r.get(2)?,
+        payload_base64,
+        payload_len,
+        qos: r.get::<_, i64>(5)? as u8,
+        retain: r.get::<_, i64>(6)? != 0,
+        content_type: r.get(7)?,
+        properties: serde_json::from_str(&r.get::<_, String>(10)?).unwrap_or_default(),
+        truncated,
+        direction: r.get(8)?,
+        ts: r.get(9)?,
+    })
+}
+
+/// The counts the trace panel quotes, derived here so they describe what the
+/// store found rather than what the UI decided to draw.
+fn summarize(hits: &[TraceHit], limit: usize) -> TraceSummary {
+    let mut topics: Vec<String> = Vec::new();
+    let mut correlations: Vec<String> = Vec::new();
+    let mut inbound = 0;
+    let mut outbound = 0;
+    for hit in hits {
+        if !topics.contains(&hit.row.topic) {
+            topics.push(hit.row.topic.clone());
+        }
+        if let Some(key) = correlation_key(
+            hit.row.properties.correlation_hex.as_deref(),
+            hit.row.properties.correlation_data.as_deref(),
+        ) {
+            if !correlations.contains(&key) {
+                correlations.push(key);
+            }
+        }
+        match hit.row.direction.as_str() {
+            "in" => inbound += 1,
+            "out" => outbound += 1,
+            _ => {}
+        }
+    }
+    TraceSummary {
+        count: hits.len(),
+        topics,
+        first_ms: hits.first().map(|h| h.row.ts),
+        last_ms: hits.last().map(|h| h.row.ts),
+        inbound,
+        outbound,
+        correlations,
+        truncated: hits.len() >= limit,
+    }
 }
 
 fn search_pattern(search: &str) -> String {
@@ -786,5 +958,128 @@ mod tests {
         assert!(!full.truncated);
         assert!(rows.iter().find(|r| r.id == "partial").unwrap().truncated);
         assert!(!rows.iter().find(|r| r.id == "empty").unwrap().truncated);
+    }
+
+    #[test]
+    fn the_same_bytes_give_one_key_whether_text_or_hex() {
+        assert_eq!(correlation_key(None, Some("c-7")).as_deref(), Some("632d37"));
+        assert_eq!(
+            correlation_key(Some("632D37"), None).as_deref(),
+            Some("632d37"),
+            "hex is normalised so a stored value and a typed one meet"
+        );
+        // Binary correlation has no usable text form; the hex is the only truth.
+        assert_eq!(correlation_key(Some("00ff"), Some("")).as_deref(), Some("00ff"));
+        assert_eq!(correlation_key(None, None), None);
+        assert_eq!(correlation_key(Some(""), Some("   ")), None);
+        assert_eq!(token_to_key("c-7"), token_to_key("632d37"));
+        assert_eq!(token_to_key(" 632D37 "), "632d37");
+    }
+
+    #[test]
+    fn a_trace_follows_one_request_across_topics_and_directions() {
+        let (store, path) = temp_store("trace");
+        let mut request = msg_at("r1", "lab/rpc/req", "{\"cmd\":\"ping\"}", "out", 1_000);
+        request.correlation_data = Some("c-7".into());
+        request.response_topic = Some("lab/rpc/reply".into());
+        let mut reply = msg_at("r2", "lab/rpc/reply", "{\"pong\":true}", "in", 2_500);
+        reply.correlation_hex = Some("632d37".into());
+        let unrelated = msg_at("r3", "lab/other", "hello", "in", 3_000);
+        store.append(&[request, reply, unrelated]);
+
+        let trace = store.trace("c-7", 50, 0, i64::MAX).unwrap();
+        assert_eq!(trace.hits.len(), 2, "only the rows carrying the correlation");
+        assert_eq!(trace.hits[0].row.id, "r1", "a life story is read forward");
+        assert_eq!(trace.hits[1].row.id, "r2");
+        assert!(trace.hits.iter().all(|h| h.matched_by == "correlation"));
+        let summary = &trace.summary;
+        assert_eq!(summary.topics, vec!["lab/rpc/req".to_string(), "lab/rpc/reply".to_string()]);
+        assert_eq!((summary.inbound, summary.outbound), (1, 1));
+        assert_eq!((summary.first_ms, summary.last_ms), (Some(1_000), Some(2_500)));
+        assert_eq!(summary.correlations, vec!["632d37".to_string()], "one request, not two blended");
+        assert!(!summary.truncated);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_trace_says_how_each_row_joined_it() {
+        let (store, path) = temp_store("trace-why");
+        let by_topic = msg_at("t1", "devices/edge-7/state", "{}", "in", 1_000);
+        let by_payload = msg_at("t2", "archive/all", "reported by edge-7", "in", 2_000);
+        let mut by_corr = msg_at("t3", "elsewhere", "nothing", "out", 3_000);
+        by_corr.correlation_data = Some("edge-7".into());
+        store.append(&[by_topic, by_payload, by_corr]);
+
+        let trace = store.trace("edge-7", 50, 0, i64::MAX).unwrap();
+        let why: Vec<(&str, &str)> = trace
+            .hits
+            .iter()
+            .map(|h| (h.row.id.as_str(), h.matched_by.as_str()))
+            .collect();
+        assert_eq!(why, vec![("t1", "topic"), ("t2", "payload"), ("t3", "correlation")]);
+        // Only the third row is the same message; the other two merely mention it.
+        assert_eq!(trace.summary.correlations, vec!["656467652d37".to_string()]);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn rows_recorded_before_the_correlation_column_are_still_traceable() {
+        let dir = std::env::temp_dir().join(format!("dropqtt_hist_oldcorr_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("h.db");
+        {
+            let conn = Connection::open(&path).expect("create");
+            // The exact pre-correlation schema: the key exists only inside the
+            // properties JSON of these rows.
+            conn.execute_batch(
+                "CREATE TABLE messages (
+                    id TEXT PRIMARY KEY, topic TEXT NOT NULL, payload TEXT NOT NULL,
+                    payload_b64 TEXT NOT NULL, payload_len INTEGER NOT NULL, qos INTEGER NOT NULL,
+                    retain INTEGER NOT NULL, content_type TEXT, direction TEXT NOT NULL,
+                    ts INTEGER NOT NULL, properties TEXT NOT NULL DEFAULT '{}',
+                    truncated INTEGER NOT NULL DEFAULT 0
+                 );",
+            )
+            .expect("old schema");
+            for (id, topic, ts, props) in [
+                ("old", "lab/req", 5_000, r#"{"correlationData":"c-7"}"#),
+                ("oldbin", "lab/reply", 6_000, r#"{"correlationHex":"00FF"}"#),
+                ("plain", "lab/other", 7_000, "{}"),
+            ] {
+                conn.execute(
+                    "INSERT INTO messages (id, topic, payload, payload_b64, payload_len, qos, retain, content_type, direction, ts, properties, truncated)
+                     VALUES (?1, ?2, 'x', 'eA==', 1, 1, 0, NULL, 'out', ?3, ?4, 0)",
+                    params![id, topic, ts, props],
+                )
+                .expect("seed row");
+            }
+        }
+        let store = HistoryStore::open(&path).expect("opening migrates and backfills");
+        let text = store.trace("c-7", 50, 0, i64::MAX).unwrap();
+        assert_eq!(text.hits.len(), 1, "the recovered key matches the typed correlation");
+        assert_eq!(text.hits[0].matched_by, "correlation");
+        // Uppercase hex on disk is normalised, so a pasted lowercase value finds it.
+        let binary = store.trace("00ff", 50, 0, i64::MAX).unwrap();
+        assert_eq!(binary.hits.iter().map(|h| h.row.id.as_str()).collect::<Vec<_>>(), vec!["oldbin"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_trace_says_when_it_stopped_short() {
+        let (store, path) = temp_store("trace-limit");
+        let batch: Vec<MqttGenericMessage> = (0..5)
+            .map(|i| {
+                let mut m = msg_at(format!("m{i}").as_str(), "lab/req", "{}", "out", 1_000 + i);
+                m.correlation_data = Some("burst".into());
+                m
+            })
+            .collect();
+        store.append(&batch);
+        let trace = store.trace("burst", 2, 0, i64::MAX).unwrap();
+        assert_eq!(trace.summary.count, 2);
+        assert!(trace.summary.truncated, "five matched, two were returned");
+        assert_eq!(store.trace("   ", 10, 0, i64::MAX).err().unwrap(), "a trace needs something to follow");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

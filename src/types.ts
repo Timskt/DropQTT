@@ -536,6 +536,30 @@ export interface HistorySeriesPoint {
   count: number;
 }
 
+/** A history row that joined a trace, with the claim that pulled it in. */
+export interface TraceHit extends HistoryRow {
+  /** `correlation` is the same message; `topic` / `payload` merely mention it */
+  matchedBy: 'correlation' | 'topic' | 'payload' | string;
+}
+
+export interface TraceSummary {
+  count: number;
+  topics: string[];
+  firstMs: number | null;
+  lastMs: number | null;
+  inbound: number;
+  outbound: number;
+  /** Distinct correlation keys, lowercase hex. More than one is several stories. */
+  correlations: string[];
+  truncated: boolean;
+}
+
+export interface TraceResult {
+  /** Oldest first — a life story is read forward, unlike the history list. */
+  hits: TraceHit[];
+  summary: TraceSummary;
+}
+
 export interface HistoryStats {
   rows: number;
   inbound: number;
