@@ -266,6 +266,11 @@ export const ReplayPanel: React.FC<ReplayPanelProps> = ({ t, connected, isV5, on
             </span>
           </div>
 
+          {capture.header.capped && (
+            <p className="text-[10px]" style={{ color: 'var(--warning)' }} data-testid="replay-capped">
+              {t.replayCappedNote}
+            </p>
+          )}
           {!isV5 && (
             <p className="text-[10px]" style={{ color: 'var(--warning)' }} data-testid="replay-v3-note">
               {t.replayV3Note}

@@ -61,6 +61,12 @@ export interface CaptureHeader {
   inbound: number;
   outbound: number;
   topics: string[];
+  /**
+   * True when the recording is a slice of a larger window, because the source list
+   * was capped. A capture that quietly holds "the newest 200 of 5,000" would be a
+   * recording that lies about what it saw, so the file has to carry the admission.
+   */
+  capped?: boolean;
 }
 
 export interface CaptureFile {
@@ -71,6 +77,8 @@ export interface CaptureFile {
 export interface BuildCaptureOptions {
   filter?: string;
   note?: string;
+  /** Set by the caller when the rows it hands over are a capped slice. */
+  capped?: boolean;
   /** ISO timestamp; injected so the unit test can pin the whole file's bytes. */
   createdAt?: string;
 }
@@ -129,6 +137,7 @@ export function buildCapture(rows: HistoryRow[], opts: BuildCaptureOptions = {})
     inbound: events.filter((e) => e.direction === 'in').length,
     outbound: events.filter((e) => e.direction === 'out').length,
     topics: [...new Set(events.map((e) => e.topic))].sort(),
+    ...(opts.capped ? { capped: true } : {}),
   };
   return [JSON.stringify(header), ...events.map((e) => JSON.stringify(e))].join('\n') + '\n';
 }
@@ -181,7 +190,10 @@ export function parseCapture(text: string): CaptureFile {
     });
   }
   if (events.length === 0) throw new CaptureError('the header is fine but the capture holds no events');
-  return { header, events };
+  return {
+    header: { ...header, ...(header.capped ? { capped: true } : {}) },
+    events,
+  };
 }
 
 export interface CaptureSummary {

@@ -80,6 +80,15 @@ describe('buildCapture', () => {
     const { events } = parseCapture(buildCapture([row('a', 'x/y', 'hi')]));
     expect(events[0].props).toBeUndefined();
   });
+
+  it('admits in the header when the recording is a capped slice', () => {
+    const rows = [row('a', 'x', 'one'), row('b', 'x', 'two')];
+    expect(parseCapture(buildCapture(rows)).header.capped).toBeUndefined();
+    const capped = parseCapture(buildCapture(rows, { capped: true }));
+    expect(capped.header.capped).toBe(true);
+    // The admission survives the round trip, so a replay can warn about it.
+    expect(capped.header.count).toBe(2);
+  });
 });
 
 describe('parseCapture', () => {

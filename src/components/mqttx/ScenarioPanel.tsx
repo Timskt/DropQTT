@@ -297,6 +297,18 @@ export const ScenarioPanel: React.FC<ScenarioPanelProps> = (props) => {
         </p>
       )}
 
+      {/* Applying swaps whole rule sets, which is how every other rule surface in
+          this app behaves — but "Apply here" must not be the place someone loses
+          rules they did not know were being replaced. */}
+      {loaded && (loaded.responders.length > 0 || loaded.assertions.length > 0) && (
+        <p className="text-[10px]" style={{ color: 'var(--warning)' }} data-testid="scenario-replaces">
+          {fill(t.scenarioReplaces, {
+            responders: String(responders.length),
+            assertions: String(assertions.length),
+          })}
+        </p>
+      )}
+
       {notes.length > 0 && (
         <ul className="space-y-0.5" data-testid="scenario-notes">
           {notes.map((n) => (

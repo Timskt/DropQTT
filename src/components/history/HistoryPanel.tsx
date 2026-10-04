@@ -273,9 +273,16 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   const handleCapture = async () => {
     setExporting(true);
     try {
+      // `rows` is the list the user is looking at, and that list is capped; a
+      // recording that held "the newest N of M" without saying so would misreport
+      // the window it captured.
+      const capped = rows.length >= limit;
       const name = `dropqtt-capture-${new Date().toISOString().replace(/[:.]/g, '-')}.${CAPTURE_EXTENSION}`;
-      const saved = await saveTextFile(name, buildCapture(rows, { filter: debouncedSearch || undefined }));
-      if (saved) toast.success(fill(t.captureSaved, { name: saved.replace(/^.*[\\/]/, '') }));
+      const saved = await saveTextFile(name, buildCapture(rows, { filter: debouncedSearch || undefined, capped }));
+      if (saved) {
+        const file = saved.replace(/^.*[\\/]/, '');
+        toast.success(capped ? fill(t.captureSavedCapped, { name: file, count: String(rows.length) }) : fill(t.captureSaved, { name: file }));
+      }
     } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
   };
 

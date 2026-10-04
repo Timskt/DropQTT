@@ -491,6 +491,8 @@ export interface Translations {
   captureExportHint: string;
   captureSaved: string;
   captureNothing: string;
+  captureSavedCapped: string;
+  replayCappedNote: string;
   outboxHint: string;
   outboxUnavailable: string;
   outboxAttempt: string;
@@ -758,6 +760,7 @@ export interface Translations {
   scenarioReportJson: string;
   scenarioReportJunit: string;
   scenarioReportHint: string;
+  scenarioReplaces: string;
   paletteGroupView: string;
   paletteConnect: string;
   paletteDisconnect: string;
@@ -1405,6 +1408,7 @@ export const translations: Record<Language, Translations> = {
     replayFinished: '结束：{sent}/{total} 已发，{failed} 条失败',
     replayEta: '按此节奏约 {s}s',
     replayV3Note: '当前是 MQTT 3.1.1 会话：v5 属性（content-type、response topic、correlation、用户属性）不会发出，只发主题与报文。',
+    replayCappedNote: '这份录制在导出时就被列表上限截断了 —— 它是一段切片，不是完整窗口',
     replayCaveat: '回放会真的向 broker 发布，retain 与 QoS 按录制原样保留——请把目标当作生产 broker 对待。时间戳只用于计算间隔，不会改写 broker 侧的任何时间。',
     replayDisabledDisconnected: '先连接一个 broker 才能回放',
     replayDisabledEmpty: '这个方向没有可发送的报文',
@@ -1413,6 +1417,7 @@ export const translations: Record<Language, Translations> = {
     captureExportHint: '导出为可回放的 .dqrec（含 v5 属性与时序；不含 broker 地址与任何凭证）',
     captureSaved: '录制已保存：{name}',
     captureNothing: '当前列表是空的，没有可录制的报文',
+    captureSavedCapped: '录制已保存：{name} —— 注意：只录下了列表里的 {count} 条（列表上限），不是整个窗口的全部',
     outboxHint: '失败的 Webhook 会留在本机磁盘，按递增间隔重试；达到 {max} 次后转为死信，不再自动尝试。',
     outboxUnavailable: '重试已关闭：{error}',
     outboxAttempt: '第 {n}/{max} 次',
@@ -1668,7 +1673,8 @@ export const translations: Record<Language, Translations> = {
     scenarioNoBar: '未设定标准',
     scenarioReportJson: '导出结论 JSON（{overall}）',
     scenarioReportJunit: '导出结论 JUnit（{overall}）',
-    scenarioReportHint: '把这份结论写成机器可读的文件；未判定的项在 JUnit 里是 skipped，不会伪装成通过'
+    scenarioReportHint: '把这份结论写成机器可读的文件；未判定的项在 JUnit 里是 skipped，不会伪装成通过',
+    scenarioReplaces: '应用会整组替换本机现有的 {responders} 条模拟应答与 {assertions} 条断言（订阅只增不删）'
 ,    paletteConnect: '连接 broker',
     paletteDisconnect: '断开 broker',
     paletteSettings: '打开设置',
@@ -2323,6 +2329,7 @@ export const translations: Record<Language, Translations> = {
     replayFinished: 'Finished: {sent}/{total} sent, {failed} failed',
     replayEta: 'about {s}s at this pace',
     replayV3Note: 'This session is MQTT 3.1.1: v5 properties (content type, response topic, correlation, user properties) are not sent — only topic and payload.',
+    replayCappedNote: 'This capture was truncated by the list cap when it was exported — it is a slice, not the whole window',
     replayCaveat: 'A replay really publishes: QoS and retain come through as recorded, so treat the target like a production broker. Timestamps only set the intervals — nothing about the broker\'s clock is rewritten.',
     replayDisabledDisconnected: 'Connect to a broker before replaying',
     replayDisabledEmpty: 'No messages in that direction to send',
@@ -2331,6 +2338,7 @@ export const translations: Record<Language, Translations> = {
     captureExportHint: 'Export a replayable .dqrec (v5 properties and timing included; no broker address and no credentials)',
     captureSaved: 'Capture saved: {name}',
     captureNothing: 'The list is empty, so there is nothing to capture',
+    captureSavedCapped: 'Capture saved: {name} — note it holds the {count} rows of the list cap, not the whole window',
     outboxHint: 'A failed webhook stays on this disk and is retried with growing delays; after {max} attempts it becomes a dead letter and stops.',
     outboxUnavailable: 'Retries are off: {error}',
     outboxAttempt: 'attempt {n}/{max}',
@@ -2586,7 +2594,8 @@ export const translations: Record<Language, Translations> = {
     scenarioNoBar: 'no bar set',
     scenarioReportJson: 'Export verdict JSON ({overall})',
     scenarioReportJunit: 'Export verdict JUnit ({overall})',
-    scenarioReportHint: 'Write this verdict out as a machine-readable file; unjudgeable claims become skipped in JUnit rather than a false pass'
+    scenarioReportHint: 'Write this verdict out as a machine-readable file; unjudgeable claims become skipped in JUnit rather than a false pass',
+    scenarioReplaces: 'Applying replaces the {responders} responder rule(s) and {assertions} assertion(s) currently on this machine as whole sets; subscriptions are only added'
 ,    paletteConnect: 'Connect to the broker',
     paletteDisconnect: 'Disconnect from the broker',
     paletteSettings: 'Open settings',
@@ -3241,6 +3250,7 @@ export const translations: Record<Language, Translations> = {
     replayFinished: '結束：{sent}/{total} 已傳，{failed} 則失敗',
     replayEta: '依此節奏約 {s}s',
     replayV3Note: '目前是 MQTT 3.1.1 工作階段：不會發出 v5 屬性（content-type、response topic、correlation、使用者屬性），只傳主題與報文。',
+    replayCappedNote: '這份錄製在匯出時就被列表上限截斷 —— 它是一段切片，不是完整視窗',
     replayCaveat: '回放會真的對 broker 發布，retain 與 QoS 依錄製原樣保留——請把目標當成正式環境的 broker。時間戳記只用於計算間隔，不會改寫 broker 端的任何時間。',
     replayDisabledDisconnected: '請先連線到 broker 才能回放',
     replayDisabledEmpty: '這個方向沒有可傳送的報文',
@@ -3249,6 +3259,7 @@ export const translations: Record<Language, Translations> = {
     captureExportHint: '匯出可回放的 .dqrec（含 v5 屬性與時序；不含 broker 位址與任何憑證）',
     captureSaved: '錄製已儲存：{name}',
     captureNothing: '目前清單是空的，沒有可錄製的報文',
+    captureSavedCapped: '錄製已儲存：{name} —— 注意：只錄下列表中的 {count} 條（列表上限），不是整個視窗的全部',
     outboxHint: '失敗的 Webhook 會留在本機磁碟，依遞增間隔重試；達到 {max} 次後轉為死信，不再自動嘗試。',
     outboxUnavailable: '重試已關閉：{error}',
     outboxAttempt: '第 {n}/{max} 次',
@@ -3504,7 +3515,8 @@ export const translations: Record<Language, Translations> = {
     scenarioNoBar: '未設定標準',
     scenarioReportJson: '匯出結論 JSON（{overall}）',
     scenarioReportJunit: '匯出結論 JUnit（{overall}）',
-    scenarioReportHint: '把這份結論寫成機器可讀檔案；無法判定的項目在 JUnit 中為 skipped，不會假裝通過'
+    scenarioReportHint: '把這份結論寫成機器可讀檔案；無法判定的項目在 JUnit 中為 skipped，不會假裝通過',
+    scenarioReplaces: '套用會整組替換本機現有的 {responders} 條模擬應答與 {assertions} 條斷言（訂閱只增不刪）'
 ,    paletteConnect: '連線 broker',
     paletteDisconnect: '中斷 broker',
     paletteSettings: '開啟設定',
@@ -4159,6 +4171,7 @@ export const translations: Record<Language, Translations> = {
     replayFinished: '完了：{sent}/{total} 送信、{failed} 件失敗',
     replayEta: 'このペースで約 {s} 秒',
     replayV3Note: 'このセッションは MQTT 3.1.1 です：v5 プロパティ（content type、response topic、correlation、ユーザープロパティ）は送信されず、トピックとペイロードのみ送られます。',
+    replayCappedNote: 'このキャプチャは出力時に一覧上限で切り詰められています — 全体ではなくスライスです',
     replayCaveat: '再生は実際に broker へ公開します。QoS と retain は記録どおり保持されるため、接続先は本番と同様に扱ってください。タイムスタンプは間隔の計算にだけ使い、broker 側の時刻は書き換えません。',
     replayDisabledDisconnected: '再生前に broker に接続してください',
     replayDisabledEmpty: 'その方向に送信するメッセージがありません',
@@ -4167,6 +4180,7 @@ export const translations: Record<Language, Translations> = {
     captureExportHint: '再生可能な .dqrec として出力（v5 プロパティと時間間隔を含む／broker アドレスと認証情報は含めない）',
     captureSaved: 'キャプチャを保存しました：{name}',
     captureNothing: '一覧が空のため、キャプチャできるメッセージがありません',
+    captureSavedCapped: 'キャプチャを保存しました：{name} — 一覧上限の {count} 件だけを記録しており、時間帯全体ではありません',
     outboxHint: '失敗した Webhook はこのマシンのディスクに残り、間隔を延ばしながら再送されます。{max} 回でデッドレターになり、自動では再送しません。',
     outboxUnavailable: '再送は無効です：{error}',
     outboxAttempt: '{n}/{max} 回目',
@@ -4422,7 +4436,8 @@ export const translations: Record<Language, Translations> = {
     scenarioNoBar: '基準未設定',
     scenarioReportJson: '判定を JSON で出力（{overall}）',
     scenarioReportJunit: '判定を JUnit で出力（{overall}）',
-    scenarioReportHint: 'この判定を機械可読ファイルとして出力します。判定不能の項目は JUnit では skipped になり、通過を装いません'
+    scenarioReportHint: 'この判定を機械可読ファイルとして出力します。判定不能の項目は JUnit では skipped になり、通過を装いません',
+    scenarioReplaces: '適用すると、このマシン上の応答ルール {responders} 件とアサーション {assertions} 件が一式ごと置き換わります（購読は追加のみ）'
 ,    paletteConnect: 'ブローカーへ接続',
     paletteDisconnect: 'ブローカーから切断',
     paletteSettings: '設定を開く',

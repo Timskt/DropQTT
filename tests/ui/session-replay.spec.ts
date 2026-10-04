@@ -226,6 +226,16 @@ test('a file that is not a capture is refused with the reason, not a spinner', a
   await expect(page.getByTestId('replay-summary')).toHaveCount(0);
 });
 
+test('a capture that was truncated at export says so on the replay screen', async ({ page }) => {
+  const cappedText = [
+    { ...header, capped: true },
+    ...EVENTS,
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n';
+  await boot(page, { text: cappedText });
+  await load(page);
+  await expect(page.getByTestId('replay-capped')).toContainText('truncated by the list cap');
+});
+
 test('what History exports, Replay reads back — the round trip is the feature', async ({ page }) => {
   const rows = [
     {

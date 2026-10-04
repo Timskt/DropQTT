@@ -138,6 +138,8 @@ test('a pasted scenario is read back with its own counts', async ({ page }) => {
   await pasteAndParse(page, SCENARIO);
   await expect(page.getByTestId('scenario-loaded')).toContainText('Nightly fleet gate');
   await expect(page.getByTestId('scenario-loaded')).toContainText('1 subscriptions · 1 responders · 1 assertions · 1 watchdogs');
+  // Applying swaps whole rule sets, so the panel says what is about to be replaced.
+  await expect(page.getByTestId('scenario-replaces')).toContainText('replaces the 0 responder rule(s) and 0 assertion(s)');
 });
 
 test('a file that is not a scenario is refused with the reason', async ({ page }) => {
@@ -202,6 +204,10 @@ test('the verdict leaves the window as a file a CI can read', async ({ page }) =
   // The button label carries the roll-up, so a pass is never implied by silence.
   await expect(page.getByTestId('scenario-report-junit')).toContainText('(not met)');
   await page.getByTestId('scenario-report-junit').click();
+  // The write is async through the plugin layer; under load a single read can race it.
+  await expect
+    .poll(() => page.evaluate(() => ((window as any).written?.text || '').length), { timeout: 15000 })
+    .toBeGreaterThan(0);
   const xml = await page.evaluate(() => (window as any).written.text);
   expect(xml).toContain('<?xml version="1.0" encoding="UTF-8"?>');
   expect(xml).toContain('failures="1" skipped="1"');
