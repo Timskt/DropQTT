@@ -6,8 +6,13 @@ import { usePersistentState } from '../../hooks/usePersistentState';
 import { fill, Translations } from '../../i18n';
 import {
   applyPlan,
+  buildScenarioReportJson,
+  buildScenarioReportJunit,
   collectScenario,
+  OverallVerdict,
+  overallVerdict,
   parseScenario,
+  reportFileName,
   Scenario,
   scenarioFileName,
   scenarioVerdict,
@@ -31,6 +36,11 @@ interface ScenarioPanelProps {
 
 const stateColor = (state: VerdictLine['state']): string =>
   state === 'pass' ? 'var(--success)' : state === 'fail' ? 'var(--danger)' : 'var(--text-muted)';
+
+/** The three roll-up states, in the reader's language: a bare "fail" on a button
+ *  in an otherwise localised panel is the sort of thing that reads as a bug. */
+const stateWord = (state: VerdictLine['state'] | OverallVerdict, t: Translations): string =>
+  state === 'pass' ? t.scenarioPass : state === 'fail' ? t.scenarioFail : t.scenarioUnknown;
 
 /**
  * The acceptance scenario: subscriptions + simulated devices + assertions + watchdogs
@@ -91,6 +101,27 @@ export const ScenarioPanel: React.FC<ScenarioPanelProps> = (props) => {
       ),
     [props.assertionStats, props.rejectedSubs, t],
   );
+
+  const overall = overallVerdict(verdict);
+
+  const writeReport = async (ext: 'json' | 'xml') => {
+    const input = {
+      scenarioName: snapshot.name,
+      ...(snapshot.note ? { note: snapshot.note } : {}),
+      lines: verdict,
+      generatedAt: new Date().toISOString(),
+      words: { pass: t.scenarioPass, fail: t.scenarioFail, unknown: t.scenarioUnknown },
+    };
+    const text = ext === 'json' ? buildScenarioReportJson(input) : buildScenarioReportJunit(input);
+    setBusy(true);
+    try {
+      await saveTextFile(reportFileName(snapshot.name, ext), text);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const exportScenario = async () => {
     setBusy(true);
@@ -285,13 +316,35 @@ export const ScenarioPanel: React.FC<ScenarioPanelProps> = (props) => {
             <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: stateColor(line.state) }} aria-hidden />
             <span style={{ color: 'var(--text-primary)' }}>{line.claim}</span>
             <span className="ml-auto" style={{ color: stateColor(line.state) }}>
-              {line.actual} · {line.state === 'pass' ? t.scenarioPass : line.state === 'fail' ? t.scenarioFail : t.scenarioUnknown}
+              {line.actual} · {stateWord(line.state, t)}
             </span>
           </div>
         ))}
         <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }} data-testid="scenario-caveat">
           {t.scenarioCaveat}
         </p>
+        {/* The verdict is only useful if it can leave the window. JUnit because a CI
+            reporter reads that shape; JSON because a person greps for it. */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn-ghost !px-2.5 !py-1 text-[11px]"
+            title={t.scenarioReportHint}
+            onClick={() => void writeReport('json')}
+            data-testid="scenario-report-json"
+          >
+            {fill(t.scenarioReportJson, { overall: stateWord(overall, t) })}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost !px-2.5 !py-1 text-[11px]"
+            title={t.scenarioReportHint}
+            onClick={() => void writeReport('xml')}
+            data-testid="scenario-report-junit"
+          >
+            {fill(t.scenarioReportJunit, { overall: stateWord(overall, t) })}
+          </button>
+        </div>
       </div>
     </div>
   );

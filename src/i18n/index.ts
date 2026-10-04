@@ -719,6 +719,7 @@ export interface Translations {
   paletteReplay: string;
   paletteTrace: string;
   paletteTimeline: string;
+  paletteScenario: string;
   scenarioTitle: string;
   scenarioHint: string;
   scenarioName: string;
@@ -754,6 +755,9 @@ export interface Translations {
   scenarioClaimRefused: string;
   scenarioNotRun: string;
   scenarioNoBar: string;
+  scenarioReportJson: string;
+  scenarioReportJunit: string;
+  scenarioReportHint: string;
   paletteGroupView: string;
   paletteConnect: string;
   paletteDisconnect: string;
@@ -1626,6 +1630,7 @@ export const translations: Record<Language, Translations> = {
     paletteReplay: '载入会话录制并回放',
     paletteTrace: '按 correlation 或设备号追踪',
     paletteTimeline: '构建活动时间轴',
+    paletteScenario: '打开验收场景面板',
     scenarioTitle: '验收场景',
     scenarioHint: '订阅 + 模拟设备 + 断言 + 静默看门狗 + 一份负载，存成一个文件，最后给结论',
     scenarioName: '场景名称',
@@ -1661,7 +1666,10 @@ export const translations: Record<Language, Translations> = {
     scenarioClaimRefused: '被拒订阅',
     scenarioNotRun: '尚未运行',
     scenarioNoBar: '未设定标准',
-    paletteConnect: '连接 broker',
+    scenarioReportJson: '导出结论 JSON（{overall}）',
+    scenarioReportJunit: '导出结论 JUnit（{overall}）',
+    scenarioReportHint: '把这份结论写成机器可读的文件；未判定的项在 JUnit 里是 skipped，不会伪装成通过'
+,    paletteConnect: '连接 broker',
     paletteDisconnect: '断开 broker',
     paletteSettings: '打开设置',
     palettePauseFeed: '暂停报文流',
@@ -2540,6 +2548,7 @@ export const translations: Record<Language, Translations> = {
     paletteReplay: 'Load a session capture and replay it',
     paletteTrace: 'Trace a correlation or device id',
     paletteTimeline: 'Build the activity timeline',
+    paletteScenario: 'Open the acceptance scenario panel',
     scenarioTitle: 'Acceptance scenario',
     scenarioHint: 'subscriptions + simulated devices + assertions + watchdogs + one load spec, saved as one file and judged at the end',
     scenarioName: 'Scenario name',
@@ -2575,7 +2584,10 @@ export const translations: Record<Language, Translations> = {
     scenarioClaimRefused: 'Refused subscriptions',
     scenarioNotRun: 'not run yet',
     scenarioNoBar: 'no bar set',
-    paletteConnect: 'Connect to the broker',
+    scenarioReportJson: 'Export verdict JSON ({overall})',
+    scenarioReportJunit: 'Export verdict JUnit ({overall})',
+    scenarioReportHint: 'Write this verdict out as a machine-readable file; unjudgeable claims become skipped in JUnit rather than a false pass'
+,    paletteConnect: 'Connect to the broker',
     paletteDisconnect: 'Disconnect from the broker',
     paletteSettings: 'Open settings',
     palettePauseFeed: 'Pause the message feed',
@@ -3454,6 +3466,7 @@ export const translations: Record<Language, Translations> = {
     paletteReplay: '載入會話錄製並回放',
     paletteTrace: '依 correlation 或裝置號追蹤',
     paletteTimeline: '建立活動時間軸',
+    paletteScenario: '開啟驗收場景面板',
     scenarioTitle: '驗收場景',
     scenarioHint: '訂閱 + 模擬裝置 + 斷言 + 靜默看門狗 + 一份載入，存成一個檔案，最後給出結論',
     scenarioName: '場景名稱',
@@ -3489,7 +3502,10 @@ export const translations: Record<Language, Translations> = {
     scenarioClaimRefused: '被拒訂閱',
     scenarioNotRun: '尚未執行',
     scenarioNoBar: '未設定標準',
-    paletteConnect: '連線 broker',
+    scenarioReportJson: '匯出結論 JSON（{overall}）',
+    scenarioReportJunit: '匯出結論 JUnit（{overall}）',
+    scenarioReportHint: '把這份結論寫成機器可讀檔案；無法判定的項目在 JUnit 中為 skipped，不會假裝通過'
+,    paletteConnect: '連線 broker',
     paletteDisconnect: '中斷 broker',
     paletteSettings: '開啟設定',
     palettePauseFeed: '暫停報文流',
@@ -4368,6 +4384,7 @@ export const translations: Record<Language, Translations> = {
     paletteReplay: 'セッションキャプチャを読み込んで再生',
     paletteTrace: 'correlation またはデバイス ID で追跡',
     paletteTimeline: 'アクティビティタイムラインを作成',
+    paletteScenario: '受け入れシナリオパネルを開く',
     scenarioTitle: '受け入れシナリオ',
     scenarioHint: '購読 + デバイス模擬 + アサーション + 監視 + 負荷を 1 ファイルに保存し、最後に判定を出す',
     scenarioName: 'シナリオ名',
@@ -4403,7 +4420,10 @@ export const translations: Record<Language, Translations> = {
     scenarioClaimRefused: '拒否された購読',
     scenarioNotRun: 'まだ実行されていません',
     scenarioNoBar: '基準未設定',
-    paletteConnect: 'ブローカーへ接続',
+    scenarioReportJson: '判定を JSON で出力（{overall}）',
+    scenarioReportJunit: '判定を JUnit で出力（{overall}）',
+    scenarioReportHint: 'この判定を機械可読ファイルとして出力します。判定不能の項目は JUnit では skipped になり、通過を装いません'
+,    paletteConnect: 'ブローカーへ接続',
     paletteDisconnect: 'ブローカーから切断',
     paletteSettings: '設定を開く',
     palettePauseFeed: 'メッセージ供給を一時停止',

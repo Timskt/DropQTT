@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyPlan,
+  buildScenarioReportJson,
+  buildScenarioReportJunit,
   collectScenario,
+  overallVerdict,
+  reportFileName,
   parseScenario,
   Scenario,
   ScenarioError,
@@ -174,5 +178,56 @@ describe('scenario file naming', () => {
   it('makes a shareable name out of anything the user typed', () => {
     expect(scenarioFileName('Nightly / Fleet Acceptance!')).toBe('dropqtt-scenario-nightly-fleet-acceptance.dqscn');
     expect(scenarioFileName('   ')).toBe('dropqtt-scenario-untitled.dqscn');
+  });
+});
+
+describe('verdict reports', () => {
+  const lines = [
+    { claim: 'rate', actual: '42 / 40', state: 'pass' as const },
+    { claim: 'p99', actual: '900 ms / 25 ms', state: 'fail' as const },
+    { claim: 'lost', actual: 'no bar set', state: 'unknown' as const },
+  ];
+  const input = {
+    scenarioName: 'Gate & "Retry"',
+    lines,
+    generatedAt: '2026-10-04T00:00:00.000Z',
+    words: { pass: 'met', fail: 'not met', unknown: 'unknown' },
+  };
+
+  it('rolls up honestly: one fail fails it, one unknown withholds the pass', () => {
+    expect(overallVerdict(lines)).toBe('fail');
+    expect(overallVerdict(lines.slice(0, 1))).toBe('pass');
+    expect(overallVerdict([lines[0], lines[2]])).toBe('unknown');
+    expect(overallVerdict([])).toBe('unknown');
+  });
+
+  it('writes JSON that names the overall state and every claim', () => {
+    const doc = JSON.parse(buildScenarioReportJson(input));
+    expect(doc.format).toBe('dropqtt-scenario-report/1');
+    expect(doc.overall).toBe('fail');
+    expect(doc.claims).toHaveLength(3);
+    expect(doc.scenario.name).toBe('Gate & "Retry"');
+  });
+
+  it('maps unknown to skipped, never to a passing testcase', () => {
+    const xml = buildScenarioReportJunit(input);
+    expect(xml).toContain('failures="1" skipped="1"');
+    expect(xml).toMatch(/<testcase classname="dropqtt.scenario" name="rate"\/>/);
+    expect(xml).toContain('<failure message="not met" type="verdict">p99: 900 ms / 25 ms</failure>');
+    expect(xml).toContain('<skipped message="unknown: no bar set"/>');
+  });
+
+  it('escapes what a user typed into a name or a claim', () => {
+    const xml = buildScenarioReportJunit({
+      ...input,
+      lines: [{ claim: 'a<b', actual: 'x & y', state: 'fail' }],
+    });
+    expect(xml).toContain('name="a&lt;b"');
+    expect(xml).toContain('a&lt;b: x &amp; y');
+    expect(xml).not.toContain('name="a<b"');
+  });
+
+  it('names a report file after the scenario', () => {
+    expect(reportFileName('Gate A', 'xml')).toBe('dropqtt-verdict-gate-a.xml');
   });
 });

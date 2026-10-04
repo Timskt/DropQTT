@@ -196,3 +196,16 @@ test('a refused subscription fails the verdict even when traffic looks healthy',
   await expect(page.getByTestId('scenario-verdict')).toContainText('Refused subscriptions');
   await expect(page.getByTestId('scenario-verdict')).toContainText('1 · not met');
 });
+
+test('the verdict leaves the window as a file a CI can read', async ({ page }) => {
+  await boot(page, { assertionStats: { matched: 6, passed: 4, violated: 2, unevaluable: 0 } });
+  // The button label carries the roll-up, so a pass is never implied by silence.
+  await expect(page.getByTestId('scenario-report-junit')).toContainText('(not met)');
+  await page.getByTestId('scenario-report-junit').click();
+  const xml = await page.evaluate(() => (window as any).written.text);
+  expect(xml).toContain('<?xml version="1.0" encoding="UTF-8"?>');
+  expect(xml).toContain('failures="1" skipped="1"');
+  expect(xml).toContain('2 violated, 0 unevaluable of 6 matched');
+  // The rate claim never ran, so it must be skipped rather than a green testcase.
+  expect(xml).toContain('<skipped message="unknown: not run yet"/>');
+});

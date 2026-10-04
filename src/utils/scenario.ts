@@ -221,3 +221,81 @@ export function scenarioFileName(name: string): string {
   const safe = name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
   return `dropqtt-scenario-${safe || 'untitled'}.${SCENARIO_EXTENSION}`;
 }
+
+export type OverallVerdict = 'pass' | 'fail' | 'unknown';
+
+/**
+ * Any failed claim fails the run. Any unjudgeable claim withholds the pass —
+ * "we could not check the p99" must never roll up into green.
+ */
+export function overallVerdict(lines: VerdictLine[]): OverallVerdict {
+  if (lines.length === 0) return 'unknown';
+  if (lines.some((l) => l.state === 'fail')) return 'fail';
+  if (lines.some((l) => l.state === 'unknown')) return 'unknown';
+  return 'pass';
+}
+
+const escapeXml = (text: string): string =>
+  text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+export interface ReportInput {
+  scenarioName: string;
+  note?: string;
+  lines: VerdictLine[];
+  generatedAt: string;
+  /** Labels for the three states, so the report is readable without the app. */
+  words: { pass: string; fail: string; unknown: string };
+}
+
+/** Machine-readable verdict. JSON for a human's CI log, JUnit for the reporter. */
+export function buildScenarioReportJson(input: ReportInput): string {
+  const doc = {
+    format: 'dropqtt-scenario-report/1',
+    generatedAt: input.generatedAt,
+    scenario: { name: input.scenarioName, ...(input.note ? { note: input.note } : {}) },
+    overall: overallVerdict(input.lines),
+    claims: input.lines.map((l) => ({ claim: l.claim, expected: l.actual, state: l.state })),
+  };
+  return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+/**
+ * JUnit mapping: pass → bare testcase, fail → `<failure>`, unknown → `<skipped>`.
+ * `skipped` rather than a fake pass, because a bar that was never set is exactly what
+ * the format's skipped-with-reason element is for, and a green suite would lie.
+ */
+export function buildScenarioReportJunit(input: ReportInput): string {
+  const failures = input.lines.filter((l) => l.state === 'fail').length;
+  const skipped = input.lines.filter((l) => l.state === 'unknown').length;
+  const cases = input.lines
+    .map((l) => {
+      const attrs = `classname="dropqtt.scenario" name="${escapeXml(l.claim)}"`;
+      if (l.state === 'fail') {
+        return `    <testcase ${attrs}>\n      <failure message="${escapeXml(input.words.fail)}" type="verdict">${escapeXml(`${l.claim}: ${l.actual}`)}</failure>\n    </testcase>`;
+      }
+      if (l.state === 'unknown') {
+        return `    <testcase ${attrs}>\n      <skipped message="${escapeXml(input.words.unknown)}: ${escapeXml(l.actual)}"/>\n    </testcase>`;
+      }
+      return `    <testcase ${attrs}/>`;
+    })
+    .join('\n');
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<testsuites name="${escapeXml(input.scenarioName)}" tests="${input.lines.length}" failures="${failures}" skipped="${skipped}">`,
+    `  <testsuite name="${escapeXml(input.scenarioName)}" tests="${input.lines.length}" failures="${failures}" skipped="${skipped}" timestamp="${escapeXml(input.generatedAt)}">`,
+    cases,
+    '  </testsuite>',
+    '</testsuites>',
+    '',
+  ].join('\n');
+}
+
+export function reportFileName(name: string, ext: string): string {
+  const safe = name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  return `dropqtt-verdict-${safe || 'untitled'}.${ext}`;
+}

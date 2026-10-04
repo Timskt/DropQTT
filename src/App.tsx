@@ -365,6 +365,12 @@ export function App() {
       run: () => focusInConsole('[data-testid=replay-load]'),
     },
     {
+      id: 'scenario',
+      group: t.paletteGroupFeatures,
+      label: t.paletteScenario,
+      run: () => focusInConsole('[data-testid=scenario-paste]'),
+    },
+    {
       id: 'trace',
       group: t.paletteGroupFeatures,
       label: t.paletteTrace,
