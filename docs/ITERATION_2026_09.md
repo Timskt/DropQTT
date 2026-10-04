@@ -2159,6 +2159,33 @@ Playwright 里对应三条：没设标准→unknown、有违规→fail、**有�
 apply 后三个 `*_sync_rules`/`subscribe_topic` 真的带上了场景内容、
 以及"没装的部分必须出现在提示里"）；`tsc` 干净、`eslint` 0 error / 10 warning。
 
+### 4.63 自我审计批：四处自己找出来的问题（第十六轮 2026-10-04）
+
+这一轮不是实现新条目，而是回头审自己刚写的东西。四条结论：
+
+1. **四语言键位对齐：干净。** 脚本比对四个 locale 的键集合，各 **914 个键，无缺无多**；
+   且 `Translations` 接口由 `tsc` 强制，漏一个键编不过。这条审计以后可以直接跑脚本，不必人看。
+2. **录制会静默截断 —— 已修。** `handleCapture` 用的是列表里的 `rows`，而列表受 `limit`（默认 200）限制。
+   窗口里若有 5000 条匹配，录制只拿到最新 200 条，而 header 的 `count` 读作 200，**看不出是切片**。
+   现在 `buildCapture` 接受 `capped`，写进 header；History 的 toast 换成另一句明说"只录了列表上限的 N 条"；
+   Replay 载入带 `capped` 的录制时显示一条警告行（`replay-capped`）。
+   一份自称"现场那一分钟"的录制如果其实是"最新 200 条"，就是 §4.59 要避免的那类谎。
+3. **"应用"会整组替换规则，按钮原先没说。** 场景的 apply 走的是本仓库一贯的"整集推送"模型，
+   但 `Apply here` 不该是某人丢掉自己不知道的规则的入口。现在载入后多一行明说：
+   "应用会整组替换本机现有的 N 条模拟应答与 M 条断言（订阅只增不删）"。
+4. **控制台布局：进料被埋在第 4 屏。** 顺序原是 订阅条 → $SYS → 主题流量 → **进料** → …，
+   而进料才是大家盯着看的东西。改为 订阅条 → **进料** → $SYS → 主题流量 → 其余。
+   纯 DOM 顺序调整，所有 spec 都按 testid 查询，不受影响（已跑 console 相关 11 条确认）。
+
+**过程里两次把环境问题误读成代码问题，都记下来：**
+- 一次全量 unit 报 11/16 文件"收集失败"，错误全是 `[vitest-worker]: Timeout calling "fetch"` ——
+  是 CPU 被占满（`src/i18n/index.ts` 四千多行的 transform 最先超时），同名文件小批量跑 39/39 全过。
+- 一次 `codec`/`feed-workbench` 11 条失败，错误全是 `page.goto` 等 load 超时 —— vite 在负载下 30s 没响应；
+  负载退去后同批 2 分钟 11/11 全过。**先分类错误文本，再怀疑代码**，这条已写进项目记忆。
+
+**门**：unit `capture`+`scenario` **29 passed**（新增 capped 往返 1 条）；Playwright `scenario` **11 passed**、
+`session-replay` **9 passed**、console 相关 **11 passed**；`tsc` 干净、`eslint` 0 error / 10 warning。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

@@ -545,23 +545,9 @@ export function App() {
                 t={t}
               />
 
-              <BrokerSysPanel
-                rows={brokerSys.rows}
-                connected={broker.isConnected}
-                onClear={brokerSys.clear}
-                t={t}
-              />
-
-              <TopicTrafficPanel
-                rows={topicStats.rows}
-                series={topicStats.series}
-                onReset={topicStats.resetTopicStats}
-                connected={broker.isConnected}
-                cap={topicStats.cap}
-                setCap={topicStats.setCap}
-                t={t}
-              />
-
+              {/* The live feed is the working surface; the two reference panels
+                  (broker $SYS, per-topic rates) sit under it rather than above, so
+                  the first thing on screen is the traffic itself. */}
               <MessageStream
                 messages={mqtt.messages}
                 onClearMessages={mqtt.clearMessages}
@@ -598,6 +584,23 @@ export function App() {
                 pendingCount={mqtt.pendingCount}
                 feedDropped={mqtt.feedDropped}
                 onTogglePaused={mqtt.togglePaused}
+                t={t}
+              />
+
+              <BrokerSysPanel
+                rows={brokerSys.rows}
+                connected={broker.isConnected}
+                onClear={brokerSys.clear}
+                t={t}
+              />
+
+              <TopicTrafficPanel
+                rows={topicStats.rows}
+                series={topicStats.series}
+                onReset={topicStats.resetTopicStats}
+                connected={broker.isConnected}
+                cap={topicStats.cap}
+                setCap={topicStats.setCap}
                 t={t}
               />
 
