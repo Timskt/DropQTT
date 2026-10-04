@@ -71,6 +71,26 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
     return m ? m[1] : null;
   };
 
+  /**
+   * Roll-up per share group. This is everything a client can honestly say: which
+   * groups this instance subscribes through, and how many messages it received
+   * through them. How many *other* members a group has is not observable from a
+   * subscription — the broker decides the split and tells nobody — so the panel
+   * says that instead of estimating it.
+   */
+  const groups = useMemo(() => {
+    const byName = new Map<string, { name: string; subs: number; hits: number }>();
+    for (const sub of subscriptions) {
+      const name = shareGroupOf(sub.topic);
+      if (!name) continue;
+      const entry = byName.get(name) ?? { name, subs: 0, hits: 0 };
+      entry.subs += 1;
+      entry.hits += hitStats[sub.topic] ?? 0;
+      byName.set(name, entry);
+    }
+    return [...byName.values()].sort((a, b) => b.hits - a.hits || a.name.localeCompare(b.name));
+  }, [subscriptions, hitStats]);
+
   const composedTopic = (): string => {
     const raw = topicInput.trim();
     if (isV5 && sharedOn && shareGroup.trim()) return `$share/${shareGroup.trim()}/${raw}`;
@@ -409,6 +429,31 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           })
         )}
       </div>
+
+      {groups.length > 0 && (
+        <div className="px-3 pb-2.5 pt-1 border-t" style={{ borderColor: 'var(--border-inset)' }} data-testid="share-groups">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Users className="w-3 h-3 shrink-0" style={{ color: 'var(--accent)' }} />
+            <span className="text-[10px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {t.shareGroupsTitle}
+            </span>
+            {groups.map((g) => (
+              <span
+                key={g.name}
+                data-testid={`share-group-${g.name}`}
+                className="text-[10px] font-mono px-1.5 py-0.5 rounded inset-box select-text"
+                style={{ color: 'var(--text-secondary)' }}
+                title={fill(t.shareGroupTip, { subs: String(g.subs), hits: String(g.hits) })}
+              >
+                {g.name} · {fill(t.shareGroupHits, { hits: g.hits.toLocaleString() })}
+              </span>
+            ))}
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {t.shareGroupsLimit}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -501,6 +501,10 @@ export interface Translations {
   subShareGroup: string;
   subShareHint: string;
   subShareChip: string;
+  shareGroupsTitle: string;
+  shareGroupHits: string;
+  shareGroupTip: string;
+  shareGroupsLimit: string;
   messageStream: string;
   clearMessages: string;
   filterTopic: string;
@@ -1319,6 +1323,10 @@ export const translations: Record<Language, Translations> = {
     subShareGroup: '共享组',
     subShareHint: '同一共享组内的多个实例由 broker 轮流派发，用于消费端水平扩展。组名不能含 / + #，不能与 No Local 同时使用，且只有 MQTT5 有这套机制。',
     subShareChip: '共享组 {name}',
+    shareGroupsTitle: '共享订阅组（本实例视角）',
+    shareGroupHits: '{hits} 命中',
+    shareGroupTip: '仅本实例 — 订阅 {subs} 个，收到 {hits} 条',
+    shareGroupsLimit: '组里还有多少成员，客户端问不到：分割由 broker 决定，这里不做估算',
     messageStream: '实时报文监测流',
     clearMessages: '清空报文',
     filterTopic: '按主题或报文正文筛选...',
@@ -2133,6 +2141,10 @@ export const translations: Record<Language, Translations> = {
     subShareGroup: 'Shared group',
     subShareHint: 'Members of one shared group receive messages in rotation, which is how the consumer side scales out. The group name may not contain / + #, it cannot be combined with No Local, and the mechanism only exists in MQTT5.',
     subShareChip: 'share group {name}',
+    shareGroupsTitle: 'Share groups (this instance)',
+    shareGroupHits: '{hits} hits',
+    shareGroupTip: 'this instance only — filters: {subs}, messages received: {hits}',
+    shareGroupsLimit: 'How many members a group has is not observable from a client: the broker decides the split, so nothing is estimated here',
     messageStream: 'Live Message Feed',
     clearMessages: 'Clear Messages',
     filterTopic: 'Search topic or payload content...',
@@ -2947,6 +2959,10 @@ export const translations: Record<Language, Translations> = {
     subShareGroup: '共享群組',
     subShareHint: '同一共享群組內的多個實例由 broker 輪流派發，用於消費端水平擴展。群組名不能含 / + #，不能與 No Local 同時使用，且只有 MQTT5 有此機制。',
     subShareChip: '共享群組 {name}',
+    shareGroupsTitle: '共享訂閱組（本實例視角）',
+    shareGroupHits: '{hits} 命中',
+    shareGroupTip: '僅本實例 — 訂閱 {subs} 個，收到 {hits} 則',
+    shareGroupsLimit: '組裡還有多少成員，客戶端問不到：分割由 broker 決定，這裡不做估算',
     messageStream: '即時封包監測流',
     clearMessages: '清空封包',
     filterTopic: '按主題或本文篩選...',
@@ -3761,6 +3777,10 @@ export const translations: Record<Language, Translations> = {
     subShareGroup: '共有グループ',
     subShareHint: '同一グループの複数インスタンスにはブローカーが順番に配信します（消費者側の水平スケール）。グループ名に / + # は使えず、No Local との併用は不可、この仕組みは MQTT5 のみです。',
     subShareChip: '共有グループ {name}',
+    shareGroupsTitle: '共有グループ（このインスタンス）',
+    shareGroupHits: '{hits} 件',
+    shareGroupTip: 'このインスタンスのみ — 購読 {subs} 件、受信 {hits} 件',
+    shareGroupsLimit: 'グループにメンバーが何人いるかはクライアントからは観測できません：分割を決めるのはブローカーなので、ここでは推定しません',
     messageStream: 'リアルタイム メッセージログ',
     clearMessages: 'ログクリア',
     filterTopic: 'トピックまたは内容で検索...',

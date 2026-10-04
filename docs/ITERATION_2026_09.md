@@ -1903,6 +1903,47 @@ E7 是三件事拼起来的：**按主题聚合**、**保留策略**、**全文�
 （四语齐全）。EMQX/HiveMQ/VerneMQ/NanoMQ 的表**故意没有**：没有真 broker 可读，
 凭文档猜一张表就是"同样的错误，但更有底气"。所以 E9 不需要动工。
 
+### 4.56 共享订阅组视图：把"能看见的"和"看不见的"分开写（§2 E1，第十四轮 2026-10-04）
+
+E1 的原话："看不到这个组里有几个成员、各自拿了多少。现场排障第一问就是这个。"
+建议里给了两条估算路线（按 broker `$SYS`、或各实例互相上报），并明确要求**标注是估算**。
+
+我复核之后**没有做估算**，做的是把这条问题拆成"可观测"和"不可观测"两半：
+
+- **可观测**：本实例在哪些组里、每组挂了几个过滤器、本实例经这些组收到了多少条。
+  订阅条下方新增一行组汇总（`Share groups (this instance)`），每个组一枚徽章
+  `g1 · 12 hits`，鼠标提示是复数安全的 `this instance only — filters: 1, messages received: 24`。
+- **不可观测**：这个组里**还有谁**。MQTT 客户端协议里没有"列出共享订阅成员"的报文，
+  broker 只做分发、不做广播；mosquitto 的 `$SYS` 也没有这个键（本机 2.0.15 抓到的 38 个主题里
+  没有，见 §4.9 的方言表）。所以面板上直接写：
+  "How many members a group has is not observable from a client: the broker decides the split,
+  so nothing is estimated here."
+
+**为什么不做那条估算。** 审阅稿自己给了机制"按各实例上报"——那是**要发明一个协议**
+（谁上报、发到哪个主题、多久算掉线、两个 app 版本字段不同怎么办）。一个还没定的协议，
+不该由我在一个汇总徽章里偷偷实现一半，然后给它标一句"估算"就当交付了：现场的人会拿这个数字
+做扩容决定。这条留给口径先定下来之后再做（和 §5 里断点续传的处理方式一致）。
+
+**真机取证**（两个真实实例 + 一次性 mosquitto `127.0.0.1:18831`；**用户自己的 1883 未被触碰**；
+收尾后 18831/9223/9224 无监听，历史库三件套还原并 md5 校验一致）：两个实例都订阅
+`$share/g1/lab/split/#`，第三方 mqtt.js 发 24 条 QoS1：
+
+```
+DropQTT_g1 group: g1 · 12 hits
+DropQTT_g1 tip:   this instance only — filters: 1, messages received: 12
+DropQTT_g2 group: g1 · 12 hits
+DropQTT_g2 tip:   this instance only — filters: 1, messages received: 12
+两个实例的汇总条都写着：… the broker decides the split, so nothing is estimated here
+```
+
+12/12 是 broker 的分发事实，两个实例各自只看见自己那一半——**这正是这条界面要说的那句话**：
+把两个数字加起来得到 24 是人的推理，不是 app 声称知道"组里有 2 个成员"。
+
+**门**：Playwright `shared-sub` **6 passed**（新增 2 条：多组多过滤器的汇总与提示文案、
+普通订阅列表不长出组汇总条）；`tsc` 干净；`eslint` 0 error / 10 warning（预算未涨——
+中途多了一条"未使用的 eslint-disable"，删掉了那条其实不需要的抑制，而不是把预算抬高）。
+纯前端，Rust 未动。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

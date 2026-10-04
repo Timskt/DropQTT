@@ -7,8 +7,8 @@ import { test, expect } from '@playwright/test';
  * pinned here -- composing `$share/<group>/<filter>` correctly on the way out,
  * and showing which group a live subscription belongs to on the way in.
  */
-const boot = async (page: any, protocolVersion: number, seedSubs?: unknown[]) => {
-  await page.addInitScript(([pv, subs]) => {
+const boot = async (page: any, protocolVersion: number, seedSubs?: unknown[], stats?: Record<string, number>) => {
+  await page.addInitScript(([pv, subs, hitStats]) => {
     localStorage.setItem('dropqtt_lang', 'en');
     localStorage.setItem('dropqtt_theme', 'solaris');
     localStorage.setItem('dropqtt_workspace_mode', 'mqttx');
@@ -40,7 +40,7 @@ const boot = async (page: any, protocolVersion: number, seedSubs?: unknown[]) =>
         if (cmd === 'get_connection_status') return { connected: true, brokerHost: '127.0.0.1', brokerPort: 1883, clientId: 'DropQTT_share' };
         if (cmd === 'get_default_download_dir') return 'D:/Downloads';
         if (cmd === 'get_topic_stats_cap') return 5000;
-        if (cmd === 'get_subscription_stats') return args?.topic ? 0 : {};
+        if (cmd === 'get_subscription_stats') return args?.topic ? 0 : (hitStats ?? {});
         if (cmd === 'get_subscription_ids') return w.subIds ?? {};
         if (cmd === 'assertions_sync_rules' || cmd === 'assertions_state' || cmd === 'assertions_reset')
           return w.assertions ?? { stats: { matched: 0, passed: 0, violated: 0, unevaluable: 0 }, rules: 0, recent: [] };
@@ -60,7 +60,7 @@ const boot = async (page: any, protocolVersion: number, seedSubs?: unknown[]) =>
         return null;
       },
     };
-  }, [protocolVersion, seedSubs] as const);
+  }, [protocolVersion, seedSubs, stats] as const);
   await page.goto('/');
 };
 
@@ -103,4 +103,30 @@ test('v3.1.1 does not offer a mechanism the protocol does not have', async ({ pa
   // v3 has no wire equivalent, so nothing beyond topic+qos may be sent.
   expect(call?.args?.topic).toBe('lab/plain');
   expect(call?.args?.options).toBeUndefined();
+});
+
+test('the share-group roll-up says what this instance saw, and no more', async ({ page }) => {
+  await boot(
+    page,
+    5,
+    [
+      { topic: '$share/workers/edge/+/telemetry', qos: 1, color: '#10b981', options: { qos: 1, noLocal: false, retainAsPublished: false, retainHandling: 0 } },
+      { topic: '$share/workers/edge/+/state', qos: 1, color: '#10b981', options: { qos: 1, noLocal: false, retainAsPublished: false, retainHandling: 0 } },
+      { topic: '$share/alerts/ops/#', qos: 0, color: '#f59e0b', options: { qos: 0, noLocal: false, retainAsPublished: false, retainHandling: 0 } },
+    ],
+    { '$share/workers/edge/+/telemetry': 120, '$share/workers/edge/+/state': 30, '$share/alerts/ops/#': 4 },
+  );
+  const workers = page.getByTestId('share-group-workers');
+  await expect(workers).toContainText('150 hits');
+  await expect(workers).toHaveAttribute('title', 'this instance only — filters: 2, messages received: 150');
+  await expect(page.getByTestId('share-group-alerts')).toContainText('4 hits');
+  // The honest boundary: membership is the broker's business.
+  await expect(page.getByTestId('share-groups')).toContainText('the broker decides the split, so nothing is estimated here');
+});
+
+test('a plain subscription list grows no group strip', async ({ page }) => {
+  await boot(page, 5, [
+    { topic: 'edge/+/telemetry', qos: 1, color: '#10b981', options: { qos: 1, noLocal: false, retainAsPublished: false, retainHandling: 0 } },
+  ]);
+  await expect(page.getByTestId('share-groups')).toHaveCount(0);
 });
