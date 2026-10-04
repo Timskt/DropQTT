@@ -100,6 +100,8 @@ export interface Translations {
   traceTruncated: string;
   traceExport: string;
   traceExportHint: string;
+  traceExportHtml: string;
+  traceExportHtmlHint: string;
   traceBoundary: string;
   traceFromCorrelation: string;
   traceFromTopic: string;
@@ -916,6 +918,8 @@ export const translations: Record<Language, Translations> = {
     traceTruncated: '只取最早的 {n} 跳，后面还有',
     traceExport: '导出追踪',
     traceExportHint: '把这条时间线导出为自带载荷的 JSON',
+    traceExportHtml: '导出 HTML',
+    traceExportHtmlHint: '单文件、可直接贴进工单的追踪视图；broker 地址会被抹掉',
     traceBoundary: '标为"同一报文"的靠 correlation 对上；"主题命中/内容命中"只是提到过这个标识。桥接转发与 Webhook 投递不在这条时间线里，它们看数据桥接页的日志。',
     traceFromCorrelation: '追踪 {token}：这一条请求与它的应答',
     traceFromTopic: '追踪 {topic}：这条主题上的全部往来',
@@ -1728,6 +1732,8 @@ export const translations: Record<Language, Translations> = {
     traceTruncated: 'showing the first {n} hops; more were found',
     traceExport: 'Export trace',
     traceExportHint: 'Save this timeline as a JSON file that carries its own payloads',
+    traceExportHtml: 'Export HTML',
+    traceExportHtmlHint: 'One self-contained file for a ticket, with the broker address scrubbed',
     traceBoundary: 'A "same message" hop was matched by correlation; "topic match" and "payload match" hops only mention the token. Bridge forwards and webhook deliveries are not in this timeline — they are in the Data Bridge log.',
     traceFromCorrelation: 'trace {token}: this request and its answer',
     traceFromTopic: 'trace {topic}: everything on this topic',
@@ -2540,6 +2546,8 @@ export const translations: Record<Language, Translations> = {
     traceTruncated: '只取最早的 {n} 跳，後面還有',
     traceExport: '匯出追蹤',
     traceExportHint: '把這條時間線匯出為自帶載入的 JSON',
+    traceExportHtml: '匯出 HTML',
+    traceExportHtmlHint: '單檔、可直接貼進工單的追蹤視圖；broker 地址會被抹除',
     traceBoundary: '標為「同一報文」的靠 correlation 對上；「主題命中／內容命中」只是提到過這個識別。橋接轉發與 Webhook 派送不在這條時間線裡，它們看資料橋接頁的日誌。',
     traceFromCorrelation: '追蹤 {token}：這一則請求與它的應答',
     traceFromTopic: '追蹤 {topic}：這條主題上的全部往來',
@@ -3352,6 +3360,8 @@ export const translations: Record<Language, Translations> = {
     traceTruncated: '先頭 {n} ホップのみ表示（まだあります）',
     traceExport: '追跡を書き出す',
     traceExportHint: 'ペイロードを同梱した JSON としてこのタイムラインを保存します',
+    traceExportHtml: 'HTML 書き出し',
+    traceExportHtmlHint: 'チケットにそのまま貼れる単一ファイルです。ブローカーアドレスは除去します',
     traceBoundary: '「同一メッセージ」は correlation で一致したホップです。「トピック一致 / ペイロード一致」は語が含まれているだけで、同一のメッセージではありません。ブリッジ転送と Webhook 配信はこのタイムラインに含まれません（データブリッジのログを参照）。',
     traceFromCorrelation: '{token} を追跡：この要求とその応答',
     traceFromTopic: '{topic} を追跡：このトピックの全やり取り',

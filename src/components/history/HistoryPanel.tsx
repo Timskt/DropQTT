@@ -4,13 +4,14 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   Archive, RefreshCw, Search, Trash2, ArrowUpRight, ArrowDownRight, Clock,
   Inbox, Send, Rss, Filter, Copy, Check, Zap, BarChart3, Download, ChevronRight,
-  GitCompareArrows,
+  GitCompareArrows, Globe,
 } from 'lucide-react';
 import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, HistoryTopicRow, TraceResult } from '../../types';
 import { Translations, fill } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
 import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView } from '../../utils/history';
+import { buildTraceHtml } from '../../utils/traceHtml';
 import { exportMessages, ExportFormat, saveTextFile } from '../../utils/exportMessages';
 
 interface HistoryPanelProps {
@@ -18,6 +19,8 @@ interface HistoryPanelProps {
   connected: boolean;
   /** A token handed over from a feed row: trace it as soon as this page mounts */
   requestTrace?: string | null;
+  /** `host:port` of the broker being traced — scrubbed out of any shared file */
+  brokerLabel?: string;
   onPublish: (params: ConsolePublishParams) => Promise<void>;
   onSubscribe: (topic: string) => void;
 }
@@ -146,7 +149,7 @@ const PayloadViewer: React.FC<{ row: HistoryRow; t: Translations }> = ({ row, t 
 };
 
 export const HistoryPanel: React.FC<HistoryPanelProps> = ({
-  t, connected, requestTrace, onPublish, onSubscribe,
+  t, connected, requestTrace, brokerLabel, onPublish, onSubscribe,
 }) => {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -321,12 +324,35 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
     return () => clearTimeout(id);
   }, [requestTrace, executeTrace, win.ms]);
 
+  const traceFileName = (ext: string) => {
+    const safe = traceToken.trim().replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 40) || 'trace';
+    return `dropqtt-trace-${safe}.${ext}`;
+  };
+
   const exportTrace = async () => {
     if (!trace) return;
     const token = traceToken.trim();
     const text = buildTraceExport(token, win.id || 'all', traceWindow(win.ms), trace, new Date().toISOString());
-    const safe = token.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 40) || 'trace';
-    if (await saveTextFile(`dropqtt-trace-${safe}.json`, text)) {
+    if (await saveTextFile(traceFileName('json'), text)) {
+      toast.success(fill(t.exportDone, { count: String(trace.hits.length) }));
+    }
+  };
+
+  /**
+   * The shareable form: one HTML file with the broker address scrubbed, meant to be
+   * pasted into a ticket by someone who has never opened this app.
+   */
+  const exportTraceHtml = async () => {
+    if (!trace) return;
+    const html = buildTraceHtml({
+      token: traceToken.trim(),
+      windowLabel: win.id || 'all',
+      ...traceWindow(win.ms),
+      generatedAt: new Date().toISOString(),
+      result: trace,
+      brokerLabel,
+    });
+    if (await saveTextFile(traceFileName('html'), html)) {
       toast.success(fill(t.exportDone, { count: String(trace.hits.length) }));
     }
   };
@@ -548,6 +574,18 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
               >
                 <Download className="w-3 h-3" />
                 {t.traceExport}
+              </button>
+            )}
+            {trace && trace.hits.length > 0 && (
+              <button
+                type="button"
+                className="btn-ghost !px-2 !py-1 text-[11px] flex items-center gap-1"
+                onClick={() => void exportTraceHtml()}
+                title={t.traceExportHtmlHint}
+                data-testid="trace-export-html"
+              >
+                <Globe className="w-3 h-3" />
+                {t.traceExportHtml}
               </button>
             )}
           </div>

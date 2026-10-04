@@ -409,6 +409,7 @@ export function App() {
               t={t}
               connected={broker.isConnected}
               requestTrace={traceRequest}
+              brokerLabel={`${broker.config.host}:${broker.config.port}`}
               onPublish={(params) => mqtt.publish(params)}
               onSubscribe={(topic) => {
                 mqtt.addSubscription(topic, 1).catch((e) => {

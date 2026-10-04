@@ -151,8 +151,20 @@ test('a hop opens its payload, and the export is offered only over real hops', a
   await boot(page, story);
   await runTrace(page, 'c-7');
   await expect(page.getByTestId('trace-export')).toBeVisible();
+  // The shareable form says what it removes, because that is the whole reason to
+  // hand a trace to somebody else.
+  await expect(page.getByTestId('trace-export-html')).toHaveAttribute(
+    'title',
+    /broker address scrubbed/,
+  );
   // The viewer's format switch only exists once the hop is opened.
   await expect(page.getByRole('button', { name: 'BASE64', exact: true })).toHaveCount(0);
   await page.getByTestId('trace-hop-h3').getByRole('button').click();
   await expect(page.getByRole('button', { name: 'BASE64', exact: true })).toBeVisible();
+});
+
+test('an empty trace offers nothing to share', async ({ page }) => {
+  await boot(page, emptyResult);
+  await runTrace(page, 'ghost-device');
+  await expect(page.getByTestId('trace-export-html')).toHaveCount(0);
 });
