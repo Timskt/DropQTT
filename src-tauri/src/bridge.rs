@@ -855,6 +855,12 @@ impl BridgeManager {
         for id in rules {
             stats.insert(id, BridgeRuleStats::default());
         }
+        // The outbox counters are shown in the same row as these, so a reset that
+        // left them running would make "Reset Stats" half a lie. Work still queued
+        // is not touched — only the lifetime tallies.
+        if let Some(outbox) = self.outbox() {
+            let _ = outbox.reset_counters();
+        }
     }
 
     async fn bump(&self, rule_id: &str, ok: bool, topic: &str) {

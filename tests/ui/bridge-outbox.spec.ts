@@ -114,6 +114,9 @@ test('queued work names the counts it is holding and retries on demand', async (
   const panel = page.getByTestId('outbox-panel');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('queued 2');
+  // "retried", not "retries": the number is a lifetime tally, so it cannot fall
+  // when the queue drains.
+  await expect(panel).toContainText('retried 4');
   await expect(panel).toContainText('recovered 5');
   await expect(panel).toContainText('Telemetry to API · sensors/temp · attempt 1/8 · 502 bad gateway');
   // The preview is evidence, not a payload dump.

@@ -30,6 +30,27 @@ pub fn backoff_ms(attempts: u32) -> u64 {
     (1_000u64 << shift).min(300_000)
 }
 
+/// Lifetime counters live in their own row because the entries they describe are
+/// deleted the moment they succeed. The first hit has to seed the row at 1: with
+/// '0' as the inserted value the upsert only ever counts from the second one.
+fn bump_meta(conn: &mut Connection, key: &str) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO outbox_meta (key, value) VALUES (?1, '1')
+         ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
+        params![key],
+    )?;
+    Ok(())
+}
+
+fn meta(conn: &Connection, key: &str) -> u64 {
+    conn.query_row("SELECT value FROM outbox_meta WHERE key = ?1", params![key], |r| {
+        r.get::<_, String>(0)
+    })
+    .ok()
+    .and_then(|v| v.parse::<u64>().ok())
+    .unwrap_or(0)
+}
+
 #[derive(Debug, Clone)]
 pub struct OutboxEntry {
     pub id: i64,
@@ -203,13 +224,7 @@ impl Outbox {
     /// the queue itself is empty.
     pub fn record_success(&self, id: i64) -> Result<(), String> {
         self.with_conn(|conn| {
-            conn.execute(
-                // The first success has to seed the counter at 1: with '0' as the
-                // inserted value the upsert only ever counts from the second one.
-                "INSERT INTO outbox_meta (key, value) VALUES ('delivered', '1')
-                 ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
-                [],
-            )?;
+            bump_meta(conn, "delivered")?;
             conn.execute("DELETE FROM outbox WHERE id = ?1", params![id])?;
             Ok(())
         })
@@ -225,6 +240,10 @@ impl Outbox {
                 "UPDATE outbox SET attempts = ?2, last_error = ?3, next_try_ms = ?4, state = ?5 WHERE id = ?1",
                 params![id, next_attempts as i64, error, now_ms + backoff_ms(next_attempts) as i64, if dead { "dead" } else { "pending" }],
             )?;
+            // Counted here rather than read back off the rows: an entry that finally
+            // lands is deleted, and a number labelled "retried" that falls when work
+            // succeeds is worse than no number.
+            bump_meta(conn, "retries")?;
             Ok(())
         })?;
         Ok(dead)
@@ -240,21 +259,16 @@ impl Outbox {
                 .unwrap_or(0)
                 .max(0) as u64
         };
-        let delivered = conn
-            .query_row("SELECT value FROM outbox_meta WHERE key = 'delivered'", [], |r| {
-                r.get::<_, String>(0)
-            })
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
         OutboxCounts {
             pending: scalar("SELECT COUNT(*) FROM outbox WHERE state = 'pending'"),
             dead: scalar("SELECT COUNT(*) FROM outbox WHERE state = 'dead'"),
-            delivered,
-            retries: scalar("SELECT COALESCE(SUM(attempts), 0) FROM outbox"),
+            delivered: meta(&conn, "delivered"),
+            retries: meta(&conn, "retries"),
         }
     }
 
+    /// Per-rule debt only. The lifetime counters are queue-wide: splitting them by
+    /// rule would need a meta key per rule, and nothing shows them per rule.
     pub fn counts_for(&self, rule_id: &str) -> OutboxCounts {
         let conn = match self.conn.lock() {
             Ok(c) => c,
@@ -269,8 +283,17 @@ impl Outbox {
             pending: one("SELECT COUNT(*) FROM outbox WHERE rule_id = ?1 AND state = 'pending'"),
             dead: one("SELECT COUNT(*) FROM outbox WHERE rule_id = ?1 AND state = 'dead'"),
             delivered: 0,
-            retries: one("SELECT COALESCE(SUM(attempts),0) FROM outbox WHERE rule_id = ?1"),
+            retries: 0,
         }
+    }
+
+    /// Zero the lifetime counters. The queued rows themselves are left alone —
+    /// this is the "start counting over" half of a stats reset, not a discard.
+    pub fn reset_counters(&self) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM outbox_meta WHERE key IN ('delivered', 'retries')", [])?;
+            Ok(())
+        })
     }
 
     /// Drop dead letters, optionally only one rule's. Returns how many went away.
@@ -387,6 +410,29 @@ mod tests {
         let counts = box_.counts();
         assert_eq!((counts.dead, counts.pending), (1, 0));
         assert!(box_.due(i64::MAX).expect("due").is_empty(), "dead letters are not due");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn retried_and_recovered_are_lifetime_counts_that_never_walk_backwards() {
+        let (box_, path) = temp_outbox("lifetime");
+        let a = box_.enqueue(&entry("r1"), 1_000).expect("enqueue");
+        let b = box_.enqueue(&entry("r1"), 1_000).expect("enqueue");
+        box_.record_failure(a, 0, "502 bad gateway", 1_500).expect("fail");
+        box_.record_failure(b, 0, "502 bad gateway", 1_500).expect("fail");
+        assert_eq!(box_.counts().retries, 2);
+        // Both finally land, so both rows leave the table. The tally has to stay.
+        box_.record_success(a).expect("deliver");
+        box_.record_success(b).expect("deliver");
+        let counts = box_.counts();
+        assert_eq!(
+            (counts.pending, counts.dead, counts.retries, counts.delivered),
+            (0, 0, 2, 2),
+            "an empty queue still reports the work it took"
+        );
+        box_.reset_counters().expect("reset");
+        let after = box_.counts();
+        assert_eq!((after.retries, after.delivered), (0, 0));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
