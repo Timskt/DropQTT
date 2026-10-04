@@ -630,6 +630,9 @@ export interface Translations {
   whyNoRows: string;
   feedCapNote: string;
   noMessagesHint: string;
+  emptyActionSubscribe: string;
+  emptyActionBench: string;
+  emptyActionClearFilter: string;
   assertionsTitle: string;
   assertionsHint: string;
   assertionsFilter: string;
@@ -709,6 +712,13 @@ export interface Translations {
   paletteGroupWorkspace: string;
   paletteGroupConnection: string;
   paletteGroupConsole: string;
+  paletteGroupFeatures: string;
+  paletteGroupProfiles: string;
+  paletteSubscribe: string;
+  paletteResponder: string;
+  paletteReplay: string;
+  paletteTrace: string;
+  paletteTimeline: string;
   paletteGroupView: string;
   paletteConnect: string;
   paletteDisconnect: string;
@@ -1491,6 +1501,9 @@ export const translations: Record<Language, Translations> = {
     whyNoRows: '这个窗口里没有结果',
     feedCapNote: '只显示最近 {n} 条，更早的在 History 里',
     noMessagesHint: '订阅一个主题，或让设备发一条 —— $SYS 与桥接流量也会出现在这里',
+    emptyActionSubscribe: '订阅一个主题',
+    emptyActionBench: '跑一个压测场景',
+    emptyActionClearFilter: '清除筛选条件',
     assertionsTitle: '报文断言',
     assertionsHint: '每条规则一个断言式，在 Rust 里对每条入站报文判定：$.tempC < 80、payload contains panic、qos >= 1。解析不了的规则当场被拒绝，而不是存下来永远不触发。',
     assertionsFilter: '主题过滤器',
@@ -1571,6 +1584,13 @@ export const translations: Record<Language, Translations> = {
     paletteGroupConnection: '连接',
     paletteGroupConsole: '控制台',
     paletteGroupView: '视图',
+    paletteGroupFeatures: '能力',
+    paletteGroupProfiles: '连接配置',
+    paletteSubscribe: '订阅一个主题',
+    paletteResponder: '模拟应答规则',
+    paletteReplay: '载入会话录制并回放',
+    paletteTrace: '按 correlation 或设备号追踪',
+    paletteTimeline: '构建活动时间轴',
     paletteConnect: '连接 broker',
     paletteDisconnect: '断开 broker',
     paletteSettings: '打开设置',
@@ -2360,6 +2380,9 @@ export const translations: Record<Language, Translations> = {
     whyNoRows: 'Nothing in this window',
     feedCapNote: 'Showing the newest {n}; older rows are in History',
     noMessagesHint: 'Subscribe to a topic, or let a device publish - $SYS and bridge traffic land here too',
+    emptyActionSubscribe: 'Subscribe to a topic',
+    emptyActionBench: 'Run a load scenario',
+    emptyActionClearFilter: 'Clear the filters',
     assertionsTitle: 'Assertions',
     assertionsHint: 'One predicate per rule, judged in Rust against every inbound message: $.tempC < 80, payload contains panic, qos >= 1. A line that cannot be parsed is refused here instead of being saved and silently never firing.',
     assertionsFilter: 'Topic filter',
@@ -2440,6 +2463,13 @@ export const translations: Record<Language, Translations> = {
     paletteGroupConnection: 'Connection',
     paletteGroupConsole: 'Console',
     paletteGroupView: 'View',
+    paletteGroupFeatures: 'Capabilities',
+    paletteGroupProfiles: 'Connection profiles',
+    paletteSubscribe: 'Subscribe to a topic',
+    paletteResponder: 'Simulated responder rules',
+    paletteReplay: 'Load a session capture and replay it',
+    paletteTrace: 'Trace a correlation or device id',
+    paletteTimeline: 'Build the activity timeline',
     paletteConnect: 'Connect to the broker',
     paletteDisconnect: 'Disconnect from the broker',
     paletteSettings: 'Open settings',
@@ -3229,6 +3259,9 @@ export const translations: Record<Language, Translations> = {
     whyNoRows: '這個視窗裡沒有結果',
     feedCapNote: '只顯示最近 {n} 條，更早的在 History 裡',
     noMessagesHint: '訂閱一個主題，或讓裝置發一條 —— $SYS 與橋接流量也會出現在這裡',
+    emptyActionSubscribe: '訂閱一個主題',
+    emptyActionBench: '跑一個壓測場景',
+    emptyActionClearFilter: '清除篩選條件',
     assertionsTitle: '報文斷言',
     assertionsHint: '每條規則一個斷言式，在 Rust 裡對每條入站報文判定：$.tempC < 80、payload contains panic、qos >= 1。解析不了的規則當場被拒絕，而不是存下來永遠不觸發。',
     assertionsFilter: '主題過濾器',
@@ -3309,6 +3342,13 @@ export const translations: Record<Language, Translations> = {
     paletteGroupConnection: '連線',
     paletteGroupConsole: '控制台',
     paletteGroupView: '檢視',
+    paletteGroupFeatures: '能力',
+    paletteGroupProfiles: '連線設定檔',
+    paletteSubscribe: '訂閱一個主題',
+    paletteResponder: '模擬應答規則',
+    paletteReplay: '載入會話錄製並回放',
+    paletteTrace: '依 correlation 或裝置號追蹤',
+    paletteTimeline: '建立活動時間軸',
     paletteConnect: '連線 broker',
     paletteDisconnect: '中斷 broker',
     paletteSettings: '開啟設定',
@@ -4098,6 +4138,9 @@ export const translations: Record<Language, Translations> = {
     whyNoRows: 'この窓には結果がありません',
     feedCapNote: '直近 {n} 件だけ表示、古い行は履歴にあります',
     noMessagesHint: 'トピックを購読するかデバイスに publish させると、$SYS やブリッジ通信もここに出ます',
+    emptyActionSubscribe: 'トピックを購読',
+    emptyActionBench: '負荷シナリオを実行',
+    emptyActionClearFilter: '絞り込みを解除',
     assertionsTitle: 'アサーション',
     assertionsHint: '1 つの規則に 1 つの述語。着信メッセージごとに Rust で判定します: $.tempC < 80、payload contains panic、qos >= 1。解析できない行は保存時に拒否され、黙って発火しない規則が残ることを防ぎます。',
     assertionsFilter: 'トピックフィルター',
@@ -4178,6 +4221,13 @@ export const translations: Record<Language, Translations> = {
     paletteGroupConnection: '接続',
     paletteGroupConsole: 'コンソール',
     paletteGroupView: '表示',
+    paletteGroupFeatures: '機能',
+    paletteGroupProfiles: '接続プロファイル',
+    paletteSubscribe: 'トピックを購読',
+    paletteResponder: '応答シミュレールのルール',
+    paletteReplay: 'セッションキャプチャを読み込んで再生',
+    paletteTrace: 'correlation またはデバイス ID で追跡',
+    paletteTimeline: 'アクティビティタイムラインを作成',
     paletteConnect: 'ブローカーへ接続',
     paletteDisconnect: 'ブローカーから切断',
     paletteSettings: '設定を開く',

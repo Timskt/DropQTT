@@ -62,7 +62,12 @@ const boot = async (page: any, opts: { messages?: any[]; density?: string } = {}
         if (cmd === 'bridge_status' || cmd === 'list_transfers') return [];
         if (cmd === 'bridge_outbox_state') return w.outbox ?? { counts: { pending: 0, dead: 0, delivered: 0, retries: 0 }, error: null, preview: [], maxAttempts: 8 };
         if (cmd === 'bridge_outbox_flush' || cmd === 'bridge_outbox_drop') return 0;
-        if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
+        if (cmd === 'history_stats') return { rows: 3, inbound: 3, outbound: 0, oldestTs: 1_000, newestTs: 2_000 };
+        if (cmd === 'query_history' || cmd === 'history_series' || cmd === 'history_topics') return [];
+        if (cmd === 'history_trace')
+          return { hits: [], summary: { count: 0, topics: [], firstMs: null, lastMs: null, inbound: 0, outbound: 0, correlations: [], truncated: false } };
+        if (cmd === 'history_timeline')
+          return { entities: [], windowStartMs: 0, windowEndMs: 0, gapMs: 30_000, depth: 2, entitiesDropped: 0, rowsScanned: 0, truncated: false };
         if (cmd === 'schedule_list' || cmd === 'bench_progress' || cmd === 'rpc_list') return [];
         return null;
       },
@@ -114,7 +119,9 @@ test.describe('command palette', () => {
       const el = document.querySelector('[role="option"][aria-selected="true"] button');
       return el ? el.getAttribute('data-testid') : null;
     });
-    expect(last).toBe('palette-item-density');
+    // The list ends with one command per saved profile, so the tail is named by kind
+    // rather than by a profile id the fixture could change.
+    expect(last).toMatch(/^palette-item-profile-/);
     await page.getByTestId('palette-input').press('ArrowDown');
     // Wrapping back to the top must land on the first command, not on nothing.
     expect(await selected(page)).toBe('palette-item-go-transfer');
@@ -156,6 +163,43 @@ test.describe('command palette', () => {
     await page.keyboard.type('clear');
     await expect(page.getByTestId('palette-empty')).toBeVisible();
     await expect(page.locator('[data-testid^="palette-item-"]')).toHaveCount(0);
+  });
+
+  test('a capability hidden inside a collapsed panel is reachable by name', async ({ page }) => {
+    await boot(page);
+    await openPalette(page);
+    await page.keyboard.type('timeline');
+    await page.getByTestId('palette-item-timeline').click();
+    // It moved to History and pressed Build for us; an empty window says so plainly.
+    await expect.poll(() => activeMode(page)).toBe('history');
+    await expect(page.getByTestId('timeline-empty')).toBeVisible();
+  });
+
+  test('the subscribe box is focusable from anywhere', async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => localStorage.setItem('dropqtt_workspace_mode', 'ops'));
+    await page.reload();
+    await openPalette(page);
+    await page.keyboard.type('subscribe');
+    await page.getByTestId('palette-item-subscribe').click();
+    await expect.poll(() => activeMode(page)).toBe('mqttx');
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-testid')))
+      .toBe('sub-topic-input');
+  });
+
+  test('a saved profile is a command, and running it selects that broker', async ({ page }) => {
+    await boot(page);
+    await openPalette(page);
+    await page.keyboard.type('Localhost');
+    const item = page.getByTestId(/^palette-item-profile-/);
+    await expect(item.first()).toBeVisible();
+    await item.first().click();
+    // Choosing a profile connects, exactly as the dropdown does — so the command
+    // shows host:port as its hint rather than looking like a bookmark.
+    await expect
+      .poll(() => page.evaluate(() => ((window as any).calls || []).filter((c: any) => c.cmd === 'connect_broker').length))
+      .toBeGreaterThan(0);
   });
 });
 

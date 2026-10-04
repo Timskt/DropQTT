@@ -275,6 +275,20 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  /** Switch workspace, then land on the control a person would press next. The
+   *  delay is one paint: the target panel does not exist until the mode renders. */
+  const focusInMode = (mode: WorkspaceMode, selector: string, activate = false) => {
+    setModeStr(mode);
+    window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (!el) return;
+      el.scrollIntoView({ block: 'center' });
+      if (activate) el.click();
+      else (el as HTMLInputElement).focus?.();
+    }, 80);
+  };
+  const focusInConsole = (selector: string) => focusInMode('mqttx', selector);
+
   const paletteCommands: PaletteCommand[] = [
     { id: 'go-transfer', group: t.paletteGroupWorkspace, label: t.modeFileTransfer, run: () => setModeStr('transfer') },
     { id: 'go-mqttx', group: t.paletteGroupWorkspace, label: t.modeMqttClient, run: () => setModeStr('mqttx') },
@@ -327,6 +341,47 @@ export function App() {
       label: density === 'compact' ? t.paletteDensityCozy : t.paletteDensityCompact,
       run: () => setDensity(density === 'compact' ? 'cozy' : 'compact'),
     },
+    // The capabilities the review called undiscoverable — shared subscriptions, RPC,
+    // tracing, replay — are real and complete, and hidden inside collapsed panels.
+    // Each of these is the two keystrokes a person would make by hand.
+    {
+      id: 'subscribe',
+      group: t.paletteGroupFeatures,
+      label: t.paletteSubscribe,
+      hint: String(mqtt.subscriptions.length),
+      run: () => focusInConsole('[data-testid=sub-topic-input]'),
+    },
+    {
+      id: 'responder',
+      group: t.paletteGroupFeatures,
+      label: t.paletteResponder,
+      run: () => focusInConsole('[data-testid=responder-add]'),
+    },
+    {
+      id: 'replay',
+      group: t.paletteGroupFeatures,
+      label: t.paletteReplay,
+      run: () => focusInConsole('[data-testid=replay-load]'),
+    },
+    {
+      id: 'trace',
+      group: t.paletteGroupFeatures,
+      label: t.paletteTrace,
+      run: () => focusInMode('history', '[data-testid=trace-token]'),
+    },
+    {
+      id: 'timeline',
+      group: t.paletteGroupFeatures,
+      label: t.paletteTimeline,
+      run: () => focusInMode('history', '[data-testid=timeline-build]', true),
+    },
+    ...broker.profiles.map((p) => ({
+      id: `profile-${p.id}`,
+      group: t.paletteGroupProfiles,
+      label: p.name,
+      hint: `${p.config.host}:${p.config.port}`,
+      run: () => broker.selectProfile(p),
+    })),
   ];
 
   return (

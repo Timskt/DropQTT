@@ -930,6 +930,52 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
                 {t.noMessagesHint}
               </span>
             )}
+            {/* Words are not a way forward. Each of these lands on a control that
+                already exists, rather than opening a second copy of it. */}
+            <div className="flex items-center gap-2 mt-1">
+              {messages.length === 0 ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn-ghost !px-2.5 !py-1 text-[11px]"
+                    data-testid="empty-subscribe"
+                    onClick={() => {
+                      const el = document.querySelector<HTMLInputElement>('[data-testid=sub-topic-input]');
+                      el?.scrollIntoView({ block: 'center' });
+                      el?.focus();
+                    }}
+                  >
+                    {t.emptyActionSubscribe}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost !px-2.5 !py-1 text-[11px]"
+                    data-testid="empty-bench"
+                    title={connected ? undefined : t.replayDisabledDisconnected}
+                    disabled={!connected}
+                    onClick={() => {
+                      document
+                        .querySelector<HTMLButtonElement>('[data-testid=bench-toggle]')
+                        ?.click();
+                    }}
+                  >
+                    {t.emptyActionBench}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-ghost !px-2.5 !py-1 text-[11px]"
+                  data-testid="empty-clear-filter"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setDirectionFilter('all');
+                  }}
+                >
+                  {t.emptyActionClearFilter}
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <>

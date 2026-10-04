@@ -174,6 +174,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
             list="dropqtt-observed-topics"
             className="field-input w-full"
             style={{ color: 'var(--success)' }}
+            data-testid="sub-topic-input"
           />
           <datalist id="dropqtt-observed-topics">
             {topicSuggestions.map((tp) => (
