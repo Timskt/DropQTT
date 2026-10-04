@@ -42,6 +42,7 @@ import { useAssertions } from './hooks/useAssertions';
 import { useFaults } from './hooks/useFaults';
 import { useResponder } from './hooks/useResponder';
 import { RpcPanel } from './components/mqttx/RpcPanel';
+import { ReplayPanel } from './components/mqttx/ReplayPanel';
 import { AssertionPanel } from './components/mqttx/AssertionPanel';
 import { FaultPanel } from './components/mqttx/FaultPanel';
 import { ResponderPanel } from './components/mqttx/ResponderPanel';
@@ -586,6 +587,10 @@ export function App() {
               />
 
               {isV5 && <RpcPanel calls={rpc.calls} onClearFinished={rpc.clearFinished} t={t} />}
+
+              {/* Replay is offered in both protocol versions; the panel itself says
+                  which fields a 3.1.1 session cannot carry. */}
+              <ReplayPanel t={t} connected={broker.isConnected} isV5={isV5} onPublish={mqtt.publish} />
 
               {/* Console-side error surface for failed publishes */}
               {broker.connectionError && (

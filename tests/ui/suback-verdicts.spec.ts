@@ -37,6 +37,12 @@ const boot = async (page: any, ackState?: unknown) => {
         if (h.event === event) h.cb({ event, payload, id: 0 });
       });
     };
+    /**
+     * Whether the app has subscribed to an event yet. Firing before that is the race
+     * this spec used to lose under load: the payload went nowhere and the chip never
+     * appeared, which reads like a product bug but is a test that spoke too early.
+     */
+    w.__listening = (event: string) => [...handlers.values()].some((h) => h.event === event);
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     w.__TAURI_INTERNALS__ = {
       metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
@@ -131,6 +137,9 @@ test('an unrelated subscription is not punished for somebody else refusal', asyn
 test('the rejection event paints the chip before the next poll', async ({ page }) => {
   await boot(page);
   await expect(page.getByTestId(/^sub-refused/)).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__listening('subscription-rejected')))
+    .toBe(true);
   await page.evaluate(() => {
     (window as any).__fire(
       'subscription-rejected',

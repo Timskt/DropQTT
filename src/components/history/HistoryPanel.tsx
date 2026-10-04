@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   Archive, RefreshCw, Search, Trash2, ArrowUpRight, ArrowDownRight, Clock,
   Inbox, Send, Rss, Filter, Copy, Check, Zap, BarChart3, Download, ChevronRight,
-  GitCompareArrows, Globe,
+  GitCompareArrows, Globe, Film,
 } from 'lucide-react';
 import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, HistoryTopicRow, TraceResult } from '../../types';
 import { Translations, fill } from '../../i18n';
@@ -12,6 +12,7 @@ import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
 import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView } from '../../utils/history';
 import { buildTraceHtml } from '../../utils/traceHtml';
+import { buildCapture, CAPTURE_EXTENSION } from '../../utils/capture';
 import { TimelineCard } from './TimelineCard';
 import { exportMessages, ExportFormat, saveTextFile } from '../../utils/exportMessages';
 
@@ -269,6 +270,15 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
     } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
   };
 
+  const handleCapture = async () => {
+    setExporting(true);
+    try {
+      const name = `dropqtt-capture-${new Date().toISOString().replace(/[:.]/g, '-')}.${CAPTURE_EXTENSION}`;
+      const saved = await saveTextFile(name, buildCapture(rows, { filter: debouncedSearch || undefined }));
+      if (saved) toast.success(fill(t.captureSaved, { name: saved.replace(/^.*[\\/]/, '') }));
+    } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
+  };
+
   const traceWindow = (windowMs: number) => {
     const untilMs = Date.now();
     return { sinceMs: windowMs ? untilMs - windowMs : 0, untilMs };
@@ -469,6 +479,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
           <button onClick={runSearch} className="btn-accent !py-1.5">{t.historyQuery}</button>
           <div className="flex gap-1 ml-auto" aria-label={t.historyExportResults}>
             {(['json', 'csv'] as const).map((format) => <button key={format} onClick={() => void handleExport(format)} disabled={!rows.length || loading || exporting || search !== debouncedSearch} className="btn-ghost !px-2 !py-1.5 flex items-center gap-1 disabled:opacity-40" title={search !== debouncedSearch ? t.whyFilterPending : loading || exporting ? t.whyBusy : !rows.length ? t.whyNoRows : t.historyExportResults}><Download className="w-3 h-3" />{format.toUpperCase()}</button>)}
+            {/* A capture is the one export you can run again: same rows, but with the
+                intervals and v5 properties needed to publish them back. */}
+            <button onClick={() => void handleCapture()} disabled={!rows.length || loading || exporting || search !== debouncedSearch} className="btn-ghost !px-2 !py-1.5 flex items-center gap-1 disabled:opacity-40" title={search !== debouncedSearch ? t.whyFilterPending : loading || exporting ? t.whyBusy : !rows.length ? t.captureNothing : t.captureExportHint} data-testid="history-capture"><Film className="w-3 h-3" />{t.captureExport}</button>
           </div>
         </div>
 

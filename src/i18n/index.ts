@@ -465,6 +465,32 @@ export interface Translations {
   timelineDropped: string;
   timelineTruncated: string;
   timelineInference: string;
+  replayTitle: string;
+  replayHint: string;
+  replayLoad: string;
+  replayNoFile: string;
+  replayCounts: string;
+  replayWhich: string;
+  replayWhichIn: string;
+  replayWhichOut: string;
+  replayWhichBoth: string;
+  replaySpeed: string;
+  replaySpeedTimes: string;
+  replayGapCap: string;
+  replayStart: string;
+  replayStop: string;
+  replayProgress: string;
+  replayFinished: string;
+  replayEta: string;
+  replayV3Note: string;
+  replayCaveat: string;
+  replayDisabledDisconnected: string;
+  replayDisabledEmpty: string;
+  replayDisabledNoOut: string;
+  captureExport: string;
+  captureExportHint: string;
+  captureSaved: string;
+  captureNothing: string;
   outboxHint: string;
   outboxUnavailable: string;
   outboxAttempt: string;
@@ -1312,6 +1338,32 @@ export const translations: Record<Language, Translations> = {
     timelineDropped: '另有 {n} 个前缀未画出',
     timelineTruncated: '这个窗口超过 {rows} 行，只覆盖最旧的一段',
     timelineInference: '这里的"在线"只表示这个窗口内我们存下了它的报文。没订阅过的设备、或我们断线的时段，在图上表现为静默而不是缺席；指令没有回应同理——只要窗口内没收到相同 correlation 的应答。',
+    replayTitle: '会话回放',
+    replayHint: '把录下来的一分钟真实流量重新发回 broker',
+    replayLoad: '载入录制文件',
+    replayNoFile: '还没有载入 .dqrec 录制文件 —— 在"消息历史"里用"录制"导出当前筛选结果',
+    replayCounts: '{count} 条 · 跨度 {span}s · {topics} 个主题 · 入 {inbound} / 出 {outbound}',
+    replayWhich: '发送方向',
+    replayWhichIn: '只发入站（复现设备）',
+    replayWhichOut: '只发出站',
+    replayWhichBoth: '全部照发',
+    replaySpeed: '倍速',
+    replaySpeedTimes: '×{n}',
+    replayGapCap: '单条间隔上限（ms）',
+    replayStart: '回放 {n} 条',
+    replayStop: '停止',
+    replayProgress: '已发 {sent}/{total} · 失败 {failed}',
+    replayFinished: '结束：{sent}/{total} 已发，{failed} 条失败',
+    replayEta: '按此节奏约 {s}s',
+    replayV3Note: '当前是 MQTT 3.1.1 会话：v5 属性（content-type、response topic、correlation、用户属性）不会发出，只发主题与报文。',
+    replayCaveat: '回放会真的向 broker 发布，retain 与 QoS 按录制原样保留——请把目标当作生产 broker 对待。时间戳只用于计算间隔，不会改写 broker 侧的任何时间。',
+    replayDisabledDisconnected: '先连接一个 broker 才能回放',
+    replayDisabledEmpty: '这个方向没有可发送的报文',
+    replayDisabledNoOut: '这份录制里没有出站报文',
+    captureExport: '录制',
+    captureExportHint: '导出为可回放的 .dqrec（含 v5 属性与时序；不含 broker 地址与任何凭证）',
+    captureSaved: '录制已保存：{name}',
+    captureNothing: '当前列表是空的，没有可录制的报文',
     outboxHint: '失败的 Webhook 会留在本机磁盘，按递增间隔重试；达到 {max} 次后转为死信，不再自动尝试。',
     outboxUnavailable: '重试已关闭：{error}',
     outboxAttempt: '第 {n}/{max} 次',
@@ -2155,6 +2207,32 @@ export const translations: Record<Language, Translations> = {
     timelineDropped: '{n} more prefixes not drawn',
     timelineTruncated: 'This window held more than {rows} rows, so only the oldest slice is covered',
     timelineInference: '"Online" here only means we stored a message from it inside this window. A device nobody subscribed to, or a period we were disconnected, shows as silence rather than absence — and an unanswered command means the same thing: no reply carrying those correlation bytes arrived before the window ended.',
+    replayTitle: 'Session replay',
+    replayHint: 'put a captured minute of real traffic back onto a broker',
+    replayLoad: 'Load capture',
+    replayNoFile: 'No .dqrec loaded — export one with "Capture" from Message History',
+    replayCounts: '{count} events · {span}s span · {topics} topics · {inbound} in / {outbound} out',
+    replayWhich: 'Send',
+    replayWhichIn: 'Inbound only (replay the devices)',
+    replayWhichOut: 'Outbound only',
+    replayWhichBoth: 'Everything as recorded',
+    replaySpeed: 'Speed',
+    replaySpeedTimes: '×{n}',
+    replayGapCap: 'Max gap between events (ms)',
+    replayStart: 'Replay {n}',
+    replayStop: 'Stop',
+    replayProgress: 'sent {sent}/{total} · failed {failed}',
+    replayFinished: 'Finished: {sent}/{total} sent, {failed} failed',
+    replayEta: 'about {s}s at this pace',
+    replayV3Note: 'This session is MQTT 3.1.1: v5 properties (content type, response topic, correlation, user properties) are not sent — only topic and payload.',
+    replayCaveat: 'A replay really publishes: QoS and retain come through as recorded, so treat the target like a production broker. Timestamps only set the intervals — nothing about the broker\'s clock is rewritten.',
+    replayDisabledDisconnected: 'Connect to a broker before replaying',
+    replayDisabledEmpty: 'No messages in that direction to send',
+    replayDisabledNoOut: 'This capture holds no outbound messages',
+    captureExport: 'Capture',
+    captureExportHint: 'Export a replayable .dqrec (v5 properties and timing included; no broker address and no credentials)',
+    captureSaved: 'Capture saved: {name}',
+    captureNothing: 'The list is empty, so there is nothing to capture',
     outboxHint: 'A failed webhook stays on this disk and is retried with growing delays; after {max} attempts it becomes a dead letter and stops.',
     outboxUnavailable: 'Retries are off: {error}',
     outboxAttempt: 'attempt {n}/{max}',
@@ -2998,6 +3076,32 @@ export const translations: Record<Language, Translations> = {
     timelineDropped: '另有 {n} 個前綴未畫出',
     timelineTruncated: '這個視窗超過 {rows} 列，只覆蓋最舊的一段',
     timelineInference: '這裡的「上線」只代表這個視窗內我們存下了它的報文。沒訂閱過的裝置、或我們離線的時段，在圖上呈現為靜默而非缺席；指令沒有回應也一樣——只要視窗內沒收到相同 correlation 的回覆。',
+    replayTitle: '會話回放',
+    replayHint: '把錄下來的一分鐘真實流量重新傳回 broker',
+    replayLoad: '載入錄製檔',
+    replayNoFile: '尚未載入 .dqrec 錄製檔——請在「訊息歷史」用「錄製」匯出目前篩選結果',
+    replayCounts: '{count} 則 · 跨度 {span}s · {topics} 個主題 · 入 {inbound} / 出 {outbound}',
+    replayWhich: '傳送方向',
+    replayWhichIn: '僅入站（重現裝置）',
+    replayWhichOut: '僅出站',
+    replayWhichBoth: '全部照錄傳送',
+    replaySpeed: '倍速',
+    replaySpeedTimes: '×{n}',
+    replayGapCap: '單則間隔上限（ms）',
+    replayStart: '回放 {n} 則',
+    replayStop: '停止',
+    replayProgress: '已傳 {sent}/{total} · 失敗 {failed}',
+    replayFinished: '結束：{sent}/{total} 已傳，{failed} 則失敗',
+    replayEta: '依此節奏約 {s}s',
+    replayV3Note: '目前是 MQTT 3.1.1 工作階段：不會發出 v5 屬性（content-type、response topic、correlation、使用者屬性），只傳主題與報文。',
+    replayCaveat: '回放會真的對 broker 發布，retain 與 QoS 依錄製原樣保留——請把目標當成正式環境的 broker。時間戳記只用於計算間隔，不會改寫 broker 端的任何時間。',
+    replayDisabledDisconnected: '請先連線到 broker 才能回放',
+    replayDisabledEmpty: '這個方向沒有可傳送的報文',
+    replayDisabledNoOut: '這份錄製裡沒有出站報文',
+    captureExport: '錄製',
+    captureExportHint: '匯出可回放的 .dqrec（含 v5 屬性與時序；不含 broker 位址與任何憑證）',
+    captureSaved: '錄製已儲存：{name}',
+    captureNothing: '目前清單是空的，沒有可錄製的報文',
     outboxHint: '失敗的 Webhook 會留在本機磁碟，依遞增間隔重試；達到 {max} 次後轉為死信，不再自動嘗試。',
     outboxUnavailable: '重試已關閉：{error}',
     outboxAttempt: '第 {n}/{max} 次',
@@ -3841,6 +3945,32 @@ export const translations: Record<Language, Translations> = {
     timelineDropped: 'ほか {n} 個の接頭辞は描画していません',
     timelineTruncated: 'この時間帯は {rows} 行を超えたため、最も古い範囲だけを表示しています',
     timelineInference: 'ここでの「オンライン」は、この時間帯にそのメッセージを保存したという意味だけです。購読していないデバイスや接続を切っていた時間帯は、不在ではなく沈黙として表示されます。応答なしの命令も同じで、同じ correlation の応答がこの時間帯内に届かなかったことを示します。',
+    replayTitle: 'セッションリプレイ',
+    replayHint: '記録した実トラフィックの 1 分を broker へ送り直す',
+    replayLoad: 'キャプチャを読み込む',
+    replayNoFile: '.dqrec は読み込まれていません — メッセージ履歴の「キャプチャ」で現在の絞り込みを出力してください',
+    replayCounts: '{count} 件 · 跨度 {span}s · トピック {topics} · 受信 {inbound} / 送信 {outbound}',
+    replayWhich: '送信する方向',
+    replayWhichIn: '受信のみ（デバイスを再現）',
+    replayWhichOut: '送信のみ',
+    replayWhichBoth: '記録どおり全部',
+    replaySpeed: '倍率',
+    replaySpeedTimes: '×{n}',
+    replayGapCap: 'イベント間隔の上限（ms）',
+    replayStart: '{n} 件を再生',
+    replayStop: '停止',
+    replayProgress: '送信 {sent}/{total} · 失敗 {failed}',
+    replayFinished: '完了：{sent}/{total} 送信、{failed} 件失敗',
+    replayEta: 'このペースで約 {s} 秒',
+    replayV3Note: 'このセッションは MQTT 3.1.1 です：v5 プロパティ（content type、response topic、correlation、ユーザープロパティ）は送信されず、トピックとペイロードのみ送られます。',
+    replayCaveat: '再生は実際に broker へ公開します。QoS と retain は記録どおり保持されるため、接続先は本番と同様に扱ってください。タイムスタンプは間隔の計算にだけ使い、broker 側の時刻は書き換えません。',
+    replayDisabledDisconnected: '再生前に broker に接続してください',
+    replayDisabledEmpty: 'その方向に送信するメッセージがありません',
+    replayDisabledNoOut: 'このキャプチャに送信方向の記録はありません',
+    captureExport: 'キャプチャ',
+    captureExportHint: '再生可能な .dqrec として出力（v5 プロパティと時間間隔を含む／broker アドレスと認証情報は含めない）',
+    captureSaved: 'キャプチャを保存しました：{name}',
+    captureNothing: '一覧が空のため、キャプチャできるメッセージがありません',
     outboxHint: '失敗した Webhook はこのマシンのディスクに残り、間隔を延ばしながら再送されます。{max} 回でデッドレターになり、自動では再送しません。',
     outboxUnavailable: '再送は無効です：{error}',
     outboxAttempt: '{n}/{max} 回目',

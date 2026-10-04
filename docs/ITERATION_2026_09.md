@@ -2003,6 +2003,50 @@ correlation 配不上的指令保持"无回应"、实体上限截断要报数）
 vitest 新增 `tests/unit/timeline.test.ts` 3 条（百分位映射、越界钳制、零长度窗口不除零）；
 `clippy` 干净、`tsc` 干净、`eslint` 0 error / 10 warning。
 
+### 4.59 会话录制与回放：把"现场那一分钟"带回办公室（§7 T5，第十五轮 2026-10-04）
+
+T5 的原话："现场 bug 复现：把设备的一分钟录下来，回办公室重放一百次。"
+并给了复用点："history 已存全字段；缺时序与属性重放"。
+
+复核：**"存全字段"这句是对的**——`messages` 表里已经有 topic / payload(b64) / payload_len /
+qos / retain / direction / content_type / properties(JSON，含 responseTopic、correlation 双形态、
+userProperties、payloadFormat、messageExpiry) / ts。所以"录制"不需要新的采集通道，
+需要的是**一个能被读回来的容器**；真正缺的是回放。
+
+**容器（`src/utils/capture.ts`，纯函数 + 9 条单元测试）**：JSON Lines，第一行 header、之后一行一条事件。
+选 JSONL 而不是一个大 JSON 数组，理由有三：长录制仍然可解析、diff 可读、
+**尾部被截断时前面还是合法前缀**（复制中途被打断是常事），这一点我专门写了回归测试。
+事件带 `t`（距首条的毫秒偏移）与 `ts`（绝对时间，用于和日志对齐），
+回放只用 `t`。二进制 correlation 的 `correlationHex` 与文本 `correlationData` **都留**，
+这样重放出去的字节和当初一样（§1.2 的口径在回放侧继续成立）。
+
+**刻意不写 broker 地址。** 录制文件是要贴进工单、发进聊天群的。复现 bug 需要的是主题、
+报文和间隔，不是"某某内网 1883"。所以 `buildCapture` 的参数里**根本没有** broker 这一项——
+不是导出时再脱敏（§4.55 那种全文 scrub 是补救），而是压根不产生。
+测试直接钉住这一点：`expect(text).not.toContain('127.0.0.1')`、`not.toMatch(/"broker"/)`。
+
+**回放（`src/components/mqttx/ReplayPanel.tsx`）**：走的是控制台表单同一条 `publish_console`，
+没有第二套协议实现。三个口径：
+
+- 默认只重放**入站**那部分——"复现设备"才是需求本体；要连出站一起发得自己选 `both`。
+- 倍速 ×1/×2/×5/×10 + **单条间隔上限**（默认 2000 ms）。上限必须有：设备 30 秒一跳时，
+  忠实回放会让整个界面干等；没有上限的"按原速"在没人盯的时候等于把 app 冻住。
+- v3 会话里 **v5 属性不发**，并且面板明说（`replayV3Note`）。静默丢掉一半字段再假装回放成功，
+  就是 §1.8 那类"失败看起来像成功"。
+- 单条被 broker 拒绝（主题不合法、未授权）**只计数不中断**——一份录制不该因为一条就半途而废，
+  结束时如实报 `{sent}/{total} 已发，{failed} 条失败`。
+
+**读文件**：`read_capture_file`（Rust）沿用 `file_size` 的既有信任模型——路径来自原生打开对话框，
+用户的选择就是授权；但加了 **32 MB 上限**，因为字节最终要进 webview 内存。
+解析失败一律给原因（空文件 / 不是 .dqrec / 格式版本不对 / 第 N 行 JSON 不完整 / 缺主题 / 缺报文），
+`CaptureError` 单独一类，不让它长成 "SyntaxError"。
+
+**门**：vitest 104 passed（新增 `capture.test.ts` 9 条）；Playwright `session-replay` **9 passed**
+（含"没载入就一次都不该 publish"、"断线时按钮禁用并写明原因"、"v3 不发 v5 字段"、
+"一条被拒后其余照发并如实报失败数"，以及**闭环测试**：History 点"录制"写出的字节，
+用回放侧同一个 `parseCapture` 读回来能对上）；`tsc` 干净、`eslint` 0 error / 10 warning。
+Rust 侧 `read_capture_file` 过 `clippy --lib`。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。
