@@ -87,6 +87,9 @@ export function useAssertions(visible: boolean) {
     [setRules],
   );
 
+  /** Whole-set swap, used when a scenario is applied. */
+  const replaceRules = useCallback((next: AssertionRule[]) => setRules(next), [setRules]);
+
   const reset = useCallback(() => {
     invoke<AssertionSnapshot>('assertions_reset')
       .then((s) => setSnapshot(s))
@@ -103,6 +106,7 @@ export function useAssertions(visible: boolean) {
     updateRule,
     removeRule,
     toggleRule,
+    replaceRules,
     reset,
   };
 }

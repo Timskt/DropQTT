@@ -719,6 +719,41 @@ export interface Translations {
   paletteReplay: string;
   paletteTrace: string;
   paletteTimeline: string;
+  scenarioTitle: string;
+  scenarioHint: string;
+  scenarioName: string;
+  scenarioNote: string;
+  scenarioNotePlaceholder: string;
+  scenarioExport: string;
+  scenarioExportHint: string;
+  scenarioLoad: string;
+  scenarioCounts: string;
+  scenarioPasteHint: string;
+  scenarioPasteDisabled: string;
+  scenarioParse: string;
+  scenarioApply: string;
+  scenarioRun: string;
+  scenarioRunDisabled: string;
+  scenarioLoaded: string;
+  scenarioVerdict: string;
+  scenarioPass: string;
+  scenarioFail: string;
+  scenarioUnknown: string;
+  scenarioCaveat: string;
+  scenarioYes: string;
+  scenarioNo: string;
+  scenarioSkipV3: string;
+  scenarioSkipWebhooks: string;
+  scenarioSkipNoBar: string;
+  scenarioSkipElsewhere: string;
+  scenarioBenchLab: string;
+  scenarioClaimRate: string;
+  scenarioClaimP99: string;
+  scenarioClaimLost: string;
+  scenarioClaimAssertions: string;
+  scenarioClaimRefused: string;
+  scenarioNotRun: string;
+  scenarioNoBar: string;
   paletteGroupView: string;
   paletteConnect: string;
   paletteDisconnect: string;
@@ -1591,6 +1626,41 @@ export const translations: Record<Language, Translations> = {
     paletteReplay: '载入会话录制并回放',
     paletteTrace: '按 correlation 或设备号追踪',
     paletteTimeline: '构建活动时间轴',
+    scenarioTitle: '验收场景',
+    scenarioHint: '订阅 + 模拟设备 + 断言 + 静默看门狗 + 一份负载，存成一个文件，最后给结论',
+    scenarioName: '场景名称',
+    scenarioNote: '备注',
+    scenarioNotePlaceholder: '可选：这套场景要证明什么',
+    scenarioExport: '导出场景',
+    scenarioExportHint: '把当前 {subs} 个订阅、{responders} 条模拟应答、{assertions} 条断言、{watchdogs} 个看门狗存成文件；不含告警端点与任何凭证',
+    scenarioLoad: '从文件载入',
+    scenarioCounts: '当前：订阅 {subs} · 应答 {responders} · 断言 {assertions} · 看门狗 {watchdogs}',
+    scenarioPasteHint: '也可以直接粘贴场景 JSON（文件常通过工单或聊天传递，不必先落盘）',
+    scenarioPasteDisabled: '先粘贴一段场景 JSON',
+    scenarioParse: '解析',
+    scenarioApply: '应用到本机',
+    scenarioRun: '跑负载',
+    scenarioRunDisabled: '先连接 broker 才能跑负载',
+    scenarioLoaded: '已载入「{name}」：订阅 {subs} · 应答 {responders} · 断言 {assertions} · 看门狗 {watchdogs}',
+    scenarioVerdict: '验收结论',
+    scenarioPass: '达标',
+    scenarioFail: '未达标',
+    scenarioUnknown: '无法判定',
+    scenarioCaveat: '没有设定标准时这里是"无法判定"，不是"通过"。结论只覆盖本次会话实测到的数据。',
+    scenarioYes: '有',
+    scenarioNo: '无',
+    scenarioSkipV3: '{n} 条模拟应答未应用：MQTT 3.1.1 会话不支持它们需要的能力',
+    scenarioSkipWebhooks: '{n} 个看门狗的应用不含告警端点 —— 场景文件从不保存端点，请重新填写',
+    scenarioSkipNoBar: '「{name}」的负载没有设定验收标准，因此不会给出通过/不通过',
+    scenarioSkipElsewhere: '{n} 项不在本面板应用，请到「{where}」查看',
+    scenarioBenchLab: '压测台',
+    scenarioClaimRate: '消息速率',
+    scenarioClaimP99: 'P99 时延',
+    scenarioClaimLost: '未观测到的消息',
+    scenarioClaimAssertions: '报文断言',
+    scenarioClaimRefused: '被拒订阅',
+    scenarioNotRun: '尚未运行',
+    scenarioNoBar: '未设定标准',
     paletteConnect: '连接 broker',
     paletteDisconnect: '断开 broker',
     paletteSettings: '打开设置',
@@ -2470,6 +2540,41 @@ export const translations: Record<Language, Translations> = {
     paletteReplay: 'Load a session capture and replay it',
     paletteTrace: 'Trace a correlation or device id',
     paletteTimeline: 'Build the activity timeline',
+    scenarioTitle: 'Acceptance scenario',
+    scenarioHint: 'subscriptions + simulated devices + assertions + watchdogs + one load spec, saved as one file and judged at the end',
+    scenarioName: 'Scenario name',
+    scenarioNote: 'Note',
+    scenarioNotePlaceholder: 'Optional: what this scenario is meant to prove',
+    scenarioExport: 'Export scenario',
+    scenarioExportHint: 'Save the current {subs} subscriptions, {responders} responder rules, {assertions} assertions and {watchdogs} watchdogs; no alert endpoints and no credentials',
+    scenarioLoad: 'Load from file',
+    scenarioCounts: 'Now: {subs} subs · {responders} responders · {assertions} assertions · {watchdogs} watchdogs',
+    scenarioPasteHint: 'You can also paste scenario JSON — these files travel in tickets and chat, and nobody should have to save one first',
+    scenarioPasteDisabled: 'Paste a scenario as JSON first',
+    scenarioParse: 'Parse',
+    scenarioApply: 'Apply here',
+    scenarioRun: 'Run the load',
+    scenarioRunDisabled: 'Connect to a broker before running a load',
+    scenarioLoaded: 'Loaded "{name}": {subs} subscriptions · {responders} responders · {assertions} assertions · {watchdogs} watchdogs',
+    scenarioVerdict: 'Acceptance verdict',
+    scenarioPass: 'met',
+    scenarioFail: 'not met',
+    scenarioUnknown: 'unknown',
+    scenarioCaveat: 'A bar that was never set reads "unknown", never "met". The verdict covers only what this session measured.',
+    scenarioYes: 'yes',
+    scenarioNo: 'no',
+    scenarioSkipV3: '{n} responder rules were not applied: this MQTT 3.1.1 session cannot drive them',
+    scenarioSkipWebhooks: '{n} watchdogs applied without an alert endpoint — scenario files never carry one, so re-enter it',
+    scenarioSkipNoBar: 'The load in "{name}" sets no acceptance bar, so it can yield no pass or fail',
+    scenarioSkipElsewhere: '{n} item(s) are not applied here — see "{where}"',
+    scenarioBenchLab: 'Bench lab',
+    scenarioClaimRate: 'Message rate',
+    scenarioClaimP99: 'P99 latency',
+    scenarioClaimLost: 'Messages never observed',
+    scenarioClaimAssertions: 'Message assertions',
+    scenarioClaimRefused: 'Refused subscriptions',
+    scenarioNotRun: 'not run yet',
+    scenarioNoBar: 'no bar set',
     paletteConnect: 'Connect to the broker',
     paletteDisconnect: 'Disconnect from the broker',
     paletteSettings: 'Open settings',
@@ -3349,6 +3454,41 @@ export const translations: Record<Language, Translations> = {
     paletteReplay: '載入會話錄製並回放',
     paletteTrace: '依 correlation 或裝置號追蹤',
     paletteTimeline: '建立活動時間軸',
+    scenarioTitle: '驗收場景',
+    scenarioHint: '訂閱 + 模擬裝置 + 斷言 + 靜默看門狗 + 一份載入，存成一個檔案，最後給出結論',
+    scenarioName: '場景名稱',
+    scenarioNote: '備註',
+    scenarioNotePlaceholder: '選填：這個場景要證明什麼',
+    scenarioExport: '匯出場景',
+    scenarioExportHint: '把目前 {subs} 個訂閱、{responders} 條模擬應答、{assertions} 條斷言、{watchdogs} 個看門狗存成檔案；不含告警端點與任何憑證',
+    scenarioLoad: '從檔案載入',
+    scenarioCounts: '目前：訂閱 {subs} · 應答 {responders} · 斷言 {assertions} · 看門狗 {watchdogs}',
+    scenarioPasteHint: '也可以直接貼上場景 JSON——檔案常經工單或聊天傳遞，不必先存碟',
+    scenarioPasteDisabled: '請先貼上一段場景 JSON',
+    scenarioParse: '解析',
+    scenarioApply: '套用到本機',
+    scenarioRun: '執行載入',
+    scenarioRunDisabled: '請先連線到 broker 才能執行載入',
+    scenarioLoaded: '已載入「{name}」：訂閱 {subs} · 應答 {responders} · 斷言 {assertions} · 看門狗 {watchdogs}',
+    scenarioVerdict: '驗收結論',
+    scenarioPass: '達標',
+    scenarioFail: '未達標',
+    scenarioUnknown: '無法判定',
+    scenarioCaveat: '沒有設定標準時這裡顯示「無法判定」，不是「通過」。結論只涵蓋本次工作階段實測到的資料。',
+    scenarioYes: '有',
+    scenarioNo: '無',
+    scenarioSkipV3: '{n} 條模擬應答未套用：MQTT 3.1.1 工作階段不支援它們所需的能力',
+    scenarioSkipWebhooks: '{n} 個看門狗套用时不含告警端點——場景檔案從不保存端點，請重新填寫',
+    scenarioSkipNoBar: '「{name}」的載入沒有設定驗收標準，因此不會給出通過/不通過',
+    scenarioSkipElsewhere: '{n} 項不在本面板套用，請到「{where}」查看',
+    scenarioBenchLab: '壓測台',
+    scenarioClaimRate: '訊息速率',
+    scenarioClaimP99: 'P99 延遲',
+    scenarioClaimLost: '未觀測到的訊息',
+    scenarioClaimAssertions: '訊息斷言',
+    scenarioClaimRefused: '被拒訂閱',
+    scenarioNotRun: '尚未執行',
+    scenarioNoBar: '未設定標準',
     paletteConnect: '連線 broker',
     paletteDisconnect: '中斷 broker',
     paletteSettings: '開啟設定',
@@ -4228,6 +4368,41 @@ export const translations: Record<Language, Translations> = {
     paletteReplay: 'セッションキャプチャを読み込んで再生',
     paletteTrace: 'correlation またはデバイス ID で追跡',
     paletteTimeline: 'アクティビティタイムラインを作成',
+    scenarioTitle: '受け入れシナリオ',
+    scenarioHint: '購読 + デバイス模擬 + アサーション + 監視 + 負荷を 1 ファイルに保存し、最後に判定を出す',
+    scenarioName: 'シナリオ名',
+    scenarioNote: 'メモ',
+    scenarioNotePlaceholder: '任意：このシナリオが何を証明するのか',
+    scenarioExport: 'シナリオを出力',
+    scenarioExportHint: '現在の購読 {subs} 件・応答ルール {responders} 件・アサーション {assertions} 件・監視 {watchdogs} 件をファイルへ。告警エンドポイントと認証情報は含めません',
+    scenarioLoad: 'ファイルから読み込む',
+    scenarioCounts: '現在：購読 {subs} · 応答 {responders} · アサーション {assertions} · 監視 {watchdogs}',
+    scenarioPasteHint: 'シナリオ JSON を直接貼り付けても構いません。これらのファイルはチケットやチャットでやり取りされるため、先に保存する必要はありません',
+    scenarioPasteDisabled: 'まずシナリオ JSON を貼り付けてください',
+    scenarioParse: '解析',
+    scenarioApply: 'このマシンに適用',
+    scenarioRun: '負荷を実行',
+    scenarioRunDisabled: '負荷を実行する前に broker に接続してください',
+    scenarioLoaded: '「{name}」を読み込みました：購読 {subs} · 応答 {responders} · アサーション {assertions} · 監視 {watchdogs}',
+    scenarioVerdict: '受け入れ判定',
+    scenarioPass: '達成',
+    scenarioFail: '未達成',
+    scenarioUnknown: '判定不能',
+    scenarioCaveat: '基準が設定されていない項目は「達成」ではなく「判定不能」になります。判定はこのセッションで実測した範囲だけを対象とします。',
+    scenarioYes: 'あり',
+    scenarioNo: 'なし',
+    scenarioSkipV3: '{n} 件の応答ルールは適用されませんでした：この MQTT 3.1.1 セッションでは扱えません',
+    scenarioSkipWebhooks: '{n} 件の監視は告警エンドポイントなしで適用されました — シナリオファイルには保存されないため再入力してください',
+    scenarioSkipNoBar: '「{name}」の負荷には受け入れ基準がないため、達成/未達成は出ません',
+    scenarioSkipElsewhere: '{n} 件はこのパネルで適用されません —「{where}」で確認してください',
+    scenarioBenchLab: 'ベンチ台',
+    scenarioClaimRate: 'メッセージ速率',
+    scenarioClaimP99: 'P99 遅延',
+    scenarioClaimLost: '観測されなかったメッセージ',
+    scenarioClaimAssertions: 'メッセージアサーション',
+    scenarioClaimRefused: '拒否された購読',
+    scenarioNotRun: 'まだ実行されていません',
+    scenarioNoBar: '基準未設定',
     paletteConnect: 'ブローカーへ接続',
     paletteDisconnect: 'ブローカーから切断',
     paletteSettings: '設定を開く',

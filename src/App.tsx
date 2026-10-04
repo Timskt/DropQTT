@@ -43,6 +43,7 @@ import { useFaults } from './hooks/useFaults';
 import { useResponder } from './hooks/useResponder';
 import { RpcPanel } from './components/mqttx/RpcPanel';
 import { ReplayPanel } from './components/mqttx/ReplayPanel';
+import { ScenarioPanel } from './components/mqttx/ScenarioPanel';
 import { AssertionPanel } from './components/mqttx/AssertionPanel';
 import { FaultPanel } from './components/mqttx/FaultPanel';
 import { ResponderPanel } from './components/mqttx/ResponderPanel';
@@ -646,6 +647,21 @@ export function App() {
               {/* Replay is offered in both protocol versions; the panel itself says
                   which fields a 3.1.1 session cannot carry. */}
               <ReplayPanel t={t} connected={broker.isConnected} isV5={isV5} onPublish={mqtt.publish} />
+
+              {/* One file, one verdict: the scenario composes sets that already exist
+                  and states which parts it could not install here. */}
+              <ScenarioPanel
+                t={t}
+                isV5={isV5}
+                subscriptions={mqtt.subscriptions}
+                responders={responder.rules}
+                assertions={assertions.rules}
+                assertionStats={assertions.stats}
+                rejectedSubs={Object.keys(subStats.ack.rejected ?? {}).length}
+                onReplaceResponders={responder.replaceRules}
+                onReplaceAssertions={assertions.replaceRules}
+                onSubscribe={(topic, qos, options) => void mqtt.addSubscription(topic, qos, undefined, options)}
+              />
 
               {/* Console-side error surface for failed publishes */}
               {broker.connectionError && (

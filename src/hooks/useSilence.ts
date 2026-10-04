@@ -60,7 +60,11 @@ export function useSilence(visible: boolean) {
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
   }, [setRules]);
 
+  /** Whole-set swap when a scenario is applied. The endpoints come back stripped —
+   *  a scenario file never carries them — so the panel has to say so out loud. */
+  const replaceRules = useCallback((next: SilenceRule[]) => setRules(next), [setRules]);
+
   const clearAlerts = useCallback(() => setAlerts([]), []);
 
-  return { rules, alerts, lastError, addRule, updateRule, removeRule, toggleRule, clearAlerts };
+  return { rules, alerts, lastError, addRule, updateRule, removeRule, toggleRule, replaceRules, clearAlerts };
 }

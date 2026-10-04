@@ -68,11 +68,18 @@ export function useResponder(visible: boolean) {
     [setRules],
   );
 
+  /** Whole-set swap, used when a scenario is applied. The effect below pushes the
+   *  new set to Rust, which still owns the grammar and the ceilings. */
+  const replaceRules = useCallback(
+    (next: ResponderRule[]) => setRules(next),
+    [setRules],
+  );
+
   const reset = useCallback(() => {
     invoke<ResponderStats[]>('responder_reset')
       .then(setStats)
       .catch((e) => setLastError(String(e)));
   }, []);
 
-  return { rules, stats, lastError, addRule, updateRule, removeRule, toggleRule, reset };
+  return { rules, stats, lastError, addRule, updateRule, removeRule, toggleRule, replaceRules, reset };
 }
