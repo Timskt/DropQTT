@@ -1052,6 +1052,27 @@ impl MqttManager {
         store.trace(token, limit, since_ms, until_ms)
     }
 
+    /// Segments per topic prefix, for the timeline view. Same blocking-read shape
+    /// as every other history query, and the same reason (see §1.7 of the audit).
+    pub async fn history_timeline(
+        &self,
+        search: &str,
+        since_ms: i64,
+        until_ms: i64,
+        depth: i64,
+        gap_ms: i64,
+        max_entities: i64,
+    ) -> Result<crate::history::TimelineResult, String> {
+        let store = self
+            .history
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "message history is not available".to_string())?;
+        store.timeline(search, since_ms, until_ms, depth, gap_ms, max_entities)
+    }
+
     pub async fn history_series(
         &self,
         topic: &str,

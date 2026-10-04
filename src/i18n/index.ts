@@ -440,6 +440,31 @@ export interface Translations {
   forwarded: string;
   outboxTitle: string;
   outboxCounters: string;
+  timelineTitle: string;
+  timelineHint: string;
+  timelineDepth: string;
+  timelineDepthLevels: string;
+  timelineGap: string;
+  timelineGapTooSmall: string;
+  timelineBuild: string;
+  timelineBuildDisabledEmpty: string;
+  timelineBuildDisabledGap: string;
+  timelineBuilt: string;
+  timelineEmpty: string;
+  timelineSummary: string;
+  timelineRow: string;
+  timelineRowAria: string;
+  timelineRpc: string;
+  timelineSegmentTitle: string;
+  timelineMarkAnswered: string;
+  timelineMarkUnanswered: string;
+  timelineNeverSilent: string;
+  timelineLegendTraffic: string;
+  timelineLegendAnswered: string;
+  timelineLegendUnanswered: string;
+  timelineDropped: string;
+  timelineTruncated: string;
+  timelineInference: string;
   outboxHint: string;
   outboxUnavailable: string;
   outboxAttempt: string;
@@ -1262,6 +1287,31 @@ export const translations: Record<Language, Translations> = {
     forwarded: '已转发',
     outboxTitle: 'Webhook 队列',
     outboxCounters: '待发送 {queued} · 死信 {dead} · 已重试 {retries} · 已补发 {recovered}',
+    timelineTitle: '活动时间轴',
+    timelineHint: '谁在说话、什么时候说的、每次静默有多长',
+    timelineDepth: '按主题层级分行',
+    timelineDepthLevels: '{n} 层',
+    timelineGap: '静默超过（秒）算掉线',
+    timelineGapTooSmall: '静默阈值至少 1 秒',
+    timelineBuild: '生成时间轴',
+    timelineBuildDisabledEmpty: '这个窗口里没有可放置的报文',
+    timelineBuildDisabledGap: '先把静默阈值改成 1 秒以上',
+    timelineBuilt: '耗时 {ms} ms · 扫描 {rows} 行',
+    timelineEmpty: '这个窗口内没有任何主题前缀有活动',
+    timelineSummary: '{entities} 行 · 阈值 {gap} · 起点 {window}',
+    timelineRow: '{messages} 条 · {segments} 段 · 最长静默 {longest}',
+    timelineRowAria: '{entity}：{messages} 条报文，分成 {segments} 段活动',
+    timelineRpc: '{answered}/{total} 条指令有回应',
+    timelineSegmentTitle: '{from} — {to}：{messages} 条',
+    timelineMarkAnswered: '{at} 发出 {topic} · 往返 {rtt} ms',
+    timelineMarkUnanswered: '{at} 发出 {topic} · 窗口内没有回应',
+    timelineNeverSilent: '从未静默',
+    timelineLegendTraffic: '有流量',
+    timelineLegendAnswered: '已回应指令',
+    timelineLegendUnanswered: '无回应指令',
+    timelineDropped: '另有 {n} 个前缀未画出',
+    timelineTruncated: '这个窗口超过 {rows} 行，只覆盖最旧的一段',
+    timelineInference: '这里的"在线"只表示这个窗口内我们存下了它的报文。没订阅过的设备、或我们断线的时段，在图上表现为静默而不是缺席；指令没有回应同理——只要窗口内没收到相同 correlation 的应答。',
     outboxHint: '失败的 Webhook 会留在本机磁盘，按递增间隔重试；达到 {max} 次后转为死信，不再自动尝试。',
     outboxUnavailable: '重试已关闭：{error}',
     outboxAttempt: '第 {n}/{max} 次',
@@ -2080,6 +2130,31 @@ export const translations: Record<Language, Translations> = {
     forwarded: 'sent',
     outboxTitle: 'Webhook queue',
     outboxCounters: 'queued {queued} · dead {dead} · retried {retries} · recovered {recovered}',
+    timelineTitle: 'Activity timeline',
+    timelineHint: 'who was talking, when, and how long each silence lasted',
+    timelineDepth: 'Group by topic levels',
+    timelineDepthLevels: '{n} levels',
+    timelineGap: 'Silence counts as a dropout after (s)',
+    timelineGapTooSmall: 'The silence threshold has to be at least 1 second',
+    timelineBuild: 'Build timeline',
+    timelineBuildDisabledEmpty: 'No messages in this window to place on a timeline',
+    timelineBuildDisabledGap: 'Set the silence threshold to 1 second or more first',
+    timelineBuilt: 'took {ms} ms · scanned {rows} rows',
+    timelineEmpty: 'Nothing in this window had any activity to draw',
+    timelineSummary: '{entities} rows · threshold {gap} · window from {window}',
+    timelineRow: '{messages} msgs · {segments} stretches · longest silence {longest}',
+    timelineRowAria: '{entity}: {messages} messages in {segments} stretches of activity',
+    timelineRpc: '{answered}/{total} commands answered',
+    timelineSegmentTitle: '{from} — {to}: {messages} messages',
+    timelineMarkAnswered: '{at} {topic} · {rtt} ms round trip',
+    timelineMarkUnanswered: '{at} {topic} · no answer in this window',
+    timelineNeverSilent: 'never silent',
+    timelineLegendTraffic: 'traffic',
+    timelineLegendAnswered: 'answered command',
+    timelineLegendUnanswered: 'unanswered command',
+    timelineDropped: '{n} more prefixes not drawn',
+    timelineTruncated: 'This window held more than {rows} rows, so only the oldest slice is covered',
+    timelineInference: '"Online" here only means we stored a message from it inside this window. A device nobody subscribed to, or a period we were disconnected, shows as silence rather than absence — and an unanswered command means the same thing: no reply carrying those correlation bytes arrived before the window ended.',
     outboxHint: 'A failed webhook stays on this disk and is retried with growing delays; after {max} attempts it becomes a dead letter and stops.',
     outboxUnavailable: 'Retries are off: {error}',
     outboxAttempt: 'attempt {n}/{max}',
@@ -2898,6 +2973,31 @@ export const translations: Record<Language, Translations> = {
     forwarded: '已轉發',
     outboxTitle: 'Webhook 佇列',
     outboxCounters: '待發送 {queued} · 死信 {dead} · 已重試 {retries} · 已補發 {recovered}',
+    timelineTitle: '活動時間軸',
+    timelineHint: '誰在說話、什麼時候說的、每次靜默有多長',
+    timelineDepth: '依主題層級分行',
+    timelineDepthLevels: '{n} 層',
+    timelineGap: '靜默超過（秒）算離線',
+    timelineGapTooSmall: '靜默閾值至少 1 秒',
+    timelineBuild: '產生時間軸',
+    timelineBuildDisabledEmpty: '這個視窗內沒有可放置的報文',
+    timelineBuildDisabledGap: '請先把靜默閾值設為 1 秒以上',
+    timelineBuilt: '耗時 {ms} ms · 掃描 {rows} 列',
+    timelineEmpty: '這個視窗內沒有任何主題前綴有活動',
+    timelineSummary: '{entities} 列 · 閾值 {gap} · 起點 {window}',
+    timelineRow: '{messages} 則 · {segments} 段 · 最長靜默 {longest}',
+    timelineRowAria: '{entity}：{messages} 則報文，分成 {segments} 段活動',
+    timelineRpc: '{answered}/{total} 條指令有回應',
+    timelineSegmentTitle: '{from} — {to}：{messages} 則',
+    timelineMarkAnswered: '{at} 送出 {topic} · 往返 {rtt} ms',
+    timelineMarkUnanswered: '{at} 送出 {topic} · 視窗內沒有回應',
+    timelineNeverSilent: '從未靜默',
+    timelineLegendTraffic: '有流量',
+    timelineLegendAnswered: '已回應指令',
+    timelineLegendUnanswered: '無回應指令',
+    timelineDropped: '另有 {n} 個前綴未畫出',
+    timelineTruncated: '這個視窗超過 {rows} 列，只覆蓋最舊的一段',
+    timelineInference: '這裡的「上線」只代表這個視窗內我們存下了它的報文。沒訂閱過的裝置、或我們離線的時段，在圖上呈現為靜默而非缺席；指令沒有回應也一樣——只要視窗內沒收到相同 correlation 的回覆。',
     outboxHint: '失敗的 Webhook 會留在本機磁碟，依遞增間隔重試；達到 {max} 次後轉為死信，不再自動嘗試。',
     outboxUnavailable: '重試已關閉：{error}',
     outboxAttempt: '第 {n}/{max} 次',
@@ -3716,6 +3816,31 @@ export const translations: Record<Language, Translations> = {
     forwarded: '送信済',
     outboxTitle: 'Webhook キュー',
     outboxCounters: '待機 {queued} · デッドレター {dead} · 再送済み {retries} · 復旧 {recovered}',
+    timelineTitle: 'アクティビティタイムライン',
+    timelineHint: '誰が・いつ送信し、それぞれの沈黙がどれほど長かったか',
+    timelineDepth: 'トピックの階層で行分け',
+    timelineDepthLevels: '{n} 階層',
+    timelineGap: '沈黙がこれを超えると切断扱い（秒）',
+    timelineGapTooSmall: '沈黙の閾値は 1 秒以上が必要です',
+    timelineBuild: 'タイムラインを作成',
+    timelineBuildDisabledEmpty: 'この時間帯に配置するメッセージがありません',
+    timelineBuildDisabledGap: '先に沈黙の閾値を 1 秒以上へ変更してください',
+    timelineBuilt: '所要 {ms} ms · {rows} 行を走査',
+    timelineEmpty: 'この時間帯に活動のあったトピック接頭辞はありません',
+    timelineSummary: '{entities} 行 · 閾値 {gap} · 開始 {window}',
+    timelineRow: '{messages} 通 · {segments} 区間 · 最長の沈黙 {longest}',
+    timelineRowAria: '{entity}: {messages} 通のメッセージが {segments} 区間の活動に分かれます',
+    timelineRpc: '{total} 件中 {answered} 件が応答あり',
+    timelineSegmentTitle: '{from} — {to}: {messages} 通',
+    timelineMarkAnswered: '{at} {topic} · 往復 {rtt} ms',
+    timelineMarkUnanswered: '{at} {topic} · この時間帯に応答なし',
+    timelineNeverSilent: '沈黙なし',
+    timelineLegendTraffic: '通信あり',
+    timelineLegendAnswered: '応答ありの命令',
+    timelineLegendUnanswered: '応答なしの命令',
+    timelineDropped: 'ほか {n} 個の接頭辞は描画していません',
+    timelineTruncated: 'この時間帯は {rows} 行を超えたため、最も古い範囲だけを表示しています',
+    timelineInference: 'ここでの「オンライン」は、この時間帯にそのメッセージを保存したという意味だけです。購読していないデバイスや接続を切っていた時間帯は、不在ではなく沈黙として表示されます。応答なしの命令も同じで、同じ correlation の応答がこの時間帯内に届かなかったことを示します。',
     outboxHint: '失敗した Webhook はこのマシンのディスクに残り、間隔を延ばしながら再送されます。{max} 回でデッドレターになり、自動では再送しません。',
     outboxUnavailable: '再送は無効です：{error}',
     outboxAttempt: '{n}/{max} 回目',

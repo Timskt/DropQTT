@@ -1944,6 +1944,65 @@ DropQTT_g2 tip:   this instance only — filters: 1, messages received: 12
 中途多了一条"未使用的 eslint-disable"，删掉了那条其实不需要的抑制，而不是把预算抬高）。
 纯前端，Rust 未动。
 
+### 4.57 演示跑出来的一个真 bug：会往回走的"重试"计数（第十四轮 2026-10-04）
+
+给"运行我看看效果"跑整轮演示时，面板上那行 `queued · dead · retries · recovered` 暴露了一处口径错误：
+`retries` 的实现是 `SELECT SUM(attempts) FROM outbox`——**只对还在表里的行求和**。
+于是点下 "Retry now" 之后，队列排空，这个数字从 203 **掉回** 87。
+一个写着"重试"的计数在成功的时候变小，比没有这个数字更糟：用户会以为系统在倒退。
+
+改法（口径而不是显示）：
+
+- `retries` 与 `delivered` 一样改成 `outbox_meta` 里的**终身计数**，在 `record_failure` / `record_success`
+  发生时累加，行被删掉也不丢。抽出 `bump_meta` / `meta` 两个私有 helper，两条累加走同一条 upsert。
+- `counts_for(rule)` 的两个终身计数固定返回 0，并注明"终身口径是整队列的，面板没有按规则显示它们"——
+  不做"没人看的字段先造一套 per-rule meta key"。
+- **`Reset Stats` 现在也清零这两个计数**：它们和已经被重置的那几个数字显示在同一行上，
+  只清一半等于撒谎。仍在排队/死信的行不动（那是证据，不是统计）。
+- 文案改成过去时：`retried` / 已重试 / 已重試 / 再送済み，四个语言包一起。
+- Playwright 里加了一条断言钉住 `retried 4`（原来只断言 `recovered 5`，所以这个字段怎么错都没人抓）。
+
+**门**：harness 225 → **226 passed**（新增一条：两条队列行最终都投递成功后，
+`retries`/`delivered` 仍是 2/2，再 `reset_counters` 才归零）；`clippy --lib --tests` 干净；
+`bridge-outbox` **11 passed**；`tsc` 干净；`eslint` 0 error / 10 warning。
+
+### 4.58 活动时间轴：把"昨晚掉了几次线"变成一眼看完的东西（§8.1.1，第十四轮 2026-10-04）
+
+审阅稿给 UI 部分排的第一名就是它："**时间轴视图（最有价值的一个）**：横轴时间，每台设备一行，
+画出在线/离线区段、掉线间隙、RPC 往返、告警点……数据全在 history + 静默看门狗里，缺的只是渲染。"
+
+复核之后按数据实际能支撑的口径做了 **三条修正**：
+
+1. **静默看门狗不能当数据源**。`silence.rs` 的 `last_seen` 是内存里的 `HashMap`，
+   只回答"现在谁超时了"，从不落盘，重启即清零。所以区段**全部从 history 的 `ts` 推**——
+   这反而更强：它能回答昨晚，而看门狗只能回答此刻。
+2. **"告警点"没有落盘**。断言判定（§4 T3）挂在消息对象上（`msg.assertion`），
+   `messages` 表里没有这一列，所以时间轴上画不出来。我**没有**为了这张图去加一列，
+   而是在视图里把它说清楚：这条时间轴只有流量区段与 RPC 往返。要加点就得先定"存判定还是存违规"的口径。
+3. **"每台设备一行"没有设备注册表**。app 不知道哪一段是 deviceId。所以行是**主题前缀**，
+   层级数（1..4）由用户选：`devices/gw-7/telemetry` 与 `devices/gw-7/status` 在 depth=2 下合成一行
+   `devices/gw-7`。标题写的是"Group by topic levels"，不假装是"设备"。
+
+**后端口径**（`history.rs::timeline`）：一条 `ORDER BY ts ASC LIMIT 50000` 的扫描，
+按前缀分组后做区段合并（相邻两条间隔 ≤ 阈值就并段），`longest_gap_ms` 取段间最大值；
+RPC 往返用 `correlation` 列（§4.50 加的索引列）配对——**应答落在哪个主题都算配对成功**，
+配不上的标 `answered: false`，并注明"这只表示窗口内没收到"。
+`TIMELINE_MARK_CAP = 200` 限制每行画出的点，`entities` 按消息数排序后截断，
+被截掉的数量作为 `entitiesDropped` 交给视图说明，而不是让画面看起来"就这么点东西"。
+
+**前端**（`src/components/history/TimelineCard.tsx`）：**按需构建**，不随搜索自动跑——
+它走的是窗口扫描而不是 `idx_messages_ts`。这一条同时避开了"每加一个命令就要给 26 个 spec 补 mock"的
+扩散税（和 §4.50 的 trace 同一个做法）。禁用态一律带原因（空窗口 / 阈值 < 1s），
+区段与往返点都有 `title`，`role="img"` + `aria-label` 给读屏器一句人话。
+`Date.now()` 放在点击回调里而不是 render 里——eslint 的 `react-hooks/purity` 抓了这一条，
+预算 10 条 warning 没有涨。
+
+**门**：harness **229 passed**（新增 4 条：阈值切分两段并算出最长静默、depth 决定行且短主题自成一行的名字、
+correlation 配不上的指令保持"无回应"、实体上限截断要报数）；Playwright `history-timeline` **7 passed**
+（含"没点构建就一次都不该调用 `history_timeline`"、以及所有区段的 left+width 必须落在 0..100 内）；
+vitest 新增 `tests/unit/timeline.test.ts` 3 条（百分位映射、越界钳制、零长度窗口不除零）；
+`clippy` 干净、`tsc` 干净、`eslint` 0 error / 10 warning。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

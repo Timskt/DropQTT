@@ -6,6 +6,7 @@
 //! away. Writes happen inside a single transaction per batch to stay cheap even
 //! at thousands of messages per second. A row-count cap keeps the DB bounded.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -133,6 +134,83 @@ pub struct HistoryTopicRow {
     pub bytes: i64,
     pub first_ts: i64,
     pub last_ts: i64,
+}
+
+/// One uninterrupted stretch of traffic from one entity on the timeline.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineSegment {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub messages: i64,
+}
+
+/// A request that expected an answer, seen inside the window.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineMark {
+    pub ts_ms: i64,
+    pub topic: String,
+    /// The correlation as lowercase hex of its bytes, which is how it is stored.
+    pub correlation: Option<String>,
+    /// False means no answer carrying these correlation bytes was seen **in this
+    /// window**. An answer that arrived after it, or while we were disconnected,
+    /// looks identical from here, so the view has to say so.
+    pub answered: bool,
+    pub rtt_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineEntity {
+    pub entity: String,
+    pub segments: Vec<TimelineSegment>,
+    pub marks: Vec<TimelineMark>,
+    pub messages: i64,
+    pub first_ms: i64,
+    pub last_ms: i64,
+    /// The longest silence between two segments. Zero means it never went quiet
+    /// long enough to count as a gap at this threshold.
+    pub longest_gap_ms: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineResult {
+    pub entities: Vec<TimelineEntity>,
+    pub window_start_ms: i64,
+    pub window_end_ms: i64,
+    pub gap_ms: i64,
+    pub depth: i64,
+    /// Entities past the cap, so the view can say "and 12 more" rather than
+    /// implying the window was quiet.
+    pub entities_dropped: usize,
+    pub rows_scanned: i64,
+    /// The row cap was reached: the timeline covers the oldest slice of the window.
+    pub truncated: bool,
+}
+
+/// How many rows one timeline build reads. Above this the result is truncated.
+pub const TIMELINE_ROW_CAP: i64 = 50_000;
+/// Marks kept per entity; a fleet that polls every second outruns any viewport.
+pub const TIMELINE_MARK_CAP: usize = 200;
+
+/// One stored row reduced to what the timeline needs: when, which way, what it
+/// carried, and whether it expected an answer.
+type TimelinePoint = (i64, String, Option<String>, String);
+
+/// The first `depth` topic levels, which is how a topic becomes a row.
+///
+/// There is no device registry here on purpose: `devices/gw-7/telemetry` and
+/// `devices/gw-7/status` share the prefix `devices/gw-7`, and that is the whole
+/// of what this can claim to know.
+fn entity_of(topic: &str, depth: i64) -> String {
+    let depth = depth.max(1) as usize;
+    let parts: Vec<&str> = topic.split('/').collect();
+    if parts.len() <= depth {
+        return topic.to_string();
+    }
+    parts[..depth].join("/")
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -554,6 +632,145 @@ impl HistoryStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("history topic unreadable: {e}"))?;
         Ok(rows)
+    }
+
+    /// Activity segments per topic prefix over a window.
+    ///
+    /// "How many times did this gateway drop off last night, and for how long" is
+    /// a shape question, and paging a list of rows to answer it is how it goes
+    /// unanswered. Everything here is inferred from traffic we actually stored: a
+    /// device we were never subscribed to, or were disconnected from, is silent on
+    /// this chart rather than absent — which is why the view states its threshold.
+    pub fn timeline(
+        &self,
+        search: &str,
+        since_ms: i64,
+        until_ms: i64,
+        depth: i64,
+        gap_ms: i64,
+        max_entities: i64,
+    ) -> Result<TimelineResult, String> {
+        let conn = self.conn.lock().map_err(|_| "history store is unavailable".to_string())?;
+        let depth = depth.clamp(1, 4);
+        let gap_ms = gap_ms.max(1_000);
+        let max_entities = max_entities.clamp(1, 100);
+        let like = search_pattern(search);
+        // Topic only: a payload match does not identify who to draw a row for.
+        let sql = "SELECT topic, ts, direction, correlation, \
+                     CASE WHEN properties IS NULL THEN '' \
+                          ELSE COALESCE(json_extract(properties, '$.responseTopic'), '') END \
+                   FROM messages \
+                   WHERE (?1 = '' OR topic LIKE ?1 ESCAPE '\\') AND ts >= ?2 AND ts <= ?3 \
+                   ORDER BY ts ASC LIMIT ?4";
+        let mut stmt = conn.prepare(sql).map_err(|e| format!("history timeline: {e}"))?;
+        let rows = stmt
+            .query_map(
+                params![
+                    if search.trim().is_empty() { "" } else { &like },
+                    since_ms,
+                    until_ms,
+                    TIMELINE_ROW_CAP
+                ],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .map_err(|e| format!("history timeline: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("history timeline unreadable: {e}"))?;
+        drop(stmt);
+
+        let rows_scanned = rows.len() as i64;
+        // An answer is any inbound row carrying correlation bytes; pairing is by
+        // those bytes, so a reply on an unrelated topic still counts.
+        let mut first_reply: HashMap<String, i64> = HashMap::new();
+        for (_, ts, direction, correlation, _) in &rows {
+            if direction != "in" {
+                continue;
+            }
+            let Some(key) = correlation.as_deref().map(str::trim).filter(|c| !c.is_empty()) else {
+                continue;
+            };
+            first_reply.entry(key.to_ascii_lowercase()).or_insert(*ts);
+        }
+
+        let mut grouped: HashMap<String, Vec<TimelinePoint>> = HashMap::new();
+        for (topic, ts, direction, correlation, resp_topic) in &rows {
+            grouped
+                .entry(entity_of(topic, depth))
+                .or_default()
+                .push((*ts, direction.clone(), correlation.clone(), resp_topic.clone()));
+        }
+
+        let mut entities: Vec<TimelineEntity> = Vec::new();
+        for (entity, mut points) in grouped {
+            points.sort_by_key(|p| p.0);
+            let mut segments: Vec<TimelineSegment> = Vec::new();
+            for (ts, _, _, _) in &points {
+                match segments.last_mut() {
+                    Some(last) if *ts - last.end_ms <= gap_ms => {
+                        last.end_ms = *ts;
+                        last.messages += 1;
+                    }
+                    _ => segments.push(TimelineSegment { start_ms: *ts, end_ms: *ts, messages: 1 }),
+                }
+            }
+            let longest_gap_ms = segments
+                .windows(2)
+                .map(|w| w[1].start_ms - w[0].end_ms)
+                .max()
+                .unwrap_or(0);
+            let mut marks: Vec<TimelineMark> = points
+                .iter()
+                .filter(|(_, direction, _, resp)| *direction == "out" && !resp.is_empty())
+                .map(|(ts, topic, correlation, _)| {
+                    let rtt = correlation
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|c| !c.is_empty())
+                        .and_then(|c| first_reply.get(&c.to_ascii_lowercase()))
+                        .map(|reply| reply - ts)
+                        .filter(|rtt| *rtt >= 0);
+                    TimelineMark {
+                        ts_ms: *ts,
+                        topic: topic.clone(),
+                        correlation: correlation.clone(),
+                        answered: rtt.is_some(),
+                        rtt_ms: rtt,
+                    }
+                })
+                .collect();
+            marks.truncate(TIMELINE_MARK_CAP);
+            entities.push(TimelineEntity {
+                messages: points.len() as i64,
+                first_ms: points.first().map(|p| p.0).unwrap_or(0),
+                last_ms: points.last().map(|p| p.0).unwrap_or(0),
+                longest_gap_ms,
+                entity,
+                segments,
+                marks,
+            });
+        }
+        entities.sort_by(|a, b| b.messages.cmp(&a.messages).then_with(|| a.entity.cmp(&b.entity)));
+        let entities_dropped = entities.len().saturating_sub(max_entities as usize);
+        entities.truncate(max_entities as usize);
+
+        Ok(TimelineResult {
+            entities,
+            window_start_ms: since_ms,
+            window_end_ms: until_ms,
+            gap_ms,
+            depth,
+            entities_dropped,
+            rows_scanned,
+            truncated: rows_scanned >= TIMELINE_ROW_CAP,
+        })
     }
 
     pub fn clear(&self) {
@@ -1082,6 +1299,87 @@ mod tests {
         assert_eq!(trace.summary.count, 2);
         assert!(trace.summary.truncated, "five matched, two were returned");
         assert_eq!(store.trace("   ", 10, 0, i64::MAX).err().unwrap(), "a trace needs something to follow");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_silence_past_the_threshold_splits_one_device_into_two_segments() {
+        let (store, path) = temp_store("timeline-gap");
+        store.append(&[
+            msg_at("1", "devices/gw-7/telemetry", "{}", "in", 1_000),
+            msg_at("2", "devices/gw-7/telemetry", "{}", "in", 2_000),
+            // 88 s of nothing, which at a 30 s threshold is a dropout, not a gap.
+            msg_at("3", "devices/gw-7/telemetry", "{}", "in", 90_000),
+        ]);
+        let tl = store.timeline("", 0, i64::MAX, 2, 30_000, 24).unwrap();
+        assert_eq!(tl.entities.len(), 1);
+        let one = &tl.entities[0];
+        assert_eq!(one.entity, "devices/gw-7");
+        assert_eq!(one.messages, 3);
+        assert_eq!(
+            one.segments.iter().map(|s| (s.start_ms, s.end_ms, s.messages)).collect::<Vec<_>>(),
+            vec![(1_000, 2_000, 2), (90_000, 90_000, 1)],
+            "the third message starts a new stretch"
+        );
+        assert_eq!(one.longest_gap_ms, 88_000);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn depth_decides_the_row_and_a_topic_shorter_than_it_stands_alone() {
+        let (store, path) = temp_store("timeline-depth");
+        store.append(&[
+            msg_at("1", "devices/gw-7/telemetry", "{}", "in", 1_000),
+            msg_at("2", "devices/gw-7/status", "{}", "in", 1_500),
+            msg_at("3", "alerts", "{}", "in", 1_600),
+        ]);
+        let deep = store.timeline("", 0, i64::MAX, 2, 30_000, 24).unwrap();
+        assert_eq!(deep.entities.iter().map(|e| e.entity.as_str()).collect::<Vec<_>>(), vec!["devices/gw-7", "alerts"], "the two-level topics merge, and a topic shorter than the depth keeps its own name");
+        assert_eq!(deep.entities[0].messages, 2, "busiest row first");
+        let shallow = store.timeline("alerts", 0, i64::MAX, 1, 30_000, 24).unwrap();
+        assert_eq!(shallow.entities[0].entity, "alerts", "one level groups by first segment");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_request_is_answered_only_when_the_correlation_bytes_come_back() {
+        let (store, path) = temp_store("timeline-rpc");
+        let mut asked = msg_at("1", "devices/gw-7/cmd", "{\"open\":true}", "out", 1_000);
+        asked.response_topic = Some("devices/gw-7/reply".into());
+        asked.correlation_data = Some("c-1".into());
+        let mut asked_again = msg_at("2", "devices/gw-7/cmd", "{\"open\":false}", "out", 2_000);
+        asked_again.response_topic = Some("devices/gw-7/reply".into());
+        asked_again.correlation_data = Some("c-lost".into());
+        let mut answered = msg_at("3", "devices/gw-7/reply", "{\"ok\":true}", "in", 2_600);
+        answered.correlation_data = Some("c-1".into());
+        store.append(&[asked, asked_again, answered]);
+
+        let tl = store.timeline("", 0, i64::MAX, 2, 30_000, 24).unwrap();
+        let marks = &tl.entities[0].marks;
+        assert_eq!(marks.len(), 2, "both commands show, whichever way they ended");
+        assert!(marks[0].answered && marks[0].rtt_ms == Some(1_600), "reply at 2600 minus request at 1000");
+        assert_eq!(
+            marks[0].correlation.as_deref(),
+            Some("632d31"),
+            "the stored key is hex of the correlation bytes, as everywhere else"
+        );
+        assert!(!marks[1].answered, "a correlation that never came back stays unanswered");
+        assert_eq!(marks[1].rtt_ms, None);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_busy_window_caps_entities_and_says_so_rather_than_looking_quiet() {
+        let (store, path) = temp_store("timeline-cap");
+        let batch: Vec<MqttGenericMessage> = (0..30)
+            .map(|i| msg_at(format!("d{i}").as_str(), &format!("devices/gw-{i}/telemetry"), "{}", "in", 1_000 + i))
+            .collect();
+        store.append(&batch);
+        let tl = store.timeline("", 0, i64::MAX, 2, 30_000, 10).unwrap();
+        assert_eq!(tl.entities.len(), 10);
+        assert_eq!(tl.entities_dropped, 20);
+        assert!(!tl.truncated, "30 rows is nowhere near the scan cap");
+        assert_eq!(tl.rows_scanned, 30);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

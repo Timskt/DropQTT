@@ -57,6 +57,33 @@ async fn file_size(path: String) -> Result<u64, String> {
     Ok(md.len())
 }
 
+/// Largest capture file the replay screen will read.
+///
+/// The path arrives from the native open dialog, so the user is the authority on it —
+/// but the bytes go into the webview's memory, so a 2 GB "capture" still has to be
+/// refused rather than tried.
+const MAX_CAPTURE_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Read a session capture back in, as text.
+#[tauri::command]
+async fn read_capture_file(path: String) -> Result<String, String> {
+    let md = std::fs::metadata(&path).map_err(|e| format!("open failed: {e}"))?;
+    if !md.is_file() {
+        return Err("path is not a regular file".to_string());
+    }
+    if md.len() > MAX_CAPTURE_BYTES {
+        return Err(format!(
+            "capture is {} MB, over the {} MB replay limit",
+            (md.len() + 1024 * 1023) / (1024 * 1024),
+            MAX_CAPTURE_BYTES / (1024 * 1024)
+        ));
+    }
+    // Lossy on purpose: a capture is JSON Lines, and the payload bytes inside it are
+    // base64, so nothing that matters can live outside valid UTF-8.
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("read failed: {e}"))
+}
+
 #[tauri::command]
 async fn connect_broker(
     app: AppHandle,
@@ -260,6 +287,31 @@ async fn history_trace(
     state
         .mqtt
         .trace_history(&token, limit, since_ms.unwrap_or(0), until_ms.unwrap_or(i64::MAX))
+        .await
+}
+
+/// Who was talking, when, and how long each silence lasted. On demand only: it
+/// scans a window rather than an index, so it runs when the button is pressed.
+#[tauri::command]
+async fn history_timeline(
+    state: State<'_, AppState>,
+    search: Option<String>,
+    since_ms: i64,
+    until_ms: i64,
+    depth: i64,
+    gap_ms: i64,
+    max_entities: Option<i64>,
+) -> Result<history::TimelineResult, String> {
+    state
+        .mqtt
+        .history_timeline(
+            &search.unwrap_or_default(),
+            since_ms,
+            until_ms,
+            depth,
+            gap_ms,
+            max_entities.unwrap_or(24),
+        )
         .await
 }
 
@@ -714,6 +766,7 @@ pub fn run() {
             get_default_download_dir,
             set_download_dir,
             file_size,
+            read_capture_file,
             connect_broker,
             disconnect_broker,
             test_broker_connection,
@@ -738,6 +791,7 @@ pub fn run() {
             history_series,
             history_stats,
             history_trace,
+            history_timeline,
             history_topics,
             set_history_retention,
             clear_history,

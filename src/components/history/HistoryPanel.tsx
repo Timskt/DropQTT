@@ -12,6 +12,7 @@ import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
 import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView } from '../../utils/history';
 import { buildTraceHtml } from '../../utils/traceHtml';
+import { TimelineCard } from './TimelineCard';
 import { exportMessages, ExportFormat, saveTextFile } from '../../utils/exportMessages';
 
 interface HistoryPanelProps {
@@ -537,6 +538,16 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
             </div>
           </div>
         )}
+
+        {/* Time on one axis, a topic prefix per row: "when did it stop happening"
+            is a shape question the list below cannot answer. */}
+        <TimelineCard
+          t={t}
+          search={debouncedSearch}
+          windowMs={win.ms}
+          oldestTs={stats.oldestTs}
+          totalRows={stats.rows}
+        />
 
         {/* One token's life: a deviceId or a correlation value, across every topic
             and both directions, oldest first. */}

@@ -585,6 +585,47 @@ export interface HistoryTopicRow {
   lastTs: number;
 }
 
+// ---- Activity timeline (`history_timeline`) ----
+
+/** One uninterrupted stretch of traffic from one entity. */
+export interface TimelineSegment {
+  startMs: number;
+  endMs: number;
+  messages: number;
+}
+
+/** A request that expected an answer, seen inside the window. */
+export interface TimelineMark {
+  tsMs: number;
+  topic: string;
+  /** Correlation as lowercase hex of its bytes, which is how it is stored. */
+  correlation: string | null;
+  /** False means no answer arrived in this window, not that none ever did. */
+  answered: boolean;
+  rttMs: number | null;
+}
+
+export interface TimelineEntity {
+  entity: string;
+  segments: TimelineSegment[];
+  marks: TimelineMark[];
+  messages: number;
+  firstMs: number;
+  lastMs: number;
+  longestGapMs: number;
+}
+
+export interface TimelineResult {
+  entities: TimelineEntity[];
+  windowStartMs: number;
+  windowEndMs: number;
+  gapMs: number;
+  depth: number;
+  entitiesDropped: number;
+  rowsScanned: number;
+  truncated: boolean;
+}
+
 // ---- MQTT5 request / response ----
 
 export type RpcState = 'pending' | 'resolved' | 'timeout';
