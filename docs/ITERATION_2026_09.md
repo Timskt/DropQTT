@@ -2214,6 +2214,33 @@ no device registry, and this view does not pretend otherwise."
 **门**：`topicTree` 单元 **13 passed**（新增 `nodesAtDepth` 4 条，含"depth 深过所有主题时
 返回叶子而不是空视图"）；新 spec `device-view` **4 passed**；`tsc` 干净、`eslint` 回到 10 warning 预算。
 
+### 4.65 架构自查：把 4700 行的 i18n 单文件拆开（第十六轮 2026-10-05）
+
+这一条是**量出来的**，不是觉得"文件太大"：在机器被其他负载占用时，
+`curl http://127.0.0.1:1420/src/i18n/index.ts` **超过 120 s 不返回**，而同一刻
+`/src/App.tsx`、`/src/utils/topicTree.ts`、`/src/components/mqttx/DevicePanel.tsx`
+都是 0.13–0.14 s。也就是说整个 dev-server 链路上只有一个模块是瓶颈——
+四千七百行、四个语言包挤在一个 transform 里。
+它的后果不是"慢一点"：vitest worker 报 `Timeout calling "fetch" [.../i18n/index.ts]`、
+Playwright 报 `page.goto ... waiting until "load"` 超时，**两类假失败都从这一个文件长出来**。
+
+拆法（纯机械，编译器当裁判）：
+
+- `src/i18n/types.ts`：`Language` + `Translations` 接口；
+- `src/i18n/locales/{zhCN,en,zhTW,ja}.ts`：四个字典，各自 `import type { Translations }`；
+- `src/i18n/index.ts`：45 行，只做重组与 `fill` / `currentTranslations` / `LANGUAGES` 的再导出。
+  所有 `from '../i18n'` 的调用点不用改。
+
+**拆完的量**：四个 locale 模块各自 **0.07–0.27 s**；整轮 unit 从"跑不完"变成
+**89 s（transform 13 s）**；单 fork 跑 **16 files / 128 tests 全过**。
+**对齐校验**：脚本比对四语言各 **932 键，无缺无多**，且与接口**双向精确一致**
+（`iface-not-en: none`、`en-not-iface: none`）。
+
+顺带修的两处自己埋的雷：早先脚本插入 i18n 时留下过 `,,` 双逗号与行首逗号
+（行首逗号在 TS 里**合法**，所以 tsc 不报、只有人看会皱眉），这次一并归一；
+以及 `git checkout` 回滚未提交改动时把 device 键冲掉过一次——
+**回滚前先确认工作区里没有未提交的同文件改动**，这条教训记在这里。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

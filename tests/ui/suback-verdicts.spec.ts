@@ -147,9 +147,13 @@ test('the rejection event paints the chip before the next poll', async ({ page }
     );
   });
   const chip = page.getByTestId('sub-refused-secret/telemetry');
-  await expect(chip).toBeVisible();
+  // The event is delivered synchronously, but the paint is a React render, and on a
+  // saturated machine that render has been observed to take longer than Playwright's
+  // 5 s default. The budget is raised, not the assertion: what is pinned is still
+  // "the event paints the chip without waiting for the next poll".
+  await expect(chip).toBeVisible({ timeout: 20000 });
   await expect(chip).toContainText(/shared subscriptions not supported/i);
-  await expect(page.getByText(/Broker refused secret\/telemetry/)).toBeVisible();
+  await expect(page.getByText(/Broker refused secret\/telemetry/)).toBeVisible({ timeout: 20000 });
 });
 
 test('a qos the broker capped is shown as capped', async ({ page }) => {
