@@ -2047,6 +2047,31 @@ userProperties、payloadFormat、messageExpiry) / ts。所以"录制"不需要�
 用回放侧同一个 `parseCapture` 读回来能对上）；`tsc` 干净、`eslint` 0 error / 10 warning。
 Rust 侧 `read_capture_file` 过 `clippy --lib`。
 
+**真机取证分两半，因为能证的只有一半。**（一次性 mosquitto `127.0.0.1:18831`；**用户自己的 1883 全程未触碰**）
+
+- **时间轴：真机全链路已证**。真实发 4 条 → 真停 14 s → 再发 2 条，然后在真实窗口里点 Build：
+  `devices/gw-7 | 6 msgs · 2 stretches · longest silence 19s`，轨道上画出两段（left 72.74% / 74.94%，
+  宽度各 0.5%），中间就是那段静默；上方趋势图独立给出同样的两个峰，两个视图互相印证同一件事。
+  另外在**全量窗口**（48 719 行）上实测一次构建 **1095 ms**、限定 15 分钟窗口后 **79 ms**——
+  所以"按需构建、不随搜索自动跑"这个决定是有数字支撑的，不是偏好。
+- **回放：循环在组件测试里证，上线的一半在链路里证，"点按钮选文件"这一环没证**。
+  原因是 Tauri 把 `window.__TAURI_INTERNALS__.invoke` 定义成 `writable:false, configurable:false`，
+  CDP 注入的替身**静默赋值失败**（我先按"能替换"写了脚本，结果 shim 报 'ok' 而 invoke 仍是原函数）。
+  这是它的**安全属性**，不该为了跑通演示去改 app 代码绕开。于是改成：用**面板构造出的同一批 params**
+  直接走 `publish_console`，由独立订阅者判定到达结果——
+  payload 三条全对，v5 属性 `contentType` / `responseTopic` / `correlationData:"live-1"` /
+  `userProperties:{trace:"live"}` 全部原样到达；`seq:4` 以 QoS0 送达、`seq:1` 以 QoS1 送达。
+  两点如实标注：`seq:3` 以 QoS2 发出而 witness 收到标 QoS1，是**订阅端 QoS 上限**（min(pub,sub)），
+  不是丢档；retain 标记在 witness 上显示 false，因为它是**订阅前**实时收到的那份，
+  retained 副本只在订阅那一刻补发。
+  所以"回放循环真的按录制节奏逐条调用这条路径"由 Playwright 证，"这条路径能把字段带上 broker"由上面证，
+  **中间那个原生文件对话框没有被自动化证明过**——需要真点一下才算数。
+
+**顺手修的一处测试竞态**：`suback-verdicts` 在全量跑时失败过一次（单跑 6/6 通过）。
+根因不在产品代码：harness 在 app 还没 `listen('subscription-rejected')` 之前就把事件发了出去，
+负载落空、徽章自然不出现——满载时更容易踩到。给 harness 加了 `__listening(event)`，
+测试先等监听就位再发。这类"测试说得太早"和"app 撒谎"必须分开记，否则下次 flakes 又会去改产品代码。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。
