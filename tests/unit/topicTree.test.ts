@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTopicTree, flattenTree, leafPaths, sampleRates, sumSeries, TopicNode } from '../../src/utils/topicTree';
+import { buildTopicTree, flattenTree, leafPaths, nodesAtDepth, sampleRates, sumSeries, TopicNode } from '../../src/utils/topicTree';
 import type { TopicStatRow } from '../../src/types';
 
 const row = (topic: string, over: Partial<TopicStatRow> = {}): TopicStatRow => ({
@@ -95,5 +95,47 @@ describe('TopicNode shape', () => {
     expect(nodes[0].children[0].depth).toBe(1);
     expect(nodes[0].children[0].children[0].depth).toBe(2);
     expect(nodes[0].children[0].children[0].segment).toBe('c');
+  });
+});
+
+describe('nodesAtDepth', () => {
+  const tree = () =>
+    buildTopicTree([
+      row('devices/gw-7/telemetry', { rate: 2, count: 10 }),
+      row('devices/gw-7/status', { rate: 1, count: 5 }),
+      row('devices/gw-8/telemetry', { rate: 4, count: 20 }),
+      row('alerts', { rate: 1, count: 2 }),
+    ]);
+
+  it('returns one node per prefix with the whole subtree aggregated', () => {
+    const at2 = nodesAtDepth(tree(), 2);
+    const gw7 = at2.find((n) => n.path === 'devices/gw-7');
+    expect(gw7?.agg.count).toBe(15);
+    expect(gw7?.agg.rate).toBe(3);
+    expect(gw7?.agg.topics).toBe(2);
+    // A topic shorter than the depth keeps its own row rather than vanishing.
+    expect(at2.map((n) => n.path)).toContain('alerts');
+  });
+
+  it('depth 1 folds everything under its first level', () => {
+    const at1 = nodesAtDepth(tree(), 1);
+    expect(at1.map((n) => n.path).sort()).toEqual(['alerts', 'devices']);
+    expect(at1.find((n) => n.path === 'devices')?.agg.count).toBe(35);
+  });
+
+  it('busiest first, so the loudest gateway is the first card', () => {
+    const at2 = nodesAtDepth(tree(), 2);
+    expect(at2[0].path).toBe('devices/gw-8');
+  });
+
+  it('a depth below every topic yields the leaves, not an empty view', () => {
+    // Asking for level 9 of a three-level fleet must not answer with silence: the
+    // leaf topics are the entities at that point.
+    expect(nodesAtDepth(tree(), 9).map((n) => n.path).sort()).toEqual([
+      'alerts',
+      'devices/gw-7/status',
+      'devices/gw-7/telemetry',
+      'devices/gw-8/telemetry',
+    ]);
   });
 });

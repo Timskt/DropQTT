@@ -2186,6 +2186,34 @@ apply 后三个 `*_sync_rules`/`subscribe_topic` 真的带上了场景内容、
 **门**：unit `capture`+`scenario` **29 passed**（新增 capped 往返 1 条）；Playwright `scenario` **11 passed**、
 `session-replay` **9 passed**、console 相关 **11 passed**；`tsc` 干净、`eslint` 0 error / 10 warning。
 
+### 4.64 设备视角：把"哪台网关"放在"哪个主题"前面（§8.1.3，第十六轮 2026-10-05）
+
+审阅稿："以 deviceId 聚合的卡片——最后上报、速率、错误计数、关联的 RPC、影子状态。
+IoT 用户的心智模型是设备，不是 topic。"
+
+复核后做了**一处口径修正**：协议里没有 deviceId，app 也没有设备注册表，
+所以卡片的主键是**所选层级上的主题前缀**，与 §4.58 的时间轴同一口径；
+面板上明写"A 'device' here is a topic prefix at the chosen depth: the protocol carries
+no device registry, and this view does not pretend otherwise."
+"影子状态"（§9.3）与"关联 RPC"没有做：前者是开创性探索条目、需要新协议语义，
+后者需要把 RPC 记录按前缀归档（现在 RPC 状态是会话级的），都不该在这一张卡片里偷偷做一半。
+
+**实现是复用，不是新数据通路**：`buildTopicTree` 已经会把子树聚合成 `agg`
+（速率求和、峰值取最大、lastSeen 取最新——峰值取最大这条在 §4.51 就定过口径），
+新增的纯函数 `nodesAtDepth(tree, depth)` 只是"取某一层的节点"。
+违规数来自断言引擎已有的 `recent`（带 topic 与 tsMs），按前缀过滤、只算最近 5 分钟。
+**没有任何推断**：卡片上每个数字都能指回一个已有计数器。
+
+**两个被测试钉住的边界**：
+- 短于所选层级的主题（`alerts` 在 depth=2 下）**不消失**——它自己就是一个实体，
+  与时间轴的 `entity_of` 口径一致；
+- "现在"取**表里最新的观测时刻**而不是 `Date.now()`：面板是轮询视图，
+  用墙钟会让 feed 停摆后所有卡片假装还在"刚刚"，而且 render 里调 `Date.now()`
+  本身就被 eslint 的 purity 规则抓（这轮被抓了两次，两次都改成从数据推导）。
+
+**门**：`topicTree` 单元 **13 passed**（新增 `nodesAtDepth` 4 条，含"depth 深过所有主题时
+返回叶子而不是空视图"）；新 spec `device-view` **4 passed**；`tsc` 干净、`eslint` 回到 10 warning 预算。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

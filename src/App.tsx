@@ -44,6 +44,7 @@ import { useResponder } from './hooks/useResponder';
 import { RpcPanel } from './components/mqttx/RpcPanel';
 import { ReplayPanel } from './components/mqttx/ReplayPanel';
 import { ScenarioPanel } from './components/mqttx/ScenarioPanel';
+import { DevicePanel } from './components/mqttx/DevicePanel';
 import { AssertionPanel } from './components/mqttx/AssertionPanel';
 import { FaultPanel } from './components/mqttx/FaultPanel';
 import { ResponderPanel } from './components/mqttx/ResponderPanel';
@@ -603,6 +604,10 @@ export function App() {
                 setCap={topicStats.setCap}
                 t={t}
               />
+
+              {/* The field question is "which gateway", not "which topic": one card
+                  per prefix, fed only by counters that already exist. */}
+              <DevicePanel t={t} rows={topicStats.rows} violations={assertions.recent} />
 
               <AssertionPanel
                 rules={assertions.rules}

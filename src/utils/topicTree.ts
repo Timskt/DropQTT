@@ -88,6 +88,28 @@ export function buildTopicTree(rows: TopicStatRow[]): TopicNode[] {
   return root.children;
 }
 
+/**
+ * The nodes standing for a whole prefix, i.e. what a "device row" is when the app
+ * has no device registry: everything at one chosen depth, each carrying the
+ * aggregate of its subtree. Depth 1 means the first topic level.
+ *
+ * A topic with no sub-topics is its own entity at any depth, exactly as the
+ * timeline treats a topic shorter than its grouping level: dropping `alerts`
+ * because someone asked for depth 2 would silently lose a device.
+ */
+export function nodesAtDepth(nodes: TopicNode[], depth: number): TopicNode[] {
+  const target = Math.max(1, depth) - 1;
+  const out: TopicNode[] = [];
+  const walk = (list: TopicNode[]) => {
+    for (const node of list) {
+      if (node.depth === target || (node.depth < target && node.children.length === 0)) out.push(node);
+      else if (node.depth < target) walk(node.children);
+    }
+  };
+  walk(nodes);
+  return out.sort((a, b) => b.agg.rate - a.agg.rate || b.agg.count - a.agg.count || a.path.localeCompare(b.path));
+}
+
 export interface FlatNode {
   node: TopicNode;
   expandable: boolean;
