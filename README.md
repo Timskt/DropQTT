@@ -94,7 +94,8 @@ DropQTT packages installers for **macOS (Apple Silicon & Intel)**, **Ubuntu Linu
 Releases are triggered strictly by pushing semantic version tags:
 
 ```bash
-# 1. Update version in package.json & src-tauri/tauri.conf.json
+# 1. Update the version in package.json, src-tauri/tauri.conf.json and
+#    src-tauri/Cargo.toml (the workflow fails if they disagree with the tag)
 # 2. Commit and tag:
 git tag -a v0.9.0 -m "Release v0.9.0"
 git push origin v0.9.0
