@@ -771,6 +771,14 @@ export interface DiagnosticsSnapshot {
   checks: DiagnosticCheck[];
 }
 
+/** State of the loopback Prometheus endpoint. Off is the only state at launch. */
+export interface MetricsStatus {
+  enabled: boolean;
+  port: number;
+  /** Quoted from the backend so the port box cannot accept a value `configure` rejects. */
+  minPort: number;
+}
+
 /** Batched console-feed emission from the backend (100 ms cadence) */
 export interface FeedBatch {
   /** Oldest-first; the feed renders newest on top */

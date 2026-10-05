@@ -5,6 +5,7 @@ pub mod assertions;
 pub mod diagnostics;
 pub mod faults;
 pub mod history;
+pub mod metrics;
 pub mod mqtt_manager;
 pub mod outbox;
 pub mod protocol;
@@ -28,6 +29,7 @@ use crate::protocol::{BrokerConfig, ConnectionStatus, ConsolePublishParams};
 pub struct AppState {
     pub mqtt: Arc<MqttManager>,
     pub bridge: Arc<BridgeManager>,
+    pub metrics: metrics::MetricsHub,
 }
 
 #[tauri::command]
@@ -115,9 +117,29 @@ async fn get_connection_status(state: State<'_, AppState>) -> Result<ConnectionS
 async fn get_diagnostics_snapshot(
     state: State<'_, AppState>,
 ) -> Result<diagnostics::DiagnosticsSnapshot, String> {
-    let mqtt = state.mqtt.diagnostics_snapshot().await;
-    let bridge = state.bridge.diagnostics_snapshot().await;
-    Ok(diagnostics::build_snapshot(mqtt, bridge))
+    Ok(metrics::snapshot(&state.mqtt, &state.bridge).await)
+}
+
+/// What the Prometheus endpoint is doing right now: always off until enabled.
+#[tauri::command]
+async fn get_metrics_status(state: State<'_, AppState>) -> Result<metrics::MetricsStatus, String> {
+    Ok(state.metrics.status())
+}
+
+/// Turn the scrape endpoint on or off.
+///
+/// A bind failure comes back as text instead of being logged and forgotten, because a
+/// toggle that silently does nothing is worse than a port conflict stated out loud.
+#[tauri::command]
+async fn set_metrics_endpoint(
+    state: State<'_, AppState>,
+    enabled: bool,
+    port: u16,
+) -> Result<metrics::MetricsStatus, String> {
+    state
+        .metrics
+        .configure(enabled, port, state.mqtt.clone(), state.bridge.clone())
+        .await
 }
 
 #[tauri::command]
@@ -719,6 +741,8 @@ pub fn run() {
         .manage(AppState {
             mqtt: mqtt_manager,
             bridge: bridge_manager,
+            // Off by default: an open port is not something a restart should hand out.
+            metrics: metrics::MetricsHub::default(),
         })
         .setup(|app| {
             // Open the persistent message-history DB under app data dir and
@@ -772,6 +796,8 @@ pub fn run() {
             test_broker_connection,
             get_connection_status,
             get_diagnostics_snapshot,
+            get_metrics_status,
+            set_metrics_endpoint,
             start_send_file,
             pause_transfer,
             resume_transfer,

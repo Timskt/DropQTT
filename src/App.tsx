@@ -228,7 +228,10 @@ export function App() {
         setDownloadDir(selected);
       }
     } catch (e) {
+      // The picker closing is not an error, but a refused `set_download_dir` is:
+      // without this the box looks unchanged with no reason attached.
       console.error(e);
+      toast.error(`${t.downloadDirFailed}: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 

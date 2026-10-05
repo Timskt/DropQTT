@@ -2241,6 +2241,51 @@ Playwright 报 `page.goto ... waiting until "load"` 超时，**两类假失败�
 以及 `git checkout` 回滚未提交改动时把 device 键冲掉过一次——
 **回滚前先确认工作区里没有未提交的同文件改动**，这条教训记在这里。
 
+### 4.66 可观测性导出：把运维面板变成能被机器读的探针（§3.4，第十七轮 2026-10-05）
+
+评审原话是"只能人看/复制报告"。这一轮把它接进监控栈，三条约束是**先定死再写代码**的：
+默认关闭、只绑 `127.0.0.1`（不提供 host 参数，有参数就会有人填局域网地址）、
+指标名与标签里**不出现**报文/主题名/用户名/密码/证书路径。
+
+实现落点：`src-tauri/src/metrics.rs`。数据源直接复用已经脱敏过的 `DiagnosticsSnapshot`
+（`build_snapshot` 与面板走同一个 `metrics::snapshot()`，所以"屏幕上看到的"和"被抓走的"
+不可能各说一套）；HTTP 用 `std::net` 绑定后交给 tokio（`TcpListener::blocking_bind`
+在 async worker 上会**直接 panic**，这是个会踩第二次的坑）。前端 `MetricsCard` 只讲三件事：
+现在听不监听、URL 是什么、抓取配置长什么样（端口下限 `minPort` 也来自后端，不在前端重抄一份）。
+
+**测试抓出来的两个真 bug**（都不是我先想到要改的，是断言挂掉才暴露的）：
+
+1. `JoinHandle::abort()` 只是**请求**取消，socket 属于那个 future，运行时没轮到它之前端口还占着。
+   于是"关掉再立刻开"会报 `port already in use`。修法是先 `abort()` 再 `await` 这个 handle，
+   让"端口已释放"变成可证明的事实而不是调度运气。
+2. self-timing 一族最初在循环里重复 `head()`，导致 `dropqtt_self_timing_window_samples`
+   出现**三条同名同标签、值不同**的样本——文本看着对，抓取端 ingest 会直接拒收。
+   补了 `no_two_samples_share_an_identity()` 这条不变量测试，把 HELP/TYPE 提到循环外。
+
+**真机取证**（一次性 mosquitto `127.0.0.1:18831`，**没有碰他本机 1883 服务**；
+独立 `WEBVIEW2_USER_DATA_FOLDER`；结束后 WM_CLOSE 优雅退出、杀掉 lab2、
+历史库三个文件 md5 与动手前**逐字节一致**）：
+
+- 点下真实按钮后 `netstat` 显示 `127.0.0.1:9464 LISTENING`，属主就是 `dropqtt.exe`；
+- `curl /metrics` 抓到 `dropqtt_mqtt_connected{endpoint="127.0.0.1:18831"} 1`——探针读的是真连接；
+- 往 lab2 发 5 条 `dropqtt/metrics-probe` 再抓：`dropqtt_topics_tracked 0→1`、
+  `dropqtt_history_rows 48713→48718`、`inbound 46621→46626`，**计数与线上流量严格对齐**；
+- 路由守卫：`GET /` → 404、`GET /dropqtt/secrets?token=abc` → 404 且**不回显路径**、
+  `POST /metrics` → 405；158 行输出里 `DropQTT_metrics`（clientId）、`metrics-probe`（主题名）、
+  `Users`/`Roaming`（路径）、`token` **全部 0 次命中**；
+- 再点一次关闭：`LISTENING` 消失（只剩我抓取留下的 TIME_WAIT），面板回到 `not listening`。
+
+**没做到的部分如实记着**：`重启后端口自动关闭` 这条只有代码依据
+（`MetricsHub::default()` 在 `manage()` 时就是关的，且没有任何持久化路径），
+没有做"重启一次再 curl"的取证；OTLP 推送**没做**——它需要一个外发目标，
+而"默认关 + 仅 loopback"的前提在 push 模型下不成立，宁可少做也不留一个默认往外发的开关。
+
+验证手法上多了一条可复用的：`metrics.rs` 依赖 `MqttManager`/`BridgeManager`，
+这两个模块在 harness 里编译不了（要 `AppHandle`）。做法是在 harness 的 `lib.rs` 里
+放**只有签名没有实现**的同名 shim（`diagnostics_snapshot()` 直接 panic），
+于是 18 条纯函数测试照跑，而真实签名由 `cargo clippy --lib --tests`（真管理器）把关——
+两道门各看一半，合起来才是全的。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。
@@ -2255,6 +2300,12 @@ Playwright 报 `page.goto ... waiting until "load"` 超时，**两类假失败�
 1. ~~**RPC 一等公民**~~ ✅ **第六轮完成**（§3.10 / §4.16）。它的同类收尾项：**一问多答的收集模式**、**应答主题带 retain 时的错配处理**（§5.8 第 2 条），以及把 `rpc_request` 接进脚本钩子/桥接，让转发的消息也能挂上请求。
 2. **压测吞吐开关**：允许压测运行不镜像到 feed/历史，把 §5.5 的实测 ~315 msg/s 提到通道上限；同时才有资格谈"高压下"的 P50/P95/P99。
 3. **多连接**：单 client 槽 → `HashMap<connId, Connection>`。建议单独一轮，需先定"历史与流量榜按连接归属"的语义。
+   第十七轮量过改造面（不是"觉得大"）：`mqtt_manager.rs` 3685 行里 `self.client` 读写点 8 处、
+   `loop_control` 4 处，但真正贵的是**边界**——`lib.rs` 有 73 个 `async fn` 命令全部隐含"只有一个连接"，
+   `App.tsx` 单是 `broker.isConnected` 就出现 23 次，事件名（`broker-connected` / `mqtt-message-batch`）
+   也要按连接分道，31 个 Playwright spec 的 invoke mock 随之全改。
+   所以这一项**不适合放在"顺手做完"的批次里**：它是一次需要单独一轮、且需要先拍板语义（历史按连接归属后，
+   现有 4.8 万行数据如何标注？还是只对新连接生效？）的架构改动。
 4. **B2 的收尾**：入站主题别名的线上验证（目前只有源码依据，见 §4.9）；桥接对 user-property 转发的字节级复核。
 5. **C2b 保存的定时任务**：把任务定义（不只是节奏默认值）持久化，支持"启动时自动恢复"。
 6. **C2c 定时任务的 CBOR 编码**：需要一个 Rust CBOR 编码器；在那之前界面明确拒绝，不做静默降级。

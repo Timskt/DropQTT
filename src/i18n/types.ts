@@ -269,6 +269,20 @@ export interface Translations {
   opsNoSnapshot: string;
   opsTroubleshootingHint: string;
   opsReportHint: string;
+  metricsTitle: string;
+  metricsExplain: string;
+  metricsListening: string;
+  metricsStopped: string;
+  metricsPortLabel: string;
+  metricsEnable: string;
+  metricsDisable: string;
+  metricsApply: string;
+  metricsApplyFirst: string;
+  metricsCopyConfig: string;
+  metricsCopyLegend: string;
+  metricsLoopbackNote: string;
+  metricsPrivacyNote: string;
+  metricsOffOnRestartNote: string;
   opsCheckDownloadDir: string;
   opsCheckHistory: string;
   opsCheckBroker: string;
@@ -833,6 +847,7 @@ export interface Translations {
   subscribeFailed: string;
   connectFailed: string;
   updateCheckFailed: string;
+  downloadDirFailed: string;
   subShareGroupRequired: string;
   publishRejectedToast: string;
   publishRejectedManyToast: string;

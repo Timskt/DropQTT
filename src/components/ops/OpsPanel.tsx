@@ -22,6 +22,7 @@ import { formatBytes } from '../../utils/format';
 import { Translations } from '../../i18n';
 import { useDiagnostics } from '../../hooks/useDiagnostics';
 import { EnvironmentCard } from './EnvironmentCard';
+import { MetricsCard } from './MetricsCard';
 import { copyToClipboard } from '../../utils/clipboard';
 import { saveTextFile } from '../../utils/exportMessages';
 import { toast } from '../../utils/toast';
@@ -397,6 +398,8 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
               ))}
             </div>
           </Section>
+
+          <MetricsCard t={t} />
 
           <div className="panel p-3 flex items-start gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             <Gauge className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--info)' }} />
