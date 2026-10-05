@@ -732,6 +732,13 @@ export interface MqttDiagnostics {
   acksUnattributed?: number;
   /** Publishes refused by the broker this session */
   publishRejected?: number;
+  /**
+   * Lifetime publish counts. Optional in the type the way every other field here is,
+   * so an older snapshot (or a test mock) still compiles; the backend always sends
+   * both. They are the only message counts that never go backwards.
+   */
+  receivedTotal?: number;
+  sentTotal?: number;
   /** Our own timings, over the last 256 calls of each operation */
   feedFlush?: DurationStats;
   feedLag?: DurationStats;

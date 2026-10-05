@@ -351,6 +351,19 @@ pub fn render(snapshot: &DiagnosticsSnapshot, outbox: &OutboxCounts, outbox_avai
         "Publishes answered with a refusal this session.",
         mqtt.publish_rejected,
     );
+    // The two series a dashboard actually alerts on, which is why they are counters
+    // and not the resettable per-topic counts: `rate(dropqtt_messages_received_total[1m]) == 0`
+    // over a configured, connected session is "the broker went quiet".
+    w.counter(
+        "dropqtt_messages_received_total",
+        "Application publishes delivered since the process started. Broker $SYS traffic and fault-injected drops are excluded, so rate() == 0 means the application traffic stopped.",
+        mqtt.received_total,
+    );
+    w.counter(
+        "dropqtt_messages_sent_total",
+        "Publishes we handed to the client since the process started.",
+        mqtt.sent_total,
+    );
     w.counter(
         "dropqtt_mqtt_acks_unattributed_total",
         "Ack reason bytes that arrived with no pending request of ours.",
@@ -614,6 +627,8 @@ mod tests {
                 unsubscribes_rejected: 0,
                 acks_unattributed: 7,
                 publish_rejected: 8,
+                received_total: 9,
+                sent_total: 10,
                 topic_stats_count: 9,
                 scheduled_runs: 10,
                 bench_runs: 11,
@@ -753,6 +768,8 @@ mod tests {
             "dropqtt_feed_dropped_total",
             "dropqtt_rpc_timeouts_total",
             "dropqtt_bridge_forwarded_total",
+            "dropqtt_messages_received_total",
+            "dropqtt_messages_sent_total",
         ] {
             assert!(
                 text.contains(&format!("# TYPE {name} counter")),

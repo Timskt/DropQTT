@@ -319,6 +319,17 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                   hint={`${snapshot.mqtt.historyWrite?.totalCalls ?? 0} ${t.opsCalls}`}
                 />
                 <Metric
+                  label={t.opsReceivedTotal}
+                  value={(snapshot.mqtt.receivedTotal ?? 0).toLocaleString()}
+                  hint={t.opsLifetimeHint}
+                  color="var(--sky)"
+                />
+                <Metric
+                  label={t.opsSentTotal}
+                  value={(snapshot.mqtt.sentTotal ?? 0).toLocaleString()}
+                  hint={t.opsLifetimeHint}
+                />
+                <Metric
                   label={t.opsAcksUnattributed}
                   value={snapshot.mqtt.acksUnattributed ?? 0}
                   color={snapshot.mqtt.acksUnattributed ? 'var(--warn)' : 'var(--text-primary)'}

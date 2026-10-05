@@ -236,8 +236,17 @@ pub struct MqttManager {
     is_connected: AtomicBool,
     /// Sends whose peer never confirmed, cumulative for this session
     confirm_timeouts: std::sync::atomic::AtomicU64,
-    /// Publishes the broker refused outright (PUBACK/PUBREC/PUBCOMP >= 0x80)
+    /// Publishes refused outright by the broker (PUBACK/PUBREC/PUBCOMP >= 0x80)
     publish_rejected: std::sync::atomic::AtomicU64,
+    /// Publishes the broker delivered to us since the process started.
+    ///
+    /// Deliberately never reset, unlike the per-topic counters: the metrics endpoint
+    /// exports this as a Prometheus counter, and `rate()` over a series that someone
+    /// can zero from the UI is not a rate but a wrong answer.
+    received_total: std::sync::atomic::AtomicU64,
+    /// Publishes we handed to the client since the process started, same rule.
+    /// An `Arc` because the resend path runs in its own task, outside any `&self`.
+    sent_total: Arc<std::sync::atomic::AtomicU64>,
     /// Everything the latest CONNACK announced. Sending outside it is a protocol
     /// violation the broker answers by dropping the session, so the forms and the
     /// publish path both consult this.
@@ -328,7 +337,17 @@ impl MqttManager {
             sub_ids: Mutex::new(SubIds::default()),
             confirm_timeouts: std::sync::atomic::AtomicU64::new(0),
             publish_rejected: std::sync::atomic::AtomicU64::new(0),
+            received_total: std::sync::atomic::AtomicU64::new(0),
+            sent_total: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
+    }
+
+    /// Record that a publish was accepted by the client.
+    ///
+    /// Every send path calls this rather than touching the field, so "what we sent"
+    /// cannot come to mean different things depending on which button was pressed.
+    fn note_sent(&self) {
+        self.sent_total.fetch_add(1, Ordering::SeqCst);
     }
 
     pub async fn set_download_dir(&self, path: PathBuf) {
@@ -445,6 +464,8 @@ impl MqttManager {
             unsubscribes_rejected: ack_stats.1,
             acks_unattributed: ack_stats.2,
             publish_rejected: self.publish_rejected.load(Ordering::SeqCst),
+            received_total: self.received_total.load(Ordering::SeqCst),
+            sent_total: self.sent_total.load(Ordering::SeqCst),
             topic_stats_count,
             scheduled_runs: self.scheduler.running_count(),
             bench_runs: self.bench.running_count(),
@@ -1430,6 +1451,7 @@ impl MqttManager {
                             self.emit_bench_progress(&app).await;
                             return;
                         }
+                        self.note_sent();
                         seq = seq.wrapping_add(1);
                         self.bench.record_sent(&spec.id);
                     }
@@ -1531,12 +1553,17 @@ impl MqttManager {
             .publish(&params.topic, params.qos, params.retain, payload.clone(), props.as_ref())
             .await
             .map_err(|e| format!("Failed to publish: {}", e))?;
+        self.note_sent();
         if fault.duplicate {
             // From the wire's point of view a re-delivery and a second send are the
             // same event, so this is the honest way to inject one.
-            let _ = client
+            if client
                 .publish(&params.topic, params.qos, params.retain, payload.clone(), props.as_ref())
-                .await;
+                .await
+                .is_ok()
+            {
+                self.note_sent();
+            }
         }
 
         // Echoed from the bytes that were actually sent: an injected corruption has
@@ -1611,6 +1638,7 @@ impl MqttManager {
             .publish(&reply.topic, reply.qos, reply.retain, bytes.clone(), None)
             .await
             .map_err(|e| format!("responder publish failed: {e}"))?;
+        self.note_sent();
         let msg = MqttGenericMessage {
             id: uuid::Uuid::new_v4().to_string(),
             topic: reply.topic.clone(),
@@ -2053,6 +2081,12 @@ impl MqttManager {
             self.sys_metrics.lock().await.insert(topic, (value, now));
             return;
         }
+
+        // Counted here, beside the traffic meter, so the two agree by construction:
+        // `$SYS` redelivery and our own injected losses are out of both. A counter
+        // that moved on every resubscribe would never let `rate() == 0` mean
+        // "the application traffic stopped", which is the only reason it exists.
+        self.received_total.fetch_add(1, Ordering::SeqCst);
 
         // Per-topic traffic meter (count / bytes / per-second rate)
         self.record_topic(&topic, publish.payload.len() as u64).await;
@@ -2886,8 +2920,9 @@ impl MqttManager {
                     None => return,
                 };
                 let app_resend = app.clone();
+                let sent = self.sent_total.clone();
                 tokio::spawn(async move {
-                    resend_chunks(client, app_resend, ctx, missing).await;
+                    resend_chunks(client, app_resend, ctx, missing, sent).await;
                 });
             }
             _ => {}
@@ -3009,6 +3044,7 @@ impl MqttManager {
             .publish(&meta_topic, qos_val, false, Bytes::from(meta_payload), None)
             .await
             .map_err(|e| format!("Failed to publish meta: {}", e))?;
+        self.note_sent();
 
         // 2. Register controls for this transfer
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -3147,18 +3183,21 @@ impl MqttManager {
                     format!("{}/chunk/{}/{}", prefix_for_chunks, tid, chunk_idx);
                 let payload = Bytes::copy_from_slice(&chunk_buf[..read_bytes]);
 
-                if let Err(e) = client.publish(&chunk_topic, qos_val, false, payload, None).await {
-                    // Real failure: propagate to UI instead of silently "completing"
-                    emit_progress(
-                        &app_handle, &tid, &prefix_for_chunks, &file_name, "send",
-                        bytes_sent, file_size, chunk_idx, total_chunks, 0.0, "failed",
-                        Some(format!(
-                            "Broker rejected chunk {} ({} B): {} — check broker max packet size",
-                            chunk_idx, read_bytes, e
-                        )),
-                        &sha256_hash, Some(file_path_str.clone()),
-                    );
-                    return;
+                match client.publish(&chunk_topic, qos_val, false, payload, None).await {
+                    Ok(()) => manager.note_sent(),
+                    Err(e) => {
+                        // Real failure: propagate to UI instead of silently "completing"
+                        emit_progress(
+                            &app_handle, &tid, &prefix_for_chunks, &file_name, "send",
+                            bytes_sent, file_size, chunk_idx, total_chunks, 0.0, "failed",
+                            Some(format!(
+                                "Broker rejected chunk {} ({} B): {} — check broker max packet size",
+                                chunk_idx, read_bytes, e
+                            )),
+                            &sha256_hash, Some(file_path_str.clone()),
+                        );
+                        return;
+                    }
                 }
 
                 bytes_sent += read_bytes as u64;
@@ -3315,7 +3354,9 @@ impl MqttManager {
             let topic = format!("{}/ctrl/{}", topic_prefix, transfer_id);
             if let Ok(payload) = serde_json::to_vec(&ctrl) {
                 // Control receipts ride QoS 1 regardless of data QoS
-                let _ = client.publish(&topic, 1, false, Bytes::from(payload), None).await;
+                if client.publish(&topic, 1, false, Bytes::from(payload), None).await.is_ok() {
+                    self.note_sent();
+                }
             }
         }
     }
@@ -3562,6 +3603,7 @@ async fn resend_chunks(
     _app: AppHandle,
     ctx: Arc<SendContext>,
     missing: Vec<usize>,
+    sent: Arc<std::sync::atomic::AtomicU64>,
 ) {
     let mut file = match File::open(&ctx.path).await {
         Ok(f) => f,
@@ -3585,7 +3627,9 @@ async fn resend_chunks(
             continue;
         }
         let topic = format!("{}/chunk/{}/{}", ctx.topic_prefix, ctx.transfer_id, idx);
-        let _ = client.publish(&topic, ctx.qos, false, Bytes::from(buf), None).await;
+        if client.publish(&topic, ctx.qos, false, Bytes::from(buf), None).await.is_ok() {
+            sent.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }
 

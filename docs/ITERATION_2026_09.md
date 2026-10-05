@@ -2286,6 +2286,55 @@ Playwright 报 `page.goto ... waiting until "load"` 超时，**两类假失败�
 于是 18 条纯函数测试照跑，而真实签名由 `cargo clippy --lib --tests`（真管理器）把关——
 两道门各看一半，合起来才是全的。
 
+### 4.67 计数器要"活着测"：$SYS 重投把 received_total 灌到 466（§3.4 续，第十七轮 2026-10-05）
+
+指标端点上线后自己回头看了一眼：**这套东西没法回答"流量停了没有"**。
+面板里每一个消息数都是可清零的（`reset_topic_stats` 直接 `clear()`），
+历史行数会被保留策略**调小**，`rate()` 建立在两者之上就是错答。
+于是补了两个进程生命周期计数器：`dropqtt_messages_received_total` / `dropqtt_messages_sent_total`，
+`reset` 不碰它们，UI 里也摆在同一张卡上并写明"重置统计不会清零"。
+
+**如果这一步没做真机测量，我会带着一个错指标交付。** 第一版把自增放在 `route_message` 开头，
+理由写得很顺："broker 发给我们的都要算，后面我们自己注掉的有 `fault_actions_total` 解释"。
+真机一跑：
+
+| 动作 | received_total |
+| --- | --- |
+| 连上 lab2（3 条订阅，未发业务消息） | **6** |
+| 反复 reload 几次之后 | **466** |
+| 外部发 1 条 | **+34** |
+| 外部发 5 条 | +108 级别的增长 |
+
+而同一时刻主题表说 `dropqtt/metrics-probe = 5 msgs`、`topics_tracked = 1`。
+差出来的不是业务流量，是 **`$SYS` 重投**：应用每次 CONNACK 都会重新 `subscribe("$SYS/#")`，
+mosquitto 就把整棵 retained `$SYS` 树（几十条）再送一遍。reload 一次 = 一次爆发，
+所以数字只涨不停，而主题表和历史都不为它记账（`deliver()` 里 `$SYS/` 分支直接 return）。
+
+修法不是"加个过滤"，是**把语义对齐已有的那把尺**：自增从 `route_message` 顶部挪到
+`deliver()` 里 `$SYS` 早退之后、`record_topic` 旁边——**和流量表同一处、同一批排除**。
+这样 `messages_received_total` 恒等于主题表计数之和，`rate() == 0` 才真的表示"应用流量断了"，
+而不是"没人重订阅 $SYS"。语义也顺手变得更好解释：注掉的、$SYS 的都不算，两边一致。
+
+**修完再测**（同一套真机流程，一次性 mosquitto `18831`）：
+
+| 动作 | received | sent | topics |
+| --- | --- | --- | --- |
+| 连上（$SYS 爆发已经发生完） | **0** | 0 | 0 |
+| 外部发 1 条 | **1** | 0 | 1 |
+| 再外部发 5 条 | **6**（Δ=5） | 0 | 1 |
+| 控制台点一次发布 | 7 | **1** | 2 |
+
+`sent_total` 走的是"8 个发送点各自 `note_sent()`"：`transport::MqttClient::publish` 是唯一出口，
+但它拿不到 manager，而把 manager 的 `Arc` 塞进 `MqttClient` 要改整个 enum，
+所以选择显式记账 + 一个 `note_sent()` 收口；chunk 流式那处落在 `tokio::spawn` 里，
+`self` 不是 `'static`（编译期 `E0521` 拦住），改用任务外先 `let manager = self.clone()`；
+续传 `resend_chunks` 是自由函数，所以 `sent_total` 用 `Arc<AtomicU64>` 传进去——
+**漏了续传路径的计数，恰好是有人在弱网下最要看的那一段**。
+
+顺带两条如实记录：抓取的脚本用 `line.startsWith(name + ' ')` 取不到带标签的
+`dropqtt_mqtt_connected{endpoint="127.0.0.1:18831"}`（Prometheus 自己解析没问题，是我脚本的笨），
+以及 `dropqtt_self_timing_*` 一族在 hoist 之后才暴露出重复样本的问题（见 §4.66）。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

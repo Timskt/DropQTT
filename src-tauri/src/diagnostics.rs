@@ -147,6 +147,16 @@ pub struct MqttDiagnostics {
     pub acks_unattributed: u64,
     /// Publishes answered with a refusal this session (PUBACK/PUBREC/PUBCOMP)
     pub publish_rejected: u64,
+    /// Application publishes delivered to us since the process started.
+    ///
+    /// Counted where the traffic meter is counted, so the two agree by construction and
+    /// share its exclusions: broker `$SYS` deliveries and our own fault-injected drops
+    /// are in neither. Separate from the per-topic counters because those are resettable
+    /// and the history row count falls when retention prunes, so neither can serve as
+    /// the monotonic base a `rate()` needs. This one answers "did traffic stop?".
+    pub received_total: u64,
+    /// Publishes we handed to the client since the process started
+    pub sent_total: u64,
     pub topic_stats_count: usize,
     /// Backend-scheduled publishes still running
     pub scheduled_runs: usize,
@@ -592,6 +602,8 @@ mod tests {
             unsubscribes_rejected: 0,
             acks_unattributed: 0,
             publish_rejected: 0,
+            received_total: 41,
+            sent_total: 7,
             topic_stats_count: 4,
             scheduled_runs: 0,
             bench_runs: 0,

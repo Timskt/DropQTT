@@ -855,6 +855,9 @@ export interface Translations {
   opsRefusedUnsubs: string;
   opsPublishRejected: string;
   opsAcksUnattributed: string;
+  opsReceivedTotal: string;
+  opsSentTotal: string;
+  opsLifetimeHint: string;
   opsFeedFlushMs: string;
   opsFeedLagMs: string;
   opsHistoryWriteMs: string;

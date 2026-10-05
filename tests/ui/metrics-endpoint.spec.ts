@@ -79,6 +79,8 @@ const boot = async (
                 feedLag: { window: 0, totalCalls: 0, avgMs: 0, maxMs: 0 },
                 historyWrite: { window: 0, totalCalls: 0, avgMs: 0, maxMs: 0 },
                 faultRules: 0, faultActions: 0, responderRules: 0,
+                // The lifetime counters the endpoint exports as `_total`.
+                receivedTotal: 4242, sentTotal: 111,
               },
               bridge: { totalConnections: 0, connectedConnections: 0, configuredRules: 0, enabledRules: 0, forwarded: 0, errors: 0, dropped: 0 },
               checks: [],
@@ -174,4 +176,14 @@ test('the legend lists only series that mean something alone', async ({ page, co
   const text = await page.evaluate(() => navigator.clipboard.readText());
   expect(text).toContain('dropqtt_feed_lost_total');
   expect(text).toContain('dropqtt_check_status{id}');
+});
+
+test('the lifetime counters are on screen next to the resettable ones', async ({ page }) => {
+  // The reason `_total` series exist: every other message count in this panel is
+  // resettable, so none of them can answer "did traffic stop" on its own.
+  await boot(page);
+  await expect(page.getByText('Messages received')).toBeVisible();
+  await expect(page.getByText('4,242')).toBeVisible();
+  await expect(page.getByText('Messages sent')).toBeVisible();
+  await expect(page.getByText('111')).toBeVisible();
 });
