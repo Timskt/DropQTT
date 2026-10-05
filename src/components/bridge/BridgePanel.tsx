@@ -1,9 +1,11 @@
 import React, { useRef, useState } from 'react';
+import { formatBytes } from '../../utils/format';
 import { invoke } from '@tauri-apps/api/core';
 import {
   ArrowRight,
   Download,
   GitBranch,
+  Inbox,
   Pencil,
   Play,
   Plus,
@@ -22,12 +24,16 @@ import {
   BrokerConfig,
   BrokerProfile,
   TopicMapEntry,
+  BRIDGE_MAX_EXTRA_SINKS,
   bridgeRuleDefaults,
   DEFAULT_BROKER_CONFIG,
 } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
 import { useBridge } from '../../hooks/useBridge';
+import { EVENT_LOG_CAP } from '../../hooks/useBridge';
 import { saveTextFile } from '../../utils/exportMessages';
+import { useSilence } from '../../hooks/useSilence';
+import { SilencePanel } from './SilencePanel';
 
 interface BridgePanelProps {
   /** Selectable broker configs (current session + saved profiles) */
@@ -35,6 +41,8 @@ interface BridgePanelProps {
   bridge: ReturnType<typeof useBridge>;
   /** Opens the global settings modal (where profiles are managed) */
   onOpenSettings: () => void;
+  /** The console's broker link: the silence watchdog rides that connection. */
+  connected: boolean;
   t: Translations;
 }
 
@@ -56,11 +64,6 @@ const newRuleDraft = (sourceConn: string, targetConn: string): BridgeRule => ({
   enabled: true,
 });
 
-const formatBytes = (n: number): string => {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
-};
 
 /** "from => to" lines <-> mapping rows */
 const parseTopicMap = (text: string): TopicMapEntry[] =>
@@ -77,6 +80,35 @@ const parseTopicMap = (text: string): TopicMapEntry[] =>
 
 const formatTopicMap = (rows: TopicMapEntry[]): string =>
   (rows ?? []).map((e) => `${e.from} => ${e.to}`).join('\n');
+
+/** "Name: value" lines -> header rows; a malformed line throws, and the caller
+ *  turns that into the form error rather than a partial save. */
+const parseHeaders = (text: string): [string, string][] =>
+  text
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => {
+      const colon = line.indexOf(':');
+      if (colon < 1) throw new Error('invalid header line');
+      return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
+    });
+
+const formatHeaders = (rows: [string, string][] | undefined): string =>
+  (rows ?? []).map(([k, v]) => `${k}: ${v}`).join('\n');
+
+/** An absolute http(s) URL with no credentials or fragment hiding in it. */
+const normalizeWebhookUrl = (raw: string): string => {
+  const url = new URL(raw.trim());
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) {
+    throw new Error('unsupported webhook URL');
+  }
+  return url.toString();
+};
+
+/** One extra sink of a fan-out rule. */
+type SinkTarget = NonNullable<BridgeRule['targets']>[number];
+
+const newSink = (): SinkTarget => ({ url: '', format: 'json', headers: [] });
 
 const SAMPLE_SCRIPT = `// transform(topic, payload, qos, retain)
 // return the new payload; returning null drops this message
@@ -139,6 +171,7 @@ const BridgeConnCard: React.FC<{
       <div className="p-4 space-y-3">
         <div className="flex items-center gap-2">
           <select
+            aria-label={title}
             value={customMode ? '__custom__' : selected}
             onChange={(e) => {
               if (e.target.value === '__custom__') {
@@ -172,12 +205,14 @@ const BridgeConnCard: React.FC<{
           <div className="grid grid-cols-3 gap-2">
             <input
               className="field-input col-span-2"
+              aria-label={t.hostPlaceholder}
               placeholder={t.hostPlaceholder}
               value={customHost}
               onChange={(e) => setCustomHost(e.target.value)}
             />
             <input
               className="field-input"
+              aria-label={t.portPlaceholder}
               placeholder={t.portPlaceholder}
               type="number"
               value={customPort}
@@ -246,6 +281,7 @@ const BridgeConnCard: React.FC<{
                 : onConnect(selected)
             }
             disabled={busy || (!customMode && !selected)}
+            title={busy ? t.whyBusy : !customMode && !selected ? t.whyPickBroker : t.connect}
             className="btn-accent w-full flex items-center justify-center gap-2"
           >
             <Server className="w-3.5 h-3.5" />
@@ -263,10 +299,12 @@ const BridgeConnCard: React.FC<{
   );
 };
 
-export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpenSettings, t }) => {
+export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpenSettings, connected, t }) => {
+  const silence = useSilence(true);
   const {
-    conns, rules, stats, events, busy, lastError, totalSent, remember, autoReconnect, setAutoReconnect,
+    conns, rules, stats, events, busy, lastError, totalSent, outbox, remember, autoReconnect, setAutoReconnect,
     connect, disconnect, addRule, updateRule, removeRule, toggleRule, importRules, resetStats, clearEvents,
+    flushOutbox, dropDeadLetters,
   } = bridge;
 
   const [showForm, setShowForm] = useState(false);
@@ -275,15 +313,27 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [excludeText, setExcludeText] = useState('');
   const [topicMapText, setTopicMapText] = useState('');
+  const [headerText, setHeaderText] = useState('');
+  // One header box per extra sink, kept in the same order as draft.targets.
+  const [extraHeaderTexts, setExtraHeaderTexts] = useState<string[]>([]);
   const [draft, setDraft] = useState<BridgeRule>(() => newRuleDraft('src', 'dst'));
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Script dry-run state
   const [testPayload, setTestPayload] = useState('{"temp":23.5}');
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  // Two-step delete: one click should never destroy a rule the user spent
+  // time writing, and a modal would be heavier than this needs.
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // Dead letters are the only record that an endpoint was unreachable, so the
+  // button that throws them away needs the same two-click guard a rule delete has.
+  const [pendingDropDead, setPendingDropDead] = useState(false);
   const [testOk, setTestOk] = useState<boolean | null>(null);
 
   const runScriptTest = async () => {
+    if (testing) return;
+    setTesting(true);
     const firstFilter = draft.sourceFilter.split('\n').map((s) => s.trim()).filter(Boolean)[0] || 'test/topic';
     try {
       const res = await invoke<{ action: string; payload?: string; bytes?: number }>('bridge_test_transform', {
@@ -302,13 +352,14 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       setTestOk(false);
       setTestResult(String(e));
     }
+    setTesting(false);
   };
 
   const handleExportRules = async () => {
     if (rules.length === 0) return;
     await saveTextFile(
       'dropqtt-bridge-rules.json',
-      JSON.stringify({ app: 'dropqtt-bridge', version: 1, rules }, null, 2),
+      JSON.stringify({ app: 'dropqtt-bridge', version: 2, rules: rules.map((r) => r.targetKind === 'http' ? { ...r, enabled: false, webhook: { ...r.webhook, url: '', headers: [] }, targets: (r.targets ?? []).map((s) => ({ ...s, url: '', headers: [] })) } : r) }, null, 2),
     );
   };
 
@@ -334,6 +385,20 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   const connOf = (id: string) => conns.find((c) => c.id === id);
   const set = <K extends keyof BridgeRule>(k: K, v: BridgeRule[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
+  const extraSinks = draft.targets ?? [];
+  const sinksFull = extraSinks.length >= BRIDGE_MAX_EXTRA_SINKS;
+  const setExtraSink = (i: number, patch: Partial<SinkTarget>) =>
+    set('targets', extraSinks.map((s, n) => (n === i ? { ...s, ...patch } : s)));
+  const addExtraSink = () => {
+    if (sinksFull) return;
+    set('targets', [...extraSinks, newSink()]);
+    setExtraHeaderTexts((prev) => [...prev, '']);
+  };
+  const removeExtraSink = (i: number) => {
+    set('targets', extraSinks.filter((_, n) => n !== i));
+    setExtraHeaderTexts((prev) => prev.filter((_, n) => n !== i));
+  };
+
   const closeForm = () => {
     setShowForm(false);
     setEditingId(null);
@@ -346,6 +411,8 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     setDraft(full);
     setExcludeText((full.excludeFilters ?? []).join('\n'));
     setTopicMapText(formatTopicMap(full.topicMap ?? []));
+    setHeaderText(formatHeaders(full.webhook.headers));
+    setExtraHeaderTexts((full.targets ?? []).map((s) => formatHeaders(s.headers)));
     setEditingId(r.id);
     setFormError(null);
     setShowAdvanced(
@@ -371,10 +438,11 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
         r.id !== editingId &&
         r.sourceConn === draft.sourceConn &&
         r.sourceFilter.trim() === draft.sourceFilter.trim() &&
-        r.targetConn === draft.targetConn,
+        (r.targetKind ?? 'mqtt') === draft.targetKind &&
+        (draft.targetKind === 'http' ? r.webhook?.url === draft.webhook.url : r.targetConn === draft.targetConn),
     );
     if (clash) {
-      setFormError(t.ruleDuplicate.replace('{name}', clash.name));
+      setFormError(fill(t.ruleDuplicate, { name: clash.name }));
       return;
     }
     const finalRule: BridgeRule = {
@@ -386,6 +454,25 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       topicMap: draft.topicMode === 'map' ? parseTopicMap(topicMapText) : [],
       rateLimit: Math.max(0, Math.min(1_000_000, draft.rateLimit || 0)),
     };
+    if (draft.targetKind === 'http') {
+      // Every sink is normalised and parsed as a unit: a rule must not save with
+      // three targets where the third one's headers were silently dropped.
+      const extras = (draft.targets ?? []).filter((s) => s.url.trim());
+      try {
+        if (!draft.webhook.url.trim() && extras.length === 0) throw new Error('nothing to deliver to');
+        finalRule.webhook = draft.webhook.url.trim()
+          ? { ...draft.webhook, url: normalizeWebhookUrl(draft.webhook.url), headers: parseHeaders(headerText) }
+          : { ...draft.webhook, url: '', headers: [] };
+        finalRule.targets = extras.map((s, i) => ({
+          ...s,
+          url: normalizeWebhookUrl(s.url),
+          headers: parseHeaders(extraHeaderTexts[i] ?? ''),
+        }));
+      } catch {
+        setFormError(t.webhookInvalid);
+        return;
+      }
+    }
     if (finalRule.topicMode === 'map' && finalRule.topicMap.length === 0) {
       setFormError(t.topicMapEmpty);
       return;
@@ -398,6 +485,8 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     setDraft(newRuleDraft(draft.sourceConn, draft.targetConn));
     setExcludeText('');
     setTopicMapText('');
+    setHeaderText('');
+    setExtraHeaderTexts([]);
     closeForm();
   };
 
@@ -415,15 +504,72 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
         return t.topicKeepSame;
     }
   };
-  const targetDescription = topicRewriteDescription;
+  const targetDescription = (r: BridgeRule) => {
+    if (r.targetKind !== 'http') return topicRewriteDescription(r);
+    const sinks = [r.webhook?.url ?? '', ...(r.targets ?? []).map((s) => s.url)].filter(Boolean);
+    if (sinks.length === 0) return t.webhookUrl;
+    // The row has to say this message goes several places without printing every
+    // address across the panel.
+    return sinks.length > 1 ? `${sinks[0]} +${sinks.length - 1}` : sinks[0];
+  };
+
+  // A queue that has never been used stays out of the panel; it appears as soon as
+  // it holds work, holds evidence of work, or could not be opened at all.
+  const showOutbox =
+    !!outbox.error ||
+    outbox.counts.pending > 0 ||
+    outbox.counts.dead > 0 ||
+    outbox.counts.delivered > 0 ||
+    outbox.counts.retries > 0;
+
+  const startRecipe = (kind: 'telemetry' | 'alert' | 'broker') => {
+    const next = newRuleDraft('src', 'dst');
+    next.name = kind === 'telemetry' ? t.recipeTelemetry : kind === 'alert' ? t.recipeAlert : t.recipeBroker;
+    next.sourceFilter = 'sensors/+/telemetry';
+    if (kind === 'broker') {
+      next.topicMode = 'prefix'; next.prefixFrom = 'sensors'; next.prefixTo = 'site-a/sensors';
+    } else {
+      next.targetKind = 'http';
+      next.webhook = { url: 'http://localhost:8080/events', format: kind === 'alert' ? 'raw' : 'json', headers: kind === 'alert' ? [['Content-Type', 'application/json']] : [] };
+      next.rateLimit = 10;
+      if (kind === 'alert') next.transformScript = 'function transform(topic, payload) {\n  const data = JSON.parse(payload);\n  if (typeof data.temperature !== "number" || data.temperature < 40) return null;\n  return { text: "High temperature: " + data.temperature, topic };\n}';
+    }
+    setDraft(next); setEditingId(null); setFormError(null); setExcludeText(''); setTopicMapText('');
+    setHeaderText(formatHeaders(next.webhook.headers));
+    setExtraHeaderTexts([]);
+    setShowAdvanced(kind === 'alert'); setShowForm(true);
+  };
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto flex flex-col">
+      <section className="panel p-4 space-y-3">
+        <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{t.integrationRecipes}</div>
+        <div className="workspace-recipes">
+          {(['telemetry', 'alert', 'broker'] as const).map((kind) => <button key={kind} type="button" onClick={() => startRecipe(kind)} className="recipe-card text-left p-3 rounded-md border" style={{ borderColor: 'var(--border-inset)', background: 'var(--bg-inset)' }}>
+            <div className="text-xs font-semibold" style={{ color: 'var(--accent)' }}>{kind === 'telemetry' ? t.recipeTelemetry : kind === 'alert' ? t.recipeAlert : t.recipeBroker}</div>
+            <div className="mt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{kind === 'telemetry' ? t.recipeTelemetryHint : kind === 'alert' ? t.recipeAlertHint : t.recipeBrokerHint}</div>
+          </button>)}
+        </div>
+      </section>
+      <SilencePanel
+        rules={silence.rules}
+        alerts={silence.alerts}
+        lastError={silence.lastError}
+        onAdd={silence.addRule}
+        onUpdate={silence.updateRule}
+        onRemove={silence.removeRule}
+        onToggle={silence.toggleRule}
+        onClearAlerts={silence.clearAlerts}
+        connected={connected}
+        t={t}
+      />
+
       {/* Autostart preference */}
       <div className="flex items-center justify-end">
         <label className="flex items-center gap-2 text-[11px] font-mono cursor-pointer px-3 py-1.5 rounded border" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border-panel)', background: 'var(--bg-panel)' }}>
           <input
             type="checkbox"
+            aria-label={t.bridgeAutoReconnect}
             checked={autoReconnect}
             onChange={(e) => setAutoReconnect(e.target.checked)}
             className="w-3.5 h-3.5"
@@ -489,7 +635,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
 
       {/* ---- Rules ---- */}
       <div className="panel">
-        <div className="panel-header">
+        <div className="panel-header flex-wrap gap-2">
           <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
             <Zap className="w-4 h-4" style={{ color: 'var(--accent)' }} />
             {t.bridgeRules}
@@ -516,6 +662,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
             <input
               ref={fileRef}
               type="file"
+              aria-label={t.importRules}
               accept=".json,application/json"
               className="hidden"
               onChange={(e) => {
@@ -528,12 +675,17 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <RefreshCw className="w-3 h-3" />
               {t.resetStats}
             </button>
-            <button onClick={() => setShowForm((v) => !v)} className="btn-accent !px-3 !py-1 flex items-center gap-1 text-[11px]">
-              <Plus className="w-3.5 h-3.5" />
-              {t.addRule}
-            </button>
+            {/* Hidden while the form is open: the form already has Cancel/Save,
+                and a second "Add Rule" button would be ambiguous for AT. */}
+            {!showForm && (
+              <button onClick={() => setShowForm(true)} className="btn-accent !px-3 !py-1 flex items-center gap-1 text-[11px]">
+                <Plus className="w-3.5 h-3.5" />
+                {t.addRule}
+              </button>
+            )}
           </div>
         </div>
+        {rules.some((r) => r.targetKind === 'http') && <div className="px-4 py-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>{t.webhookExportHint}</div>}
 
         {showForm && (
           <div className="px-4 py-4 border-b space-y-3" style={{ borderColor: 'var(--border-panel)', background: 'var(--bg-inset)' }}>
@@ -541,31 +693,106 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <span className="text-[11px] font-mono font-semibold" style={{ color: 'var(--accent)' }}>
                 {editingId ? `✎ ${t.editRule}` : `＋ ${t.addRule}`}
               </span>
-              <button onClick={closeForm} className="p-1 rounded" style={{ color: 'var(--text-muted)' }} title={t.cancel}>
+              <button onClick={closeForm} className="p-1 rounded" style={{ color: 'var(--text-muted)' }} title={t.cancel} aria-label={t.cancel}>
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <input
                 className="field-input"
+                aria-label={t.ruleName}
                 placeholder={t.ruleName}
                 value={draft.name}
                 onChange={(e) => set('name', e.target.value)}
               />
-              <select className="field-input" value={draft.sourceConn} onChange={(e) => setDraft((d) => ({ ...d, sourceConn: e.target.value, targetConn: d.sourceConn === e.target.value ? d.targetConn : e.target.value === 'src' ? 'dst' : 'src' }))}>
+              <select aria-label={`${t.bridgeRules} · ${t.bridgeSource}`} className="field-input" value={draft.sourceConn} onChange={(e) => setDraft((d) => ({ ...d, sourceConn: e.target.value, targetConn: d.sourceConn === e.target.value ? d.targetConn : e.target.value === 'src' ? 'dst' : 'src' }))}>
                 <option value="src">{t.bridgeSource} (src)</option>
                 <option value="dst">{t.bridgeTarget} (dst)</option>
               </select>
-              <select className="field-input" value={draft.targetConn} onChange={(e) => setDraft((d) => ({ ...d, targetConn: e.target.value, sourceConn: d.targetConn === e.target.value ? d.sourceConn : e.target.value === 'src' ? 'dst' : 'src' }))}>
+              <select aria-label={t.integrationTarget} className="field-input" value={draft.targetKind === 'http' ? 'http' : draft.targetConn} onChange={(e) => setDraft((d) => e.target.value === 'http' ? { ...d, targetKind: 'http' } : { ...d, targetKind: 'mqtt', targetConn: e.target.value, sourceConn: e.target.value === 'src' ? 'dst' : 'src' })}>
+                <option value="http">HTTP / Webhook</option>
                 <option value="dst">{t.bridgeTarget} (dst)</option>
                 <option value="src">{t.bridgeSource} (src)</option>
               </select>
             </div>
 
+            {draft.targetKind === 'http' && <div className="space-y-2 p-3 rounded-md border" style={{ borderColor: 'var(--info-border)', background: 'var(--info-soft)' }}>
+              <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}><span>{t.webhookUrl}</span><input aria-label={t.webhookUrl} className="field-input w-full" placeholder="http://localhost:8080/events" value={draft.webhook.url} onChange={(e) => set('webhook', { ...draft.webhook, url: e.target.value })} /></label>
+              <select aria-label={t.webhookBody} className="field-input w-full" value={draft.webhook.format} onChange={(e) => set('webhook', { ...draft.webhook, format: e.target.value as 'raw' | 'json' })}><option value="json">{t.webhookEnvelope}</option><option value="raw">{t.webhookRaw}</option></select>
+              <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}><span>{t.webhookHeaders}</span><textarea aria-label={t.webhookHeaders} className="field-input w-full h-16 font-mono" placeholder="Content-Type: application/json" spellCheck={false} value={headerText} onChange={(e) => setHeaderText(e.target.value)} /></label>
+
+              {extraSinks.length > 0 && (
+                <div className="space-y-2 pt-1" data-testid="extra-sinks">
+                  <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{t.extraSinks}</div>
+                  {extraSinks.map((s, i) => (
+                    <div key={i} className="space-y-1" data-testid={`extra-sink-${i}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>#{i + 1}</span>
+                        <input
+                          className="field-input w-full"
+                          aria-label={fill(t.extraSinkUrl, { n: String(i + 1) })}
+                          placeholder="https://archive.internal/ingest"
+                          value={s.url}
+                          onChange={(e) => setExtraSink(i, { url: e.target.value })}
+                        />
+                        <select
+                          className="field-input shrink-0"
+                          aria-label={`${t.webhookBody} #${i + 1}`}
+                          value={s.format}
+                          onChange={(e) => setExtraSink(i, { format: e.target.value as 'raw' | 'json' })}
+                        >
+                          <option value="json">{t.webhookEnvelope}</option>
+                          <option value="raw">{t.webhookRaw}</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => removeExtraSink(i)}
+                          className="p-1.5 rounded border shrink-0"
+                          style={{ borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }}
+                          title={t.removeSink}
+                          aria-label={`${t.removeSink} #${i + 1}`}
+                          data-testid={`extra-sink-remove-${i}`}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <textarea
+                        className="field-input w-full h-12 font-mono"
+                        aria-label={fill(t.extraSinkHeaders, { n: String(i + 1) })}
+                        placeholder="Authorization: Bearer ..."
+                        spellCheck={false}
+                        value={extraHeaderTexts[i] ?? ''}
+                        onChange={(e) => setExtraHeaderTexts((prev) => prev.map((p, n) => (n === i ? e.target.value : p)))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={addExtraSink}
+                  className="btn-ghost text-[11px] flex items-center gap-1 shrink-0"
+                  disabled={sinksFull}
+                  title={sinksFull ? fill(t.sinkLimitReached, { max: String(BRIDGE_MAX_EXTRA_SINKS) }) : t.addSinkHint}
+                  data-testid="sink-add"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {t.addSink}
+                </button>
+                <p className="text-[10px] leading-relaxed flex-1 min-w-[12rem]" style={{ color: 'var(--text-muted)' }}>
+                  {t.fanOutHint}
+                </p>
+              </div>
+              <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{t.webhookHint}</p>
+            </div>}
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
                 <textarea
                   className="field-input w-full h-16 resize-y font-mono"
+                  aria-label={t.sourceFilterMultiPlaceholder}
                   placeholder={t.sourceFilterMultiPlaceholder}
                   title={t.sourceFiltersMulti}
                   value={draft.sourceFilter}
@@ -581,13 +808,13 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   )}
                 </div>
               </div>
-              <select className="field-input self-start" value={draft.sourceQos} onChange={(e) => set('sourceQos', Number(e.target.value))}>
+              <select className="field-input self-start" aria-label={t.sourceQosLabel} value={draft.sourceQos} onChange={(e) => set('sourceQos', Number(e.target.value))}>
                 {[0, 1, 2].map((q) => <option key={q} value={q}>Sub QoS {q}</option>)}
               </select>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <select className="field-input" value={draft.topicMode} onChange={(e) => set('topicMode', e.target.value as BridgeRule['topicMode'])}>
+              <select className="field-input" aria-label={t.topicRewriteMode} value={draft.topicMode} onChange={(e) => set('topicMode', e.target.value as BridgeRule['topicMode'])}>
                 <option value="same">{t.topicKeepSame}</option>
                 <option value="prefix">{t.topicPrefixMap}</option>
                 <option value="fixed">{t.topicFixed}</option>
@@ -596,22 +823,23 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               </select>
               {draft.topicMode === 'prefix' && (
                 <>
-                  <input className="field-input" placeholder={t.prefixFrom} value={draft.prefixFrom} onChange={(e) => set('prefixFrom', e.target.value)} />
-                  <input className="field-input" placeholder={t.prefixTo} value={draft.prefixTo} onChange={(e) => set('prefixTo', e.target.value)} />
+                  <input className="field-input" aria-label={t.prefixFrom} placeholder={t.prefixFrom} value={draft.prefixFrom} onChange={(e) => set('prefixFrom', e.target.value)} />
+                  <input className="field-input" aria-label={t.prefixTo} placeholder={t.prefixTo} value={draft.prefixTo} onChange={(e) => set('prefixTo', e.target.value)} />
                 </>
               )}
               {draft.topicMode === 'fixed' && (
-                <input className="field-input md:col-span-2" placeholder={t.fixedTopicPlaceholder} value={draft.fixedTopic} onChange={(e) => set('fixedTopic', e.target.value)} />
+                <input className="field-input md:col-span-2" aria-label={t.fixedTopicPlaceholder} placeholder={t.fixedTopicPlaceholder} value={draft.fixedTopic} onChange={(e) => set('fixedTopic', e.target.value)} />
               )}
               {draft.topicMode === 'regex' && (
                 <>
-                  <input className="field-input" placeholder={t.regexPatternPlaceholder} value={draft.regexPattern} onChange={(e) => set('regexPattern', e.target.value)} />
-                  <input className="field-input" placeholder={t.regexReplacePlaceholder} value={draft.regexReplacement} onChange={(e) => set('regexReplacement', e.target.value)} />
+                  <input className="field-input" aria-label={t.regexPatternPlaceholder} placeholder={t.regexPatternPlaceholder} value={draft.regexPattern} onChange={(e) => set('regexPattern', e.target.value)} />
+                  <input className="field-input" aria-label={t.regexReplacePlaceholder} placeholder={t.regexReplacePlaceholder} value={draft.regexReplacement} onChange={(e) => set('regexReplacement', e.target.value)} />
                 </>
               )}
               {draft.topicMode === 'map' && (
                 <textarea
                   className="field-input md:col-span-2 h-20 resize-y font-mono"
+                  aria-label={t.topicMapPlaceholder}
                   placeholder={t.topicMapPlaceholder}
                   value={topicMapText}
                   onChange={(e) => setTopicMapText(e.target.value)}
@@ -622,17 +850,17 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="flex items-center gap-2">
-                <select className="field-input flex-1" value={draft.qosMode} onChange={(e) => set('qosMode', e.target.value as BridgeRule['qosMode'])}>
+                <select className="field-input flex-1" aria-label={t.forwardQosMode} value={draft.qosMode} onChange={(e) => set('qosMode', e.target.value as BridgeRule['qosMode'])}>
                   <option value="source">{t.qosFollowSource}</option>
                   <option value="fixed">{t.qosFixed}</option>
                 </select>
                 {draft.qosMode === 'fixed' && (
-                  <select className="field-input !w-20" value={draft.fixedQos} onChange={(e) => set('fixedQos', Number(e.target.value))}>
+                  <select aria-label={t.qosFixed} className="field-input !w-20" value={draft.fixedQos} onChange={(e) => set('fixedQos', Number(e.target.value))}>
                     {[0, 1, 2].map((q) => <option key={q} value={q}>QoS {q}</option>)}
                   </select>
                 )}
               </div>
-              <select className="field-input" value={draft.retainMode} onChange={(e) => set('retainMode', e.target.value as BridgeRule['retainMode'])}>
+              <select className="field-input" aria-label={t.retainModeLabel} value={draft.retainMode} onChange={(e) => set('retainMode', e.target.value as BridgeRule['retainMode'])}>
                 <option value="source">{t.retainFollow}</option>
                 <option value="on">{t.retainForceOn}</option>
                 <option value="off">{t.retainForceOff}</option>
@@ -640,6 +868,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <label className="flex items-center gap-2 text-[12px] font-mono cursor-pointer px-1" style={{ color: 'var(--text-secondary)' }}>
                 <input
                   type="checkbox"
+                  aria-label={t.forwardV5Props}
                   checked={draft.forwardProps}
                   onChange={(e) => set('forwardProps', e.target.checked)}
                   className="w-4 h-4"
@@ -675,6 +904,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   </div>
                   <textarea
                     className="field-input w-full h-24 resize-y font-mono text-[11px]"
+                    aria-label={t.transformScriptLabel}
                     placeholder={t.transformScriptPlaceholder}
                     value={draft.transformScript}
                     onChange={(e) => set('transformScript', e.target.value)}
@@ -685,6 +915,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   <div className="flex items-center gap-2 mt-1.5">
                     <input
                       className="field-input flex-1 font-mono text-[11px]"
+                      aria-label={t.testPayloadPlaceholder}
                       placeholder={t.testPayloadPlaceholder}
                       value={testPayload}
                       onChange={(e) => setTestPayload(e.target.value)}
@@ -693,11 +924,12 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     <button
                       type="button"
                       onClick={runScriptTest}
-                      disabled={!draft.transformScript.trim()}
+                      disabled={!draft.transformScript.trim() || testing}
+                      title={!draft.transformScript.trim() ? t.whyNoScript : testing ? t.whyBusy : t.runTest}
                       className="btn-ghost flex items-center gap-1 text-[11px] shrink-0"
                     >
                       <Play className="w-3 h-3" />
-                      {t.runTest}
+                      {testing ? t.testRunning : t.runTest}
                     </button>
                   </div>
                   {testResult !== null && (
@@ -718,6 +950,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     <div className="text-[10px] font-mono mb-1" style={{ color: 'var(--text-muted)' }}>{t.excludeTopics}</div>
                     <textarea
                       className="field-input w-full h-16 resize-y font-mono"
+                      aria-label={t.excludeTopics}
                       placeholder={'home/private/#\nhome/secret'}
                       value={excludeText}
                       onChange={(e) => setExcludeText(e.target.value)}
@@ -727,12 +960,14 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   <div className="space-y-2">
                     <input
                       className="field-input w-full"
+                      aria-label={t.payloadPrefixPlaceholder}
                       placeholder={t.payloadPrefixPlaceholder}
                       value={draft.payloadPrefix}
                       onChange={(e) => set('payloadPrefix', e.target.value)}
                     />
                     <input
                       className="field-input w-full"
+                      aria-label={t.payloadSuffixPlaceholder}
                       placeholder={t.payloadSuffixPlaceholder}
                       value={draft.payloadSuffix}
                       onChange={(e) => set('payloadSuffix', e.target.value)}
@@ -741,6 +976,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                       <label className="flex items-center gap-1.5 text-[11px] font-mono cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
                         <input
                           type="checkbox"
+                          aria-label={t.wrapJson}
                           checked={draft.wrapJson}
                           onChange={(e) => set('wrapJson', e.target.checked)}
                           className="w-3.5 h-3.5"
@@ -752,6 +988,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                         {t.rateLimit}
                         <input
                           type="number"
+                          aria-label={t.rateLimit}
                           min={0}
                           className="field-input !w-20"
                           value={draft.rateLimit || 0}
@@ -779,6 +1016,94 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
           </div>
         )}
 
+        {/* ---- Webhook outbox: only appears once the queue has anything to say ---- */}
+        {showOutbox && (
+          <div className="inset-box mx-4 mt-4 px-3 py-2.5 space-y-1.5" data-testid="outbox-panel">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Inbox className="w-3.5 h-3.5 shrink-0" style={{ color: outbox.error ? 'var(--danger)' : 'var(--accent)' }} />
+              <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {t.outboxTitle}
+              </span>
+              <span className="text-[11px] font-mono select-text" style={{ color: 'var(--text-muted)' }}>
+                {fill(t.outboxCounters, {
+                  queued: String(outbox.counts.pending),
+                  dead: String(outbox.counts.dead),
+                  retries: String(outbox.counts.retries),
+                  recovered: String(outbox.counts.delivered),
+                })}
+              </span>
+              {!outbox.error && (outbox.counts.pending > 0 || outbox.counts.dead > 0) && (
+                <div className="ml-auto flex items-center gap-2">
+                  {outbox.counts.pending > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void flushOutbox()}
+                      className="btn-ghost text-[11px] flex items-center gap-1"
+                      title={t.outboxRetryNowHint}
+                      data-testid="outbox-flush"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      {t.outboxRetryNow}
+                    </button>
+                  )}
+                  {outbox.counts.dead > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (pendingDropDead) {
+                          setPendingDropDead(false);
+                          void dropDeadLetters();
+                          return;
+                        }
+                        setPendingDropDead(true);
+                        setTimeout(() => setPendingDropDead((cur) => (cur ? false : cur)), 4000);
+                      }}
+                      className="btn-ghost text-[11px] flex items-center gap-1"
+                      style={pendingDropDead ? { color: 'var(--danger)', borderColor: 'var(--danger)' } : undefined}
+                      title={pendingDropDead ? t.outboxDropDeadConfirmHint : t.outboxDropDeadHint}
+                      data-testid="outbox-drop-dead"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      {pendingDropDead ? t.outboxDropDeadConfirm : t.outboxDropDead}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {outbox.error ? (
+              <div className="text-[10px] font-mono leading-relaxed select-text" style={{ color: 'var(--danger)' }} data-testid="outbox-error">
+                {fill(t.outboxUnavailable, { error: outbox.error })}
+              </div>
+            ) : (
+              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                {fill(t.outboxHint, { max: String(outbox.maxAttempts) })}
+              </div>
+            )}
+            {outbox.preview.length > 0 && (
+              <ul className="space-y-0.5 pt-0.5" data-testid="outbox-preview">
+                {outbox.preview.slice(0, 3).map((row, i) => (
+                  <li key={`${row.ruleId}-${row.targetIndex}-${i}`} className="text-[10px] font-mono truncate select-text" style={{ color: 'var(--text-muted)' }}>
+                    {rules.find((r) => r.id === row.ruleId)?.name ?? row.ruleId}
+                    {row.targetIndex > 0 && (
+                      <span className="ml-1" style={{ color: 'var(--accent)' }}>
+                        {fill(t.outboxSink, { n: String(row.targetIndex) })}
+                      </span>
+                    )}
+                    {' · '}{row.topic} ·{' '}
+                    {fill(t.outboxAttempt, { n: String(row.attempts), max: String(outbox.maxAttempts) })}
+                    {row.lastError ? ` · ${row.lastError}` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {outbox.counts.pending > 0 && !outbox.error && (
+              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--warning)' }} data-testid="outbox-idempotency">
+                {t.outboxIdempotencyNote}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="p-4 space-y-2.5">
           {rules.length === 0 && (
             <div className="text-center py-8 text-[12px] font-mono" style={{ color: 'var(--text-muted)' }}>
@@ -791,6 +1116,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <div key={r.id} className="inset-box px-3 py-2.5 flex items-center gap-3 flex-wrap">
                 <input
                   type="checkbox"
+                  aria-label={`${t.bridgeRules} · ${r.name}`}
                   checked={r.enabled}
                   onChange={() => toggleRule(r.id)}
                   className="w-4 h-4 shrink-0"
@@ -804,7 +1130,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     </span>
                     <ArrowRight className="w-3 h-3 shrink-0" style={{ color: 'var(--text-muted)' }} />
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded select-text" style={{ background: 'var(--bg-code)', color: 'var(--code-number)' }}>
-                      {r.targetConn}
+                      {r.targetKind === 'http' ? 'HTTP' : r.targetConn}
                       {r.topicMode === 'prefix' && r.prefixFrom ? ` → ${r.prefixTo}` : ''}
                     </span>
                   </div>
@@ -837,6 +1163,38 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                       ⊘ {s.dropped}
                     </span>
                   )}
+                  {(s?.queued ?? 0) > 0 && (
+                    <span
+                      className="text-[11px] font-mono px-2 py-1 rounded select-text"
+                      title={fill(t.outboxQueuedTip, { max: String(outbox.maxAttempts) })}
+                      style={{ background: 'color-mix(in srgb, var(--warning) 14%, transparent)', color: 'var(--warning)' }}
+                      data-testid={`outbox-queued-${r.id}`}
+                    >
+                      ⧗ {s.queued}
+                    </span>
+                  )}
+                  {(s?.dead ?? 0) > 0 && (
+                    <span
+                      className="text-[11px] font-mono px-2 py-1 rounded select-text"
+                      title={fill(t.outboxDeadTip, { max: String(outbox.maxAttempts) })}
+                      style={{ background: 'color-mix(in srgb, var(--danger) 14%, transparent)', color: 'var(--danger)' }}
+                      data-testid={`outbox-dead-${r.id}`}
+                    >
+                      ✕ {s.dead}
+                    </span>
+                  )}
+                  {(s?.queued ?? 0) > 0 && (
+                    <button
+                      onClick={() => void flushOutbox(r.id)}
+                      className="p-1.5 rounded border transition"
+                      style={{ borderColor: 'var(--border-inset)', color: 'var(--warning)' }}
+                      title={t.outboxRetryRuleHint}
+                      aria-label={t.outboxRetryNow}
+                      data-testid={`outbox-retry-${r.id}`}
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={() => startEdit(r)}
                     className="p-1.5 rounded border transition"
@@ -846,10 +1204,22 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => removeRule(r.id)}
+                    onClick={() => {
+                      if (pendingDelete === r.id) {
+                        setPendingDelete(null);
+                        void removeRule(r.id);
+                        return;
+                      }
+                      setPendingDelete(r.id);
+                      setTimeout(() => setPendingDelete((cur) => (cur === r.id ? null : cur)), 4000);
+                    }}
                     className="p-1.5 rounded border transition"
-                    style={{ borderColor: 'var(--border-inset)', color: 'var(--text-muted)' }}
-                    title={t.deleteRule}
+                    style={{
+                      borderColor: pendingDelete === r.id ? 'var(--danger)' : 'var(--border-inset)',
+                      color: pendingDelete === r.id ? 'var(--danger)' : 'var(--text-muted)',
+                    }}
+                    title={pendingDelete === r.id ? t.deleteConfirmAgain : t.deleteRule}
+                    aria-label={pendingDelete === r.id ? t.deleteConfirmAgain : t.deleteRule}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -866,11 +1236,12 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
           <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
             {t.bridgeLog}
             <span className="ml-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-              {t.logSummary
-                .replace('{sent}', String(totalSent))
-                .replace('{kept}', String(events.length))
-                .replace('{cap}', '150')
-                .replace('{shown}', '80')}
+              {fill(t.logSummary, {
+                sent: String(totalSent),
+                kept: String(events.length),
+                cap: String(EVENT_LOG_CAP),
+                shown: '80',
+              })}
             </span>
           </div>
           <button onClick={clearEvents} className="btn-ghost !px-2.5 !py-1 text-[11px]">{t.clearLog}</button>

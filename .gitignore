@@ -34,3 +34,5 @@ src-tauri/.updater-key-password
 
 # stray UI-diagnostic captures
 win-cap*.png
+test-results/
+playwright-report/

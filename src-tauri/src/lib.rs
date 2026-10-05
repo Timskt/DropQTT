@@ -1,10 +1,22 @@
 pub mod bridge;
+pub mod bench;
+pub mod acks;
+pub mod assertions;
 pub mod diagnostics;
+pub mod faults;
 pub mod history;
+pub mod metrics;
 pub mod mqtt_manager;
+pub mod outbox;
 pub mod protocol;
+pub mod rpc;
+pub mod responder;
+pub mod scheduler;
+pub mod silence;
 pub mod transport;
+pub mod topic;
 pub mod transform;
+pub mod webhook;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,6 +29,7 @@ use crate::protocol::{BrokerConfig, ConnectionStatus, ConsolePublishParams};
 pub struct AppState {
     pub mqtt: Arc<MqttManager>,
     pub bridge: Arc<BridgeManager>,
+    pub metrics: metrics::MetricsHub,
 }
 
 #[tauri::command]
@@ -44,6 +57,33 @@ async fn file_size(path: String) -> Result<u64, String> {
         return Err("path is not a regular file".to_string());
     }
     Ok(md.len())
+}
+
+/// Largest capture file the replay screen will read.
+///
+/// The path arrives from the native open dialog, so the user is the authority on it —
+/// but the bytes go into the webview's memory, so a 2 GB "capture" still has to be
+/// refused rather than tried.
+const MAX_CAPTURE_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Read a session capture back in, as text.
+#[tauri::command]
+async fn read_capture_file(path: String) -> Result<String, String> {
+    let md = std::fs::metadata(&path).map_err(|e| format!("open failed: {e}"))?;
+    if !md.is_file() {
+        return Err("path is not a regular file".to_string());
+    }
+    if md.len() > MAX_CAPTURE_BYTES {
+        return Err(format!(
+            "capture is {} MB, over the {} MB replay limit",
+            (md.len() + 1024 * 1023) / (1024 * 1024),
+            MAX_CAPTURE_BYTES / (1024 * 1024)
+        ));
+    }
+    // Lossy on purpose: a capture is JSON Lines, and the payload bytes inside it are
+    // base64, so nothing that matters can live outside valid UTF-8.
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("read failed: {e}"))
 }
 
 #[tauri::command]
@@ -77,9 +117,29 @@ async fn get_connection_status(state: State<'_, AppState>) -> Result<ConnectionS
 async fn get_diagnostics_snapshot(
     state: State<'_, AppState>,
 ) -> Result<diagnostics::DiagnosticsSnapshot, String> {
-    let mqtt = state.mqtt.diagnostics_snapshot().await;
-    let bridge = state.bridge.diagnostics_snapshot().await;
-    Ok(diagnostics::build_snapshot(mqtt, bridge))
+    Ok(metrics::snapshot(&state.mqtt, &state.bridge).await)
+}
+
+/// What the Prometheus endpoint is doing right now: always off until enabled.
+#[tauri::command]
+async fn get_metrics_status(state: State<'_, AppState>) -> Result<metrics::MetricsStatus, String> {
+    Ok(state.metrics.status())
+}
+
+/// Turn the scrape endpoint on or off.
+///
+/// A bind failure comes back as text instead of being logged and forgotten, because a
+/// toggle that silently does nothing is worse than a port conflict stated out loud.
+#[tauri::command]
+async fn set_metrics_endpoint(
+    state: State<'_, AppState>,
+    enabled: bool,
+    port: u16,
+) -> Result<metrics::MetricsStatus, String> {
+    state
+        .metrics
+        .configure(enabled, port, state.mqtt.clone(), state.bridge.clone())
+        .await
 }
 
 #[tauri::command]
@@ -104,29 +164,37 @@ async fn start_send_file(
 
 #[tauri::command]
 async fn pause_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
-    state.mqtt.pause_transfer(&transfer_id).await;
-    Ok(())
+    state.mqtt.pause_transfer(&transfer_id).await
 }
 
 #[tauri::command]
 async fn resume_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
-    state.mqtt.resume_transfer(&transfer_id).await;
-    Ok(())
+    state.mqtt.resume_transfer(&transfer_id).await
 }
 
 #[tauri::command]
-async fn cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
-    state.mqtt.cancel_transfer(&transfer_id).await;
-    Ok(())
+async fn cancel_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    state.mqtt.cancel_transfer(app, transfer_id).await
 }
 
 #[tauri::command]
 async fn subscribe_topic(
     state: State<'_, AppState>,
     topic: String,
-    qos: u8,
+    qos: Option<u8>,
+    options: Option<protocol::SubOptions>,
 ) -> Result<(), String> {
-    state.mqtt.subscribe_topic(topic, qos).await
+    // `options` supersedes the bare qos; keeping both lets older callers and the
+    // v3.1.1 UI path omit it entirely.
+    let opts = options.unwrap_or_else(|| protocol::SubOptions {
+        qos: qos.unwrap_or(1),
+        ..Default::default()
+    });
+    state.mqtt.subscribe_topic(topic, opts).await
 }
 
 #[tauri::command]
@@ -135,6 +203,24 @@ async fn unsubscribe_topic(
     topic: String,
 ) -> Result<(), String> {
     state.mqtt.unsubscribe_topic(topic).await
+}
+
+/// What the connected broker announced in its CONNACK (v5): QoS ceiling, retain
+/// availability, alias limit, packet-size limit, subscription kinds. The forms
+/// gate themselves on this so an unsupported request is refused before it can
+/// cost the session.
+#[tauri::command]
+async fn get_broker_capabilities(
+    state: State<'_, AppState>,
+) -> Result<crate::transport::ConnCapabilities, String> {
+    Ok(state.mqtt.broker_capabilities().await)
+}
+
+/// Ack verdicts for the subscriptions bar: which filters the broker refuses,
+/// which unsubscribes it refused, and which grants it capped at a lower QoS.
+#[tauri::command]
+async fn get_subscription_ack_state(state: State<'_, AppState>) -> Result<acks::AckState, String> {
+    Ok(state.mqtt.sub_ack_state().await)
 }
 
 #[tauri::command]
@@ -148,6 +234,15 @@ async fn get_subscription_stats(
 async fn reset_subscription_stats(state: State<'_, AppState>) -> Result<(), String> {
     state.mqtt.reset_subscription_stats().await;
     Ok(())
+}
+
+/// Filter -> the Subscription Identifier we asked this broker to label it with.
+/// Filters absent from this map have their hits matched locally.
+#[tauri::command]
+async fn get_subscription_ids(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, u32>, String> {
+    Ok(state.mqtt.get_subscription_ids().await)
 }
 
 /// Live per-topic traffic table (count / bytes / msgs-per-sec), hottest first
@@ -195,8 +290,51 @@ async fn query_history(
     search: String,
     direction: String,
     limit: i64,
+    since_ms: Option<i64>,
+    until_ms: Option<i64>,
 ) -> Result<Vec<history::HistoryRow>, String> {
-    Ok(state.mqtt.query_history(&search, &direction, limit).await)
+    state.mqtt.query_history(&search, &direction, limit, since_ms.unwrap_or(0), until_ms.unwrap_or(i64::MAX)).await
+}
+
+/// One token's whole life: a deviceId or a correlation value, every topic and
+/// both directions, oldest first. Each hit says which claim put it in the list.
+#[tauri::command]
+async fn history_trace(
+    state: State<'_, AppState>,
+    token: String,
+    limit: i64,
+    since_ms: Option<i64>,
+    until_ms: Option<i64>,
+) -> Result<history::TraceResult, String> {
+    state
+        .mqtt
+        .trace_history(&token, limit, since_ms.unwrap_or(0), until_ms.unwrap_or(i64::MAX))
+        .await
+}
+
+/// Who was talking, when, and how long each silence lasted. On demand only: it
+/// scans a window rather than an index, so it runs when the button is pressed.
+#[tauri::command]
+async fn history_timeline(
+    state: State<'_, AppState>,
+    search: Option<String>,
+    since_ms: i64,
+    until_ms: i64,
+    depth: i64,
+    gap_ms: i64,
+    max_entities: Option<i64>,
+) -> Result<history::TimelineResult, String> {
+    state
+        .mqtt
+        .history_timeline(
+            &search.unwrap_or_default(),
+            since_ms,
+            until_ms,
+            depth,
+            gap_ms,
+            max_entities.unwrap_or(24),
+        )
+        .await
 }
 
 /// Per-bucket message counts for the history trend chart
@@ -204,10 +342,40 @@ async fn query_history(
 async fn history_series(
     state: State<'_, AppState>,
     topic: String,
+    direction: Option<String>,
     bucket_ms: i64,
     since_ms: i64,
+    until_ms: Option<i64>,
 ) -> Result<Vec<history::HistorySeriesPoint>, String> {
-    Ok(state.mqtt.history_series(&topic, bucket_ms, since_ms).await)
+    state.mqtt.history_series(&topic, direction.as_deref().unwrap_or("all"), bucket_ms, since_ms, until_ms.unwrap_or(i64::MAX)).await
+}
+
+/// Per-topic totals over the window the list is showing
+#[tauri::command]
+async fn history_topics(
+    state: State<'_, AppState>,
+    search: Option<String>,
+    direction: Option<String>,
+    since_ms: i64,
+    until_ms: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Vec<history::HistoryTopicRow>, String> {
+    state
+        .mqtt
+        .history_topics(
+            &search.unwrap_or_default(),
+            &direction.unwrap_or_else(|| "all".to_string()),
+            since_ms,
+            until_ms.unwrap_or(i64::MAX),
+            limit.unwrap_or(20),
+        )
+        .await
+}
+
+/// How old history may get before it is trimmed; 0 keeps only the row cap.
+#[tauri::command]
+async fn set_history_retention(state: State<'_, AppState>, days: i64) -> Result<(), String> {
+    state.mqtt.set_history_retention(days).await
 }
 
 #[tauri::command]
@@ -224,15 +392,33 @@ async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 /// Built-in publish stress generator (loops back through our own subscription,
 /// exercising the batched feed + traffic stats under real load)
 #[tauri::command]
-async fn start_bench(
+async fn bench_start(
     app: AppHandle,
     state: State<'_, AppState>,
-    topic: String,
-    rate: u32,
-    size: u32,
-    duration: u32,
+    spec: bench::BenchSpec,
 ) -> Result<(), String> {
-    state.mqtt.start_bench(app, topic, rate, size, duration).await
+    state.mqtt.clone().bench_start(app, spec).await
+}
+
+#[tauri::command]
+async fn bench_progress(
+    state: State<'_, AppState>,
+) -> Result<Vec<bench::BenchProgress>, String> {
+    Ok(state.mqtt.bench_progress())
+}
+
+#[tauri::command]
+async fn bench_stop(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    state.mqtt.bench_stop(&app, &id).await
+}
+
+#[tauri::command]
+async fn bench_clear_finished(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(state.mqtt.bench_clear_finished())
 }
 
 #[tauri::command]
@@ -242,6 +428,58 @@ async fn publish_console(
     params: ConsolePublishParams,
 ) -> Result<(), String> {
     state.mqtt.publish_console(app, params).await
+}
+
+/// MQTT5 request/response: publish a request, watch its response topic, and
+/// pair the answer by correlation data (`rpc.rs` owns the matching rules).
+#[tauri::command]
+async fn rpc_request(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    spec: rpc::RpcSpec,
+) -> Result<rpc::RpcCall, String> {
+    state.mqtt.clone().rpc_request(app, spec).await
+}
+
+#[tauri::command]
+async fn rpc_list(state: State<'_, AppState>) -> Result<Vec<rpc::RpcCall>, String> {
+    Ok(state.mqtt.rpc_list().await)
+}
+
+#[tauri::command]
+async fn rpc_clear_finished(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(state.mqtt.rpc_clear_finished().await)
+}
+
+/// Start a backend-scheduled publish (see `scheduler.rs` for the state machine).
+#[tauri::command]
+async fn schedule_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    spec: scheduler::ScheduleSpec,
+) -> Result<(), String> {
+    state.mqtt.clone().schedule_start(app, spec).await
+}
+
+#[tauri::command]
+async fn schedule_stop(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    state.mqtt.schedule_stop(&app, &id).await
+}
+
+#[tauri::command]
+async fn schedule_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<scheduler::RunInfo>, String> {
+    Ok(state.mqtt.schedule_list())
+}
+
+#[tauri::command]
+async fn schedule_clear_finished(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(state.mqtt.schedule_clear_finished())
 }
 
 #[tauri::command]
@@ -304,6 +542,127 @@ async fn bridge_sync_rules(
     state.bridge.clone().sync_rules(app, rules).await
 }
 
+/// Replace the silence-watchdog rule set. Same lifecycle as bridge rules: the
+/// frontend owns persistence and pushes the whole set on every change.
+#[tauri::command]
+async fn silence_sync_rules(
+    state: State<'_, AppState>,
+    rules: Vec<silence::SilenceRule>,
+) -> Result<(), String> {
+    state.mqtt.silence_watchdog
+        .sync_rules(rules, chrono::Utc::now().timestamp())
+}
+
+/// Replace the message-assertion rule set and report what has been judged so far.
+/// A set with one bad predicate is refused whole, so the tallies never belong to a
+/// half-applied rule list.
+#[tauri::command]
+async fn assertions_sync_rules(
+    state: State<'_, AppState>,
+    rules: Vec<assertions::AssertionRule>,
+) -> Result<assertions::AssertionSnapshot, String> {
+    state.mqtt.assertions.sync_rules(rules)?;
+    Ok(state.mqtt.assertions.snapshot())
+}
+
+/// Turn one typed line into a structured rule, or say why it cannot be one. The
+/// grammar lives in Rust so a rule that would silently never fire cannot be saved.
+#[tauri::command]
+async fn assertions_parse_rule(
+    id: String,
+    filter: String,
+    predicate: String,
+    label: String,
+) -> Result<assertions::AssertionRule, String> {
+    let mut rule = assertions::parse_rule(&id, &filter, &predicate)?;
+    rule.label = label;
+    Ok(rule)
+}
+
+#[tauri::command]
+async fn assertions_state(state: State<'_, AppState>) -> Result<assertions::AssertionSnapshot, String> {
+    Ok(state.mqtt.assertions.snapshot())
+}
+
+/// Forget the tallies, keep the rules armed.
+#[tauri::command]
+async fn assertions_reset(state: State<'_, AppState>) -> Result<assertions::AssertionSnapshot, String> {
+    state.mqtt.assertions.reset();
+    Ok(state.mqtt.assertions.snapshot())
+}
+
+/// Replace the fault-injection rule set. Every rule reports what it has actually
+/// done, because a fault nobody can count is indistinguishable from a network problem.
+#[tauri::command]
+async fn faults_sync_rules(
+    state: State<'_, AppState>,
+    rules: Vec<faults::FaultRule>,
+) -> Result<Vec<faults::FaultRuleStats>, String> {
+    state.mqtt.faults.sync_rules(rules)?;
+    Ok(state.mqtt.faults.stats())
+}
+
+#[tauri::command]
+async fn faults_stats(state: State<'_, AppState>) -> Result<Vec<faults::FaultRuleStats>, String> {
+    Ok(state.mqtt.faults.stats())
+}
+
+#[tauri::command]
+async fn faults_reset(state: State<'_, AppState>) -> Result<Vec<faults::FaultRuleStats>, String> {
+    state.mqtt.faults.reset();
+    Ok(state.mqtt.faults.stats())
+}
+
+/// Replace the scripted-responder rule set. A rule whose reply answers its own
+/// trigger is a loop and is refused here, before it can generate traffic.
+#[tauri::command]
+async fn responder_sync_rules(
+    state: State<'_, AppState>,
+    rules: Vec<responder::ResponderRule>,
+) -> Result<Vec<responder::ResponderStats>, String> {
+    state.mqtt.responder.sync_rules(rules)?;
+    Ok(state.mqtt.responder.stats())
+}
+
+#[tauri::command]
+async fn responder_stats(state: State<'_, AppState>) -> Result<Vec<responder::ResponderStats>, String> {
+    Ok(state.mqtt.responder.stats())
+}
+
+#[tauri::command]
+async fn responder_reset(state: State<'_, AppState>) -> Result<Vec<responder::ResponderStats>, String> {
+    state.mqtt.responder.reset();
+    Ok(state.mqtt.responder.stats())
+}
+
+/// Queue state for the bridge panel: the counts come from SQLite, so a restart does
+/// not reset what is still owed.
+#[tauri::command]
+async fn bridge_outbox_state(
+    state: State<'_, AppState>,
+) -> Result<outbox::OutboxState, String> {
+    Ok(state.bridge.outbox_state())
+}
+
+/// Retry everything pending right now, or just one rule's share of it.
+#[tauri::command]
+async fn bridge_outbox_flush(
+    state: State<'_, AppState>,
+    rule_id: Option<String>,
+) -> Result<u64, String> {
+    state.bridge.outbox_flush(rule_id.as_deref())
+}
+
+/// Throw away the dead letters. Deliberately not automatic: a dead letter is the
+/// only evidence left that an endpoint was unreachable.
+#[tauri::command]
+async fn bridge_outbox_drop(
+    state: State<'_, AppState>,
+    rule_id: Option<String>,
+) -> Result<u64, String> {
+    state.bridge.outbox_drop_dead(rule_id.as_deref())
+}
+
 #[tauri::command]
 async fn bridge_stats(
     state: State<'_, AppState>,
@@ -337,7 +696,15 @@ async fn bridge_test_transform(
     let raw = base64::engine::general_purpose::STANDARD
         .decode(payload_base64.as_bytes())
         .map_err(|e| format!("invalid base64: {}", e))?;
-    match transform::apply_transform(trimmed, &topic, &Bytes::from(raw), 1, false) {
+    // Even a dry run gets the blocking pool: a runaway script is killed only at
+    // its deadline, and that time should not be borrowed from an async worker.
+    let script = trimmed.to_string();
+    match tokio::task::spawn_blocking(move || {
+        transform::apply_transform(&script, &topic, &Bytes::from(raw), 1, false)
+    })
+    .await
+    .map_err(|_| "transform worker panicked".to_string())?
+    {
         Ok(transform::TransformOutcome::Send(b)) => Ok(serde_json::json!({
             "action": "send",
             "payload": String::from_utf8_lossy(&b).to_string(),
@@ -363,6 +730,9 @@ async fn reveal_file(app: AppHandle, file_path: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything that could produce a snapshot: uptime is measured from process
+    // start, not from the first time someone opens the operations panel.
+    diagnostics::mark_start();
     let mqtt_manager = Arc::new(MqttManager::new());
     let bridge_manager = BridgeManager::new();
 
@@ -374,6 +744,8 @@ pub fn run() {
         .manage(AppState {
             mqtt: mqtt_manager,
             bridge: bridge_manager,
+            // Off by default: an open port is not something a restart should hand out.
+            metrics: metrics::MetricsHub::default(),
         })
         .setup(|app| {
             // Open the persistent message-history DB under app data dir and
@@ -389,24 +761,56 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("[dropqtt] app data dir unavailable: {e}"),
             }
+
+            // The webhook outbox needs the data dir too, and its absence has to be
+            // reported by the bridge panel rather than quietly disabling retries.
+            let bridge_for_outbox = app.state::<AppState>().bridge.clone();
+            let opened = match app.path().app_data_dir() {
+                Ok(dir) => {
+                    let _ = std::fs::create_dir_all(&dir);
+                    crate::outbox::Outbox::open(&dir.join("dropqtt_outbox.db")).map(Arc::new)
+                }
+                Err(e) => Err(format!("app data dir unavailable: {e}")),
+            };
+            let pump_error = opened.as_ref().err().cloned();
+            bridge_for_outbox.attach_outbox(opened);
+            if let Some(e) = pump_error {
+                eprintln!("[dropqtt] webhook outbox unavailable: {e}");
+            }
+            // One tick a second is enough: the backoff itself is seconds to minutes,
+            // and a pump that never returns would hold the shutdown path.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
+                    let state = app_handle.state::<AppState>();
+                    state.bridge.clone().pump_outbox(&app_handle).await;
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_default_download_dir,
             set_download_dir,
             file_size,
+            read_capture_file,
             connect_broker,
             disconnect_broker,
             test_broker_connection,
             get_connection_status,
             get_diagnostics_snapshot,
+            get_metrics_status,
+            set_metrics_endpoint,
             start_send_file,
             pause_transfer,
             resume_transfer,
             cancel_transfer,
             subscribe_topic,
             unsubscribe_topic,
+            get_subscription_ack_state,
+            get_broker_capabilities,
             get_subscription_stats,
+            get_subscription_ids,
             reset_subscription_stats,
             get_topic_stats,
             reset_topic_stats,
@@ -415,11 +819,25 @@ pub fn run() {
             query_history,
             history_series,
             history_stats,
+            history_trace,
+            history_timeline,
+            history_topics,
+            set_history_retention,
             clear_history,
             set_topic_stats_cap,
             get_topic_stats_cap,
-            start_bench,
+            bench_start,
+            bench_progress,
+            bench_stop,
+            bench_clear_finished,
             publish_console,
+            rpc_request,
+            rpc_list,
+            rpc_clear_finished,
+            schedule_start,
+            schedule_stop,
+            schedule_list,
+            schedule_clear_finished,
             approve_transfer,
             reject_transfer,
             set_auto_receive,
@@ -428,10 +846,48 @@ pub fn run() {
             bridge_disconnect,
             bridge_status,
             bridge_sync_rules,
+            silence_sync_rules,
+            assertions_sync_rules,
+            assertions_parse_rule,
+            assertions_state,
+            assertions_reset,
+            faults_sync_rules,
+            faults_stats,
+            faults_reset,
+            responder_sync_rules,
+            responder_stats,
+            responder_reset,
             bridge_stats,
+            bridge_outbox_state,
+            bridge_outbox_flush,
+            bridge_outbox_drop,
             bridge_reset_stats,
             bridge_test_transform
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let (mqtt, bridge) = {
+                    let state = window.state::<AppState>();
+                    (state.mqtt.clone(), state.bridge.clone())
+                };
+                let win = window.clone();
+                // Closing the window used to drop the process mid-session, so the
+                // broker saw an abnormal disconnect instead of a DISCONNECT. Hold
+                // the close briefly, tell both sides we are leaving, then destroy.
+                api.prevent_close();
+                tauri::async_runtime::spawn(async move {
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(1_200),
+                        async {
+                            mqtt.disconnect().await;
+                            bridge.disconnect_all().await;
+                        },
+                    )
+                    .await;
+                    let _ = win.destroy();
+                });
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

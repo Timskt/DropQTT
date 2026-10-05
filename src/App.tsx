@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { check } from '@tauri-apps/plugin-updater';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -10,8 +10,11 @@ import { BatchSender } from './components/file-transfer/BatchSender';
 import { ReceiverConfig } from './components/file-transfer/ReceiverConfig';
 import { TransferQueue } from './components/file-transfer/TransferQueue';
 import { SubscriptionsBar } from './components/mqttx/SubscriptionsBar';
+import { toast } from './utils/toast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { MessageStream } from './components/mqttx/MessageStream';
 import { MessagePublisher } from './components/mqttx/MessagePublisher';
+import { useBrokerCapabilities } from './hooks/useBrokerCapabilities';
 import { TopicTrafficPanel } from './components/mqttx/TopicTrafficPanel';
 import { BrokerSysPanel } from './components/mqttx/BrokerSysPanel';
 import { BridgePanel } from './components/bridge/BridgePanel';
@@ -20,9 +23,10 @@ import { SettingsModal } from './components/SettingsModal';
 import { ToastHost } from './components/ToastHost';
 import { OpsPanel } from './components/ops/OpsPanel';
 
-import { BrokerConfig } from './types';
-import { Language, translations } from './i18n';
-import { applyTheme, Theme } from './themes';
+import { BrokerConfig, MqttGenericMessage } from './types';
+import { traceTokenFor } from './utils/history';
+import { LANGUAGES, Language, Translations, fill, translations } from './i18n';
+import { applyTheme, THEMES, Theme } from './themes';
 import { usePersistentString } from './hooks/usePersistentState';
 import { useBroker } from './hooks/useBroker';
 import { useBridge } from './hooks/useBridge';
@@ -33,6 +37,26 @@ import { useBrokerSys } from './hooks/useBrokerSys';
 import { useHistoryCount } from './hooks/useHistoryCount';
 import { useTransfers } from './hooks/useTransfers';
 import { useBatchSender } from './hooks/useBatchSender';
+import { useRpc } from './hooks/useRpc';
+import { useAssertions } from './hooks/useAssertions';
+import { useFaults } from './hooks/useFaults';
+import { useResponder } from './hooks/useResponder';
+import { RpcPanel } from './components/mqttx/RpcPanel';
+import { ReplayPanel } from './components/mqttx/ReplayPanel';
+import { ScenarioPanel } from './components/mqttx/ScenarioPanel';
+import { DevicePanel } from './components/mqttx/DevicePanel';
+import { AssertionPanel } from './components/mqttx/AssertionPanel';
+import { FaultPanel } from './components/mqttx/FaultPanel';
+import { ResponderPanel } from './components/mqttx/ResponderPanel';
+import { CommandPalette, PaletteCommand } from './components/CommandPalette';
+
+const MODE_TITLES: Record<WorkspaceMode, (t: Translations) => string> = {
+  transfer: (t) => t.modeFileTransfer,
+  mqttx: (t) => t.modeMqttClient,
+  bridge: (t) => t.modeBridge,
+  history: (t) => t.modeHistory,
+  ops: (t) => t.modeOps,
+};
 
 export function App() {
   // ---- Workspace preferences (raw-string localStorage keys, back-compat) ----
@@ -48,6 +72,11 @@ export function App() {
   const [themeStr, setThemeStr] = usePersistentString('dropqtt_theme', 'cyberpunk');
   const theme = themeStr as Theme;
 
+  // Row spacing, and the palette that opens with Ctrl/Cmd+K. The palette exists for
+  // discoverability, so its own entry point has to be visible too.
+  const [density, setDensity] = usePersistentString('dropqtt_density', 'cozy');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
   const t = translations[lang] || translations['zh-CN'];
 
   useEffect(() => {
@@ -58,6 +87,12 @@ export function App() {
     document.documentElement.lang = lang;
   }, [lang]);
 
+  // Density is a view preference like the theme: one attribute on the root, and CSS
+  // tightens every row without a re-render of the feed.
+  useEffect(() => {
+    document.documentElement.dataset.density = density === 'compact' ? 'compact' : 'cozy';
+  }, [density]);
+
   // ---- File-transfer topic configuration ----
   const [publishTopic, setPublishTopic] = usePersistentString('dropqtt_publish_topic', 'dropqtt/public-lobby');
   const [subscribeTopic, setSubscribeTopic] = usePersistentString('dropqtt_subscribe_topic', 'dropqtt/public-lobby/#');
@@ -67,7 +102,7 @@ export function App() {
   // registry at connect time, messages need the connection flag.
   const getConsoleTopicsRef = useRef<() => { topic: string; qos: number }[]>(() => []);
   const subscribeTopicRef = useRef(subscribeTopic);
-  subscribeTopicRef.current = subscribeTopic;
+  useEffect(() => { subscribeTopicRef.current = subscribeTopic; }, [subscribeTopic]);
 
   const broker = useBroker({
     getTopicsToRegister: () => [
@@ -77,7 +112,7 @@ export function App() {
   });
 
   const mqtt = useMqttMessages(broker.isConnected);
-  getConsoleTopicsRef.current = mqtt.getTopicsToRegister;
+  useEffect(() => { getConsoleTopicsRef.current = mqtt.getTopicsToRegister; }, [mqtt.getTopicsToRegister]);
 
   // Persisted-history row count → drives the sidebar "报文历史" badge
   const historyCount = useHistoryCount(broker.isConnected);
@@ -97,6 +132,8 @@ export function App() {
 
   // Broker $SYS health metrics (console + connected only)
   const brokerSys = useBrokerSys(broker.isConnected && activeMode === 'mqttx');
+  // The broker's own account of its limits, read from the CONNACK.
+  const brokerCaps = useBrokerCapabilities(broker.isConnected);
 
   const handleClearRetained = async (topics: string[]) => {
     for (const topic of topics) {
@@ -109,6 +146,44 @@ export function App() {
       });
     }
   };
+
+  // ---- Feed row workbench ----
+  // A row is where "what was this answering?" arises, so the moves live there:
+  // follow its correlation in the history trace, filter the feed to its topic,
+  // republish its bytes as a request, or copy the equivalent CLI command.
+  const [traceRequest, setTraceRequest] = useState<string | null>(null);
+  // One object per connected broker: the row memo compares it by identity, so
+  // rebuilding it on every render would re-render the whole feed.
+  const brokerTarget = useMemo(
+    () => ({ host: broker.config.host, port: broker.config.port, tls: !!broker.config.useTls }),
+    [broker.config.host, broker.config.port, broker.config.useTls],
+  );
+
+  const handleTraceFromRow = useCallback((m: MqttGenericMessage) => {
+    setTraceRequest(traceTokenFor(m));
+    setModeStr('history');
+  }, [setModeStr]);
+
+  const handleSendRowAsRpc = useCallback(async (m: MqttGenericMessage) => {
+    // A new identity, deliberately: replaying a request with the *old* correlation
+    // would pair this answer with whoever asked first.
+    const correlation = `dq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    await invoke('rpc_request', {
+      spec: {
+        topic: m.topic,
+        payloadBase64: m.payloadBase64,
+        qos: m.qos,
+        retain: false,
+        timeoutMs: 5000,
+        attempts: 1,
+        responseTopic: m.responseTopic?.trim() || `${m.topic}/reply`,
+        correlationData: correlation,
+        contentType: m.contentType ?? undefined,
+        userProperties: m.userProperties ?? [],
+      },
+    });
+    toast.success(t.rpcSendDone);
+  }, [t.rpcSendDone]);
 
   const transferState = useTransfers();
   const batch = useBatchSender({
@@ -130,14 +205,18 @@ export function App() {
   // ---- Connections & topics wiring ----
   const handleConnect = (cfg: BrokerConfig) => {
     broker.connect(cfg).catch((err) => {
-      console.error('Connection failed:', err);
+      // A connect that fails silently is indistinguishable from one that never
+      // was asked for; the status dot says "disconnected" either way.
+      toast.error(`${t.connectFailed}: ${err instanceof Error ? err.message : String(err)}`);
     });
   };
 
   const handleApplySubscribeTopic = async (top: string) => {
     setSubscribeTopic(top);
     if (broker.isConnected) {
-      await broker.registerTopic(top.trim(), 1).catch((e) => console.error('registerTopic:', e));
+      await broker.registerTopic(top.trim(), 1).catch((e) => {
+        toast.error(`${fill(t.subscribeFailed, { topic: top.trim() })}: ${e}`);
+      });
     }
   };
 
@@ -149,7 +228,10 @@ export function App() {
         setDownloadDir(selected);
       }
     } catch (e) {
+      // The picker closing is not an error, but a refused `set_download_dir` is:
+      // without this the box looks unchanged with no reason attached.
       console.error(e);
+      toast.error(`${t.downloadDirFailed}: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -167,13 +249,151 @@ export function App() {
         setUpdateStatusText(t.upToDate);
       }
     } catch (err) {
+      // "Already up to date" is a claim about the release channel, and a failed
+      // request says nothing of the kind. Say what actually happened.
       console.error(err);
-      setUpdateStatusText(t.upToDate);
+      setUpdateStatusText(t.updateCheckFailed);
+      toast.error(`${t.updateCheckFailed}: ${err instanceof Error ? err.message : String(err)}`);
     }
     setTimeout(() => setUpdateStatusText(null), 4000);
   };
 
   const isV5 = (broker.config.protocolVersion ?? 3) === 5;
+
+  // Request/response calls live in Rust; the console lists them while it is open
+  const rpc = useRpc(activeMode === 'mqttx', broker.isConnected);
+
+  // Rules stay armed in Rust when the console closes; only the tallies stop polling
+  const assertions = useAssertions(activeMode === 'mqttx');
+  const faults = useFaults(activeMode === 'mqttx');
+  const responder = useResponder(activeMode === 'mqttx');
+
+  // Ctrl/Cmd+K opens the palette from anywhere, including while a panel has focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /** Switch workspace, then land on the control a person would press next. The
+   *  delay is one paint: the target panel does not exist until the mode renders. */
+  const focusInMode = (mode: WorkspaceMode, selector: string, activate = false) => {
+    setModeStr(mode);
+    window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (!el) return;
+      el.scrollIntoView({ block: 'center' });
+      if (activate) el.click();
+      else (el as HTMLInputElement).focus?.();
+    }, 80);
+  };
+  const focusInConsole = (selector: string) => focusInMode('mqttx', selector);
+
+  const paletteCommands: PaletteCommand[] = [
+    { id: 'go-transfer', group: t.paletteGroupWorkspace, label: t.modeFileTransfer, run: () => setModeStr('transfer') },
+    { id: 'go-mqttx', group: t.paletteGroupWorkspace, label: t.modeMqttClient, run: () => setModeStr('mqttx') },
+    { id: 'go-bridge', group: t.paletteGroupWorkspace, label: t.modeBridge, run: () => setModeStr('bridge') },
+    { id: 'go-history', group: t.paletteGroupWorkspace, label: t.modeHistory, run: () => setModeStr('history') },
+    { id: 'go-ops', group: t.paletteGroupWorkspace, label: t.modeOps, run: () => setModeStr('ops') },
+    {
+      id: 'toggle-connect',
+      group: t.paletteGroupConnection,
+      label: broker.isConnected ? t.paletteDisconnect : t.paletteConnect,
+      hint: `${broker.config.host}:${broker.config.port}`,
+      run: () => void broker.toggleConnect(),
+    },
+    { id: 'settings', group: t.paletteGroupConnection, label: t.paletteSettings, run: () => setIsSettingsOpen(true) },
+    {
+      id: 'pause-feed',
+      group: t.paletteGroupConsole,
+      label: mqtt.paused ? t.paletteResumeFeed : t.palettePauseFeed,
+      hint: `${mqtt.messages.length}`,
+      run: () => mqtt.togglePaused(),
+    },
+        {
+      id: 'bench',
+      group: t.paletteGroupConsole,
+      label: t.paletteOpenBench,
+      // The bench lab lives inside the traffic panel, so this is the two keystrokes
+      // a person would make by hand: go to the console, then press the control.
+      run: () => {
+        setModeStr('mqttx');
+        window.setTimeout(() => document.querySelector<HTMLButtonElement>('[data-testid=bench-toggle]')?.click(), 60);
+      },
+    },
+    {
+      id: 'theme',
+      group: t.paletteGroupView,
+      label: t.paletteTheme,
+      hint: theme,
+      run: () => setThemeStr(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]),
+    },
+    {
+      id: 'language',
+      group: t.paletteGroupView,
+      label: t.paletteLanguage,
+      hint: lang,
+      run: () => setLangStr(LANGUAGES[(LANGUAGES.indexOf(lang) + 1) % LANGUAGES.length]),
+    },
+    {
+      id: 'density',
+      group: t.paletteGroupView,
+      label: density === 'compact' ? t.paletteDensityCozy : t.paletteDensityCompact,
+      run: () => setDensity(density === 'compact' ? 'cozy' : 'compact'),
+    },
+    // The capabilities the review called undiscoverable — shared subscriptions, RPC,
+    // tracing, replay — are real and complete, and hidden inside collapsed panels.
+    // Each of these is the two keystrokes a person would make by hand.
+    {
+      id: 'subscribe',
+      group: t.paletteGroupFeatures,
+      label: t.paletteSubscribe,
+      hint: String(mqtt.subscriptions.length),
+      run: () => focusInConsole('[data-testid=sub-topic-input]'),
+    },
+    {
+      id: 'responder',
+      group: t.paletteGroupFeatures,
+      label: t.paletteResponder,
+      run: () => focusInConsole('[data-testid=responder-add]'),
+    },
+    {
+      id: 'replay',
+      group: t.paletteGroupFeatures,
+      label: t.paletteReplay,
+      run: () => focusInConsole('[data-testid=replay-load]'),
+    },
+    {
+      id: 'scenario',
+      group: t.paletteGroupFeatures,
+      label: t.paletteScenario,
+      run: () => focusInConsole('[data-testid=scenario-paste]'),
+    },
+    {
+      id: 'trace',
+      group: t.paletteGroupFeatures,
+      label: t.paletteTrace,
+      run: () => focusInMode('history', '[data-testid=trace-token]'),
+    },
+    {
+      id: 'timeline',
+      group: t.paletteGroupFeatures,
+      label: t.paletteTimeline,
+      run: () => focusInMode('history', '[data-testid=timeline-build]', true),
+    },
+    ...broker.profiles.map((p) => ({
+      id: `profile-${p.id}`,
+      group: t.paletteGroupProfiles,
+      label: p.name,
+      hint: `${p.config.host}:${p.config.port}`,
+      run: () => broker.selectProfile(p),
+    })),
+  ];
 
   return (
     <div className="min-h-screen flex overflow-hidden font-sans">
@@ -213,6 +433,7 @@ export function App() {
           onTestLatency={() => broker.testLatency(broker.config)}
           onToggleConnect={broker.toggleConnect}
           isConnecting={broker.isConnecting}
+          onOpenPalette={() => setPaletteOpen(true)}
           t={t}
         />
 
@@ -235,9 +456,12 @@ export function App() {
         )}
 
         <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto p-4 space-y-4 outline-none">
+          {/* Keyed by mode so switching workspaces clears a prior failure. */}
+          <ErrorBoundary area={MODE_TITLES[activeMode](t)} t={t}>
           {activeMode === 'ops' ? (
             <OpsPanel
               t={t}
+              caps={brokerCaps}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onOpenConsole={() => setModeStr('mqttx')}
               onOpenHistory={() => setModeStr('history')}
@@ -251,15 +475,18 @@ export function App() {
             <HistoryPanel
               t={t}
               connected={broker.isConnected}
-              isV5={isV5}
+              requestTrace={traceRequest}
+              brokerLabel={`${broker.config.host}:${broker.config.port}`}
               onPublish={(params) => mqtt.publish(params)}
               onSubscribe={(topic) => {
-                mqtt.addSubscription(topic, 1).catch((e) => console.error('subscribe:', e));
+                mqtt.addSubscription(topic, 1).catch((e) => {
+                  toast.error(`${fill(t.subscribeFailed, { topic })}: ${e}`);
+                });
               }}
             />
           ) : activeMode === 'bridge' ? (
             /* Mode 3: Broker-to-Broker Data Bridge */
-            <BridgePanel options={bridgeOptions} bridge={bridge} onOpenSettings={() => setIsSettingsOpen(true)} t={t} />
+            <BridgePanel options={bridgeOptions} bridge={bridge} onOpenSettings={() => setIsSettingsOpen(true)} connected={broker.isConnected} t={t} />
           ) : activeMode === 'transfer' ? (
             /* Mode 1: File Transfer Hub */
             <div className="space-y-4 max-w-6xl mx-auto">
@@ -300,6 +527,7 @@ export function App() {
                 onReveal={transferState.revealFile}
                 onApprove={transferState.approveTransfer}
                 onReject={transferState.rejectTransfer}
+                onResend={(item) => void transferState.resendTransfer(item)}
                 onClearFinished={transferState.clearFinished}
                 t={t}
               />
@@ -312,27 +540,18 @@ export function App() {
                 onAddSubscription={mqtt.addSubscription}
                 onRemoveSubscription={mqtt.removeSubscription}
                 hitStats={subStats.stats}
+                subIds={subStats.ids}
+                ack={subStats.ack}
+                caps={brokerCaps}
                 onResetStats={subStats.resetStats}
                 connected={broker.isConnected}
+                isV5={isV5}
                 t={t}
               />
 
-              <BrokerSysPanel
-                rows={brokerSys.rows}
-                connected={broker.isConnected}
-                onClear={brokerSys.clear}
-                t={t}
-              />
-
-              <TopicTrafficPanel
-                rows={topicStats.rows}
-                onReset={topicStats.resetTopicStats}
-                connected={broker.isConnected}
-                cap={topicStats.cap}
-                setCap={topicStats.setCap}
-                t={t}
-              />
-
+              {/* The live feed is the working surface; the two reference panels
+                  (broker $SYS, per-topic rates) sit under it rather than above, so
+                  the first thing on screen is the traffic itself. */}
               <MessageStream
                 messages={mqtt.messages}
                 onClearMessages={mqtt.clearMessages}
@@ -347,24 +566,118 @@ export function App() {
                     properties: {
                       contentType: m.contentType,
                       userProperties: m.userProperties ?? [],
+                      // Without these an MQTT5 RPC replay loses its reply
+                      // address and the responder's correlation never matches.
+                      responseTopic: m.responseTopic,
+                      correlationData: m.correlationData,
+                      // The lossless form travels with it, so replaying a stored
+                      // binary correlation does not turn it into replacement chars.
+                      correlationHex: m.correlationHex,
                     },
                   })
                 }
                 onQuickSubscribe={(topic) => {
-                  mqtt.addSubscription(topic, 1).catch((e) => console.error('subscribe:', e));
+                  mqtt.addSubscription(topic, 1).catch((e) => {
+                    toast.error(`${fill(t.subscribeFailed, { topic })}: ${e}`);
+                  });
                 }}
                 paused={mqtt.paused}
+                broker={brokerTarget}
+                onTrace={handleTraceFromRow}
+                onSendAsRpc={handleSendRowAsRpc}
                 pendingCount={mqtt.pendingCount}
                 feedDropped={mqtt.feedDropped}
                 onTogglePaused={mqtt.togglePaused}
                 t={t}
               />
 
+              <BrokerSysPanel
+                rows={brokerSys.rows}
+                connected={broker.isConnected}
+                onClear={brokerSys.clear}
+                t={t}
+              />
+
+              <TopicTrafficPanel
+                rows={topicStats.rows}
+                series={topicStats.series}
+                onReset={topicStats.resetTopicStats}
+                connected={broker.isConnected}
+                cap={topicStats.cap}
+                setCap={topicStats.setCap}
+                t={t}
+              />
+
+              {/* The field question is "which gateway", not "which topic": one card
+                  per prefix, fed only by counters that already exist. */}
+              <DevicePanel t={t} rows={topicStats.rows} violations={assertions.recent} />
+
+              <AssertionPanel
+                rules={assertions.rules}
+                stats={assertions.stats}
+                armed={assertions.armed}
+                recent={assertions.recent}
+                lastError={assertions.lastError}
+                onAdd={assertions.addRule}
+                onRemove={assertions.removeRule}
+                onToggle={assertions.toggleRule}
+                onReset={assertions.reset}
+                t={t}
+              />
+
+              <FaultPanel
+                rules={faults.rules}
+                stats={faults.stats}
+                lastError={faults.lastError}
+                onAdd={faults.addRule}
+                onUpdate={faults.updateRule}
+                onRemove={faults.removeRule}
+                onToggle={faults.toggleRule}
+                onReset={faults.reset}
+                t={t}
+              />
+
+              <ResponderPanel
+                rules={responder.rules}
+                stats={responder.stats}
+                lastError={responder.lastError}
+                connected={broker.isConnected}
+                onAdd={responder.addRule}
+                onUpdate={responder.updateRule}
+                onRemove={responder.removeRule}
+                onToggle={responder.toggleRule}
+                onReset={responder.reset}
+                t={t}
+              />
+
               <MessagePublisher
                 onPublishMessage={mqtt.publish}
+                onRpcRequest={isV5 && broker.isConnected ? rpc.request : undefined}
                 connected={broker.isConnected}
                 isV5={isV5}
+                caps={brokerCaps}
                 t={t}
+              />
+
+              {isV5 && <RpcPanel calls={rpc.calls} onClearFinished={rpc.clearFinished} t={t} />}
+
+              {/* Replay is offered in both protocol versions; the panel itself says
+                  which fields a 3.1.1 session cannot carry. */}
+              <ReplayPanel t={t} connected={broker.isConnected} isV5={isV5} onPublish={mqtt.publish} />
+
+              {/* One file, one verdict: the scenario composes sets that already exist
+                  and states which parts it could not install here. */}
+              <ScenarioPanel
+                t={t}
+                isV5={isV5}
+                subscriptions={mqtt.subscriptions}
+                responders={responder.rules}
+                assertions={assertions.rules}
+                assertionStats={assertions.stats}
+                rejectedSubs={Object.keys(subStats.ack.rejected ?? {}).length}
+                onReplaceResponders={responder.replaceRules}
+                onReplaceAssertions={assertions.replaceRules}
+                onSubscribe={(topic, qos, options) => void mqtt.addSubscription(topic, qos, undefined, options)}
               />
 
               {/* Console-side error surface for failed publishes */}
@@ -376,8 +689,16 @@ export function App() {
               )}
             </div>
           )}
+        </ErrorBoundary>
         </main>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        commands={paletteCommands}
+        onClose={() => setPaletteOpen(false)}
+        t={t}
+      />
 
       {/* Global toast surface */}
       <ToastHost />

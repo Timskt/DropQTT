@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Power, Server, ChevronDown, Check } from 'lucide-react';
+import { Activity, Power, Server } from 'lucide-react';
 import { BrokerConfig, BrokerProfile } from '../types';
 import { Translations } from '../i18n';
 import { WorkspaceMode } from './Sidebar';
@@ -15,6 +15,8 @@ interface BrokerStatusBarProps {
   onTestLatency: () => void;
   onToggleConnect: () => void;
   isConnecting: boolean;
+  /** Opens the command palette. Optional so a caller without one stays unchanged. */
+  onOpenPalette?: () => void;
   t: Translations;
 }
 
@@ -38,6 +40,7 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
   latency,
   isTesting,
   onTestLatency,
+  onOpenPalette,
   onToggleConnect,
   isConnecting,
   t,
@@ -45,7 +48,7 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
   const accent = modeAccent(activeMode);
   return (
     <header
-      className="h-11 border-b px-4 flex items-center justify-between text-xs select-none"
+      className="min-h-11 shrink-0 border-b px-4 py-2 flex flex-wrap gap-2 items-center justify-between text-xs select-none"
       style={{ background: 'var(--bg-panel)', borderColor: 'var(--border-panel)', color: 'var(--text-secondary)' }}
     >
       {/* Left: Mode Title + Target Broker */}
@@ -68,50 +71,26 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
         <div className="h-3 w-px" style={{ background: 'var(--border-panel)' }} />
 
         {/* Profile Selector */}
-        <div className="relative group">
-          <button
-            className="flex items-center space-x-1.5 inset-box px-2 py-0.5 transition hover:brightness-110"
-            style={{ color: 'var(--text-secondary)' }}
-          >
+        <div className="flex items-center gap-1.5 min-w-0">
             <Server className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
-            <span className="truncate max-w-[130px] font-medium font-mono" style={{ color: 'var(--text-primary)' }}>
-              {config.host}:{config.port}
-            </span>
-            <ChevronDown className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
-          </button>
-
-          <div
-            className="absolute left-0 top-full mt-1 w-56 rounded-md border shadow-xl py-1 z-50 hidden group-hover:block"
-            style={{ background: 'var(--bg-panel-solid)', borderColor: 'var(--border-panel)' }}
+          <select
+            aria-label={t.brokerProfiles}
+            className="field-input max-w-[210px] !py-1 !px-2"
+            disabled={isConnecting}
+            value=""
+            onChange={(e) => {
+              const profile = profiles.find((p) => p.id === e.target.value);
+              if (profile) onSelectProfile(profile);
+            }}
           >
-            <div className="px-2.5 py-1 ui-label font-semibold" style={{ borderBottom: '1px solid var(--border-inset)' }}>
-              {t.brokerProfiles}
-            </div>
-            {profiles.map((p) => {
-              const isActive = p.config.host === config.host && p.config.port === config.port;
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => onSelectProfile(p)}
-                  className="w-full text-left px-2.5 py-1.5 text-xs flex items-center justify-between transition hover:brightness-110"
-                  style={{ color: 'var(--text-secondary)' }}
-                >
-                  <div className="min-w-0">
-                    <div className="font-medium truncate" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
-                    <div className="text-[10px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>
-                      {p.config.host}:{p.config.port}
-                    </div>
-                  </div>
-                  {isActive && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--info)' }} />}
-                </button>
-              );
-            })}
-          </div>
+            <option value="" disabled>{config.host}:{config.port}</option>
+            {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.config.host}:{p.config.port}</option>)}
+          </select>
         </div>
       </div>
 
       {/* Right: Latency, ClientID, Connection Action */}
-      <div className="flex items-center space-x-3">
+      <div className="flex items-center space-x-3 ml-auto">
         {/* Latency badge with ping trigger */}
         <button
           onClick={onTestLatency}
@@ -126,6 +105,19 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
           />
           <span>{isTesting ? '...' : latency !== null ? `${latency}ms` : 'PING'}</span>
         </button>
+        {onOpenPalette && (
+          <button
+            type="button"
+            onClick={onOpenPalette}
+            title={t.paletteOpen}
+            aria-label={t.paletteOpen}
+            data-testid="palette-trigger"
+            className="px-2 py-1 rounded text-[10px] font-mono border transition hover:opacity-100"
+            style={{ borderColor: 'var(--border-inset)', color: 'var(--text-secondary)' }}
+          >
+            ⌘K
+          </button>
+        )}
 
         {/* Client ID pill */}
         <div className="hidden md:flex items-center space-x-1 text-[11px] inset-box px-2 py-0.5" style={{ color: 'var(--text-muted)' }}>
@@ -140,6 +132,7 @@ export const BrokerStatusBar: React.FC<BrokerStatusBarProps> = ({
         <button
           onClick={onToggleConnect}
           disabled={isConnecting}
+          title={isConnecting ? t.whyBusy : undefined}
           className="flex items-center space-x-1.5 px-3 py-1 rounded text-xs font-semibold tracking-wide transition border"
           style={
             connected

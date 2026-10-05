@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
+import { formatBytes } from '../../utils/format';
 import {
   Layers, ArrowUpRight, ArrowDownRight, Pause, Play, X, FolderOpen,
-  ShieldCheck, Check, Trash2, AlertTriangle,
+  ShieldCheck, Check, Trash2, AlertTriangle, RotateCcw,
 } from 'lucide-react';
 import { TransferProgress, TransferStatus } from '../../types';
 import { Translations } from '../../i18n';
@@ -14,17 +15,11 @@ interface TransferQueueProps {
   onReveal: (path: string) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onResend: (item: TransferProgress) => void;
   onClearFinished: () => void;
   t: Translations;
 }
 
-const formatBytes = (bytes: number) => {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
 
 const formatSpeed = (bps: number) => {
   if (!bps || bps <= 0) return '0 B/s';
@@ -65,6 +60,8 @@ const statusVar = (status: TransferStatus, isSend: boolean): string => {
       return 'var(--fuchsia)';
     case 'sent':
       return 'var(--sky)';
+    case 'confirm_timeout':
+      return 'var(--warn)';
     case 'failed':
       return 'var(--bad)';
     case 'cancelled':
@@ -92,7 +89,7 @@ const IconAction: React.FC<{ title: string; hoverVar: string; onClick: () => voi
 );
 
 const TransferRow = React.memo(function TransferRow({
-  item, t, onPause, onResume, onCancel, onReveal, onApprove, onReject,
+  item, t, onPause, onResume, onCancel, onReveal, onApprove, onReject, onResend,
 }: {
   item: TransferProgress;
   t: Translations;
@@ -102,13 +99,16 @@ const TransferRow = React.memo(function TransferRow({
   onReveal: (path: string) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onResend: (item: TransferProgress) => void;
 }) {
   const percent =
     item.totalBytes > 0
       ? Math.min(100, Math.round((item.bytesTransferred / item.totalBytes) * 100))
       : item.status === 'completed' || item.status === 'delivered' || item.status === 'sent'
         ? 100
-        : 0;
+        : item.status === 'confirm_timeout'
+          ? 100
+          : 0;
   const isSend = item.direction === 'send';
   const active = item.status === 'transferring' || item.status === 'paused';
   const fill = statusVar(item.status, isSend);
@@ -130,6 +130,8 @@ const TransferRow = React.memo(function TransferRow({
         return t.cancelled;
       case 'sent':
         return t.sent;
+      case 'confirm_timeout':
+        return t.confirmTimeout;
       default:
         return `${percent}%`;
     }
@@ -197,6 +199,15 @@ const TransferRow = React.memo(function TransferRow({
               <FolderOpen className="w-3 h-3" />
             </IconAction>
           )}
+          {/* A send that got no receipt, or failed outright, can be retried —
+              as a new transfer, never as a replay of the same id. */}
+          {isSend &&
+            item.savePath &&
+            (item.status === 'confirm_timeout' || item.status === 'failed') && (
+              <IconAction title={t.resendHint} hoverVar="var(--info)" onClick={() => onResend(item)}>
+                <RotateCcw className="w-3 h-3" />
+              </IconAction>
+            )}
         </div>
       </div>
 
@@ -238,11 +249,16 @@ const TransferRow = React.memo(function TransferRow({
 });
 
 export const TransferQueue: React.FC<TransferQueueProps> = ({
-  transfers, onPause, onResume, onCancel, onReveal, onApprove, onReject, onClearFinished, t,
+  transfers, onPause, onResume, onCancel, onReveal, onApprove, onReject, onResend, onClearFinished, t,
 }) => {
   const items = useMemo(() => Object.values(transfers).reverse(), [transfers]);
   const finishedCount = items.filter(
-    (i) => i.status === 'completed' || i.status === 'failed' || i.status === 'cancelled' || i.status === 'delivered',
+    (i) =>
+      i.status === 'completed' ||
+      i.status === 'failed' ||
+      i.status === 'cancelled' ||
+      i.status === 'delivered' ||
+      i.status === 'confirm_timeout',
   ).length;
 
   return (
@@ -278,6 +294,7 @@ export const TransferQueue: React.FC<TransferQueueProps> = ({
                 onReveal={onReveal}
                 onApprove={onApprove}
                 onReject={onReject}
+                onResend={onResend}
               />
             </div>
           ))}

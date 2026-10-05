@@ -1,5 +1,6 @@
 import { MqttGenericMessage } from '../types';
 import { base64ToUint8, uint8ToUtf8 } from './cbor';
+import { csvRow } from './csv';
 
 /**
  * Export the console message feed as JSON or CSV.
@@ -9,9 +10,6 @@ import { base64ToUint8, uint8ToUtf8 } from './cbor';
 
 export type ExportFormat = 'json' | 'csv';
 
-const csvEscape = (v: string): string =>
-  /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-
 function payloadToText(msg: MqttGenericMessage): string {
   // payloadBase64 is the wire truth; the plain field may be lossy-converted
   return msg.payloadBase64 ? uint8ToUtf8(base64ToUint8(msg.payloadBase64)) : msg.payload;
@@ -20,12 +18,15 @@ function payloadToText(msg: MqttGenericMessage): string {
 export function messagesToJson(messages: MqttGenericMessage[]): string {
   const rows = [...messages].reverse().map((m) => ({
     timestamp: m.timestamp,
+    timestampMs: m.timestampMs ?? null,
     direction: m.direction,
     topic: m.topic,
     qos: m.qos,
     retain: m.retain,
     contentType: m.contentType ?? null,
-    userProperties: m.userProperties ?? {},
+    userProperties: m.userProperties ?? [],
+    responseTopic: m.responseTopic ?? null,
+    correlationData: m.correlationData ?? null,
     payloadLen: m.payloadLen,
     truncated: m.truncated,
     payload: payloadToText(m),
@@ -37,19 +38,17 @@ export function messagesToJson(messages: MqttGenericMessage[]): string {
 export function messagesToCsv(messages: MqttGenericMessage[]): string {
   const header = 'timestamp,direction,topic,qos,retain,contentType,payloadLen,truncated,payload';
   const lines = [...messages].reverse().map((m) =>
-    [
+    csvRow([
       m.timestamp,
       m.direction,
       m.topic,
-      String(m.qos),
-      String(m.retain),
+      m.qos,
+      m.retain,
       m.contentType ?? '',
-      String(m.payloadLen),
-      String(m.truncated),
+      m.payloadLen,
+      m.truncated,
       payloadToText(m),
-    ]
-      .map(csvEscape)
-      .join(','),
+    ]),
   );
   return [header, ...lines].join('\n');
 }

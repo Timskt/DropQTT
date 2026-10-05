@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ConsolePublishParams, FeedBatch, MqttGenericMessage, TopicSubscription } from '../types';
+import { ConsolePublishParams, FeedBatch, MqttGenericMessage, SubOptions, TopicSubscription } from '../types';
 import { usePersistentState } from './usePersistentState';
+import { currentTranslations, fill } from '../i18n';
 import { toast } from '../utils/toast';
 import { observeTopic } from '../utils/topicStore';
 
-const MAX_MESSAGES = 500;
+/// Rows the feed keeps in memory. The cap is visible in the panel, not a
+/// silent truncation: the older rows are in History.
+export const MAX_MESSAGES = 500;
 
 const DEFAULT_SUBS: TopicSubscription[] = [
   { topic: 'dropqtt/#', qos: 1, color: '#06b6d4' },
@@ -28,10 +31,10 @@ export function useMqttMessages(isConnected: boolean) {
   // Cumulative backend feed drops under overload (stats stay exact)
   const [feedDropped, setFeedDropped] = useState(0);
   const pausedRef = useRef(paused);
-  pausedRef.current = paused;
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
   const pendingRef = useRef<MqttGenericMessage[]>([]);
   const connectedRef = useRef(isConnected);
-  connectedRef.current = isConnected;
+  useEffect(() => { connectedRef.current = isConnected; }, [isConnected]);
 
   useEffect(() => {
     let disposed = false;
@@ -50,8 +53,15 @@ export function useMqttMessages(isConnected: boolean) {
           observeTopic(topic);
         }
         if (pausedRef.current) {
-          // Buffer while the feed is frozen; flush on resume (capped)
-          pendingRef.current = [...incoming, ...pendingRef.current].slice(0, MAX_MESSAGES);
+          // Buffer while the feed is frozen; flush on resume (capped). The cap is
+          // the same silent-loss mechanism as the live buffer, so overflow here
+          // joins the same dropped counter instead of vanishing quietly.
+          const merged = [...incoming, ...pendingRef.current];
+          pendingRef.current = merged.slice(0, MAX_MESSAGES);
+          const lostWhilePaused = merged.length - pendingRef.current.length;
+          if (lostWhilePaused > 0) {
+            setFeedDropped((n) => n + lostWhilePaused);
+          }
           setPendingCount(pendingRef.current.length);
           return;
         }
@@ -85,19 +95,19 @@ export function useMqttMessages(isConnected: boolean) {
 
   /** Current subscription list snapshot (for connect-time registration) */
   const subscriptionsRef = useRef(subscriptions);
-  subscriptionsRef.current = subscriptions;
+  useEffect(() => { subscriptionsRef.current = subscriptions; }, [subscriptions]);
 
   const addSubscription = useCallback(
-    async (topic: string, qos: number, color?: string) => {
+    async (topic: string, qos: number, color?: string, options?: SubOptions) => {
       const trimmed = topic.trim();
       if (!trimmed || subscriptionsRef.current.some((s) => s.topic === trimmed)) return;
       setSubscriptions((prev) =>
         prev.some((s) => s.topic === trimmed)
           ? prev
-          : [...prev, { topic: trimmed, qos, color, createdAt: new Date().toLocaleTimeString() }],
+          : [...prev, { topic: trimmed, qos, color, options, createdAt: new Date().toLocaleTimeString() }],
       );
       if (connectedRef.current) {
-        await invoke('subscribe_topic', { topic: trimmed, qos }).catch((e) => {
+        await invoke('subscribe_topic', { topic: trimmed, qos, options }).catch((e) => {
           toast.error(`订阅失败 ${trimmed}: ${e instanceof Error ? e.message : String(e)}`);
         });
       }
@@ -109,8 +119,10 @@ export function useMqttMessages(isConnected: boolean) {
     async (topic: string) => {
       setSubscriptions((prev) => prev.filter((s) => s.topic !== topic));
       if (connectedRef.current) {
+        // The local chip is already gone, so a failed UNSUBSCRIBE means the broker
+        // is still delivering on something the UI no longer lists.
         await invoke('unsubscribe_topic', { topic }).catch((e) => {
-          console.error('Unsubscribe error:', e);
+          toast.error(`${fill(currentTranslations().unsubscribeFailed, { topic })}: ${e}`);
         });
       }
     },
@@ -125,7 +137,7 @@ export function useMqttMessages(isConnected: boolean) {
   const clearMessages = useCallback(() => setMessages([]), []);
 
   const getTopicsToRegister = useCallback(
-    () => subscriptionsRef.current.map((s) => ({ topic: s.topic, qos: s.qos })),
+    () => subscriptionsRef.current.map((s) => ({ topic: s.topic, qos: s.qos, options: s.options })),
     [],
   );
 

@@ -17,15 +17,20 @@ import {
   Terminal,
   Wifi,
 } from 'lucide-react';
-import { DiagnosticLevel } from '../../types';
+import { BrokerCapabilities, DiagnosticLevel } from '../../types';
+import { formatBytes, formatUptime } from '../../utils/format';
 import { Translations } from '../../i18n';
 import { useDiagnostics } from '../../hooks/useDiagnostics';
+import { EnvironmentCard } from './EnvironmentCard';
+import { MetricsCard } from './MetricsCard';
 import { copyToClipboard } from '../../utils/clipboard';
 import { saveTextFile } from '../../utils/exportMessages';
 import { toast } from '../../utils/toast';
 
 interface OpsPanelProps {
   t: Translations;
+  /** What the connected broker announced in its CONNACK. */
+  caps?: BrokerCapabilities | null;
   onOpenSettings: () => void;
   onOpenConsole: () => void;
   onOpenHistory: () => void;
@@ -34,6 +39,53 @@ interface OpsPanelProps {
   onTestLatency: () => void;
   isTestingLatency: boolean;
 }
+
+/**
+ * The broker's own account of its limits. Everything the publish and subscribe
+ * forms refuse to send is derived from this, so it has to be readable somewhere
+ * that is not a tooltip — "the broker said no" is the sentence that settles a
+ * support conversation.
+ */
+const CapsCard: React.FC<{ caps: BrokerCapabilities | null | undefined; t: Translations }> = ({ caps, t }) => {
+  const row = (label: string, value: string, ok = true) => (
+    <div key={label} className="flex items-baseline justify-between gap-2 text-[11px]">
+      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+      <span
+        className="font-mono"
+        style={{ color: ok ? 'var(--text-primary)' : 'var(--danger)' }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+  return (
+    <div className="panel p-3">
+      <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+        {t.opsBrokerCapabilities}
+      </div>
+      {!caps ? (
+        <div className="text-[11px] italic" style={{ color: 'var(--text-muted)' }}>
+          {t.capAnnouncedAfterConnect}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1" data-testid="broker-caps">
+          {row(t.qosLevel, String(caps.maxQos))}
+          {row(t.retain, caps.retainAvailable ? t.capAvailable : t.capUnavailable, caps.retainAvailable)}
+          {row(t.subShareToggle, caps.sharedAvailable ? t.capAvailable : t.capUnavailable, caps.sharedAvailable)}
+          {row(t.capRowWildcard, caps.wildcardAvailable ? t.capAvailable : t.capUnavailable, caps.wildcardAvailable)}
+          {row(t.capRowAlias, String(caps.topicAliasMax))}
+          {row(t.capRowReceive, String(caps.receiveMax))}
+          {caps.maxPacketSize ? row(t.capRowPacket, formatBytes(caps.maxPacketSize)) : null}
+          {caps.serverKeepAlive ? row('keep-alive', `${caps.serverKeepAlive} s`) : null}
+          {caps.sessionExpiry ? row('session-expiry', `${caps.sessionExpiry} s`) : null}
+          {caps.assignedClientId ? row(t.capAssignedClientId, caps.assignedClientId) : null}
+          {caps.responseInformation ? row(t.capResponseInfo, caps.responseInformation) : null}
+          {caps.serverReference ? row(t.capServerRef, caps.serverReference) : null}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const levelChip = (level: DiagnosticLevel) =>
   level === 'ok' ? 'chip-ok' : level === 'warn' ? 'chip-warn' : 'chip-bad';
@@ -48,6 +100,7 @@ const checkTitle = (id: string, t: Translations): string => {
     case 'feed_pressure': return t.opsCheckFeed;
     case 'transfer_activity': return t.opsCheckTransfers;
     case 'bridge_health': return t.opsCheckBridge;
+    case 'fault_injection': return t.opsCheckFaults;
     default: return id;
   }
 };
@@ -87,6 +140,7 @@ const Section: React.FC<{
 
 export const OpsPanel: React.FC<OpsPanelProps> = ({
   t,
+  caps,
   onOpenSettings,
   onOpenConsole,
   onOpenHistory,
@@ -170,7 +224,13 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
           <Metric label={t.opsSubscriptions} value={snapshot?.mqtt.subscriptions ?? '—'} hint={`${snapshot?.mqtt.topicStatsCount ?? 0} ${t.opsTrackedTopics}`} />
           <Metric label={t.opsBridgeConnections} value={`${snapshot?.bridge.connectedConnections ?? 0}/${snapshot?.bridge.totalConnections ?? 0}`} hint={`${snapshot?.bridge.enabledRules ?? 0} ${t.opsEnabledRules}`} />
         </div>
+
+        <div className="px-3 pb-3">
+          <CapsCard caps={caps} t={t} />
+        </div>
       </div>
+
+      <EnvironmentCard t={t} />
 
       {!snapshot ? (
         <div className="panel p-10 text-center text-xs" style={{ color: 'var(--text-muted)' }}>{t.opsNoSnapshot}</div>
@@ -180,6 +240,11 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
             <Section icon={<Terminal className="w-4 h-4" />} title={t.opsRuntime}>
               <div className="ops-metric-grid">
                 <Metric label={t.opsVersion} value={`v${snapshot.runtime.appVersion}`} />
+                <Metric
+                  label={t.opsUptime}
+                  value={formatUptime(snapshot.runtime.uptimeSecs ?? 0)}
+                  hint={t.opsUptimeHint}
+                />
                 <Metric label={t.opsPlatform} value={`${snapshot.runtime.os} / ${snapshot.runtime.arch}`} />
                 <Metric label={t.opsProtocol} value={snapshot.mqtt.protocolVersion === 5 ? 'MQTT 5.0' : 'MQTT 3.1.1'} />
                 <Metric label={t.opsTransport} value={snapshot.mqtt.useWebsocket ? (snapshot.mqtt.useTls ? 'WSS' : 'WebSocket') : (snapshot.mqtt.useTls ? 'TLS' : 'TCP')} color={snapshot.mqtt.useTls ? 'var(--ok)' : 'var(--warn)'} />
@@ -209,6 +274,81 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                 <Metric label={t.clientId} value={snapshot.mqtt.clientId || '—'} />
                 <Metric label={t.opsSubscriptions} value={snapshot.mqtt.subscriptions} />
                 <Metric label={t.opsTrackedTopics} value={snapshot.mqtt.topicStatsCount} />
+                {/* Background publishers keep running after the console is closed,
+                    so they have to be visible somewhere the user can audit. */}
+                <Metric
+                  label={t.opsScheduledRuns}
+                  value={snapshot.mqtt.scheduledRuns}
+                  color={snapshot.mqtt.scheduledRuns ? 'var(--ok)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsBenchRuns}
+                  value={snapshot.mqtt.benchRuns}
+                  color={snapshot.mqtt.benchRuns ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsConfirmTimeouts}
+                  value={snapshot.mqtt.confirmTimeouts}
+                  color={snapshot.mqtt.confirmTimeouts ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsRejectedSubs}
+                  value={snapshot.mqtt.subscriptionsRejected ?? 0}
+                  color={snapshot.mqtt.subscriptionsRejected ? 'var(--danger)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsRefusedUnsubs}
+                  value={snapshot.mqtt.unsubscribesRejected ?? 0}
+                  color={snapshot.mqtt.unsubscribesRejected ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsPublishRejected}
+                  value={snapshot.mqtt.publishRejected ?? 0}
+                  color={snapshot.mqtt.publishRejected ? 'var(--danger)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsFeedFlushMs}
+                  value={`${snapshot.mqtt.feedFlush?.avgMs ?? 0} / ${snapshot.mqtt.feedFlush?.maxMs ?? 0}`}
+                  hint={`${snapshot.mqtt.feedFlush?.totalCalls ?? 0} ${t.opsCalls}`}
+                  color={(snapshot.mqtt.feedFlush?.maxMs ?? 0) >= 500 ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsFeedLagMs}
+                  value={`${snapshot.mqtt.feedLag?.avgMs ?? 0} / ${snapshot.mqtt.feedLag?.maxMs ?? 0}`}
+                  hint={t.opsLagHint}
+                  color={(snapshot.mqtt.feedLag?.maxMs ?? 0) >= 500 ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsHistoryWriteMs}
+                  value={`${snapshot.mqtt.historyWrite?.avgMs ?? 0} / ${snapshot.mqtt.historyWrite?.maxMs ?? 0}`}
+                  hint={`${snapshot.mqtt.historyWrite?.totalCalls ?? 0} ${t.opsCalls}`}
+                />
+                <Metric
+                  label={t.opsReceivedTotal}
+                  value={(snapshot.mqtt.receivedTotal ?? 0).toLocaleString()}
+                  hint={t.opsLifetimeHint}
+                  color="var(--sky)"
+                />
+                <Metric
+                  label={t.opsSentTotal}
+                  value={(snapshot.mqtt.sentTotal ?? 0).toLocaleString()}
+                  hint={t.opsLifetimeHint}
+                />
+                <Metric
+                  label={t.opsAcksUnattributed}
+                  value={snapshot.mqtt.acksUnattributed ?? 0}
+                  color={snapshot.mqtt.acksUnattributed ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsRpcPending}
+                  value={snapshot.mqtt.rpcPending ?? 0}
+                  color={snapshot.mqtt.rpcPending ? 'var(--warn)' : 'var(--text-primary)'}
+                />
+                <Metric
+                  label={t.opsRpcTimeouts}
+                  value={snapshot.mqtt.rpcTimeouts ?? 0}
+                  color={snapshot.mqtt.rpcTimeouts ? 'var(--warn)' : 'var(--text-primary)'}
+                />
               </div>
             </Section>
 
@@ -218,6 +358,8 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                 <Metric label={t.opsOutgoing} value={snapshot.mqtt.outgoingActive} color="var(--info)" />
                 <Metric label={t.opsBuffered} value={`${snapshot.mqtt.feedBuffered}/${snapshot.mqtt.feedBufferCapacity}`} />
                 <Metric label={t.opsDropped} value={snapshot.mqtt.feedDropped} color={snapshot.mqtt.feedDropped ? 'var(--warn)' : 'var(--text-primary)'} />
+                {/* Non-zero here means retention itself failed, not just display. */}
+                <Metric label={t.opsFeedLost} value={snapshot.mqtt.feedLost} color={snapshot.mqtt.feedLost ? 'var(--bad)' : 'var(--text-primary)'} />
               </div>
               <div className="flex gap-2 mt-3">
                 <button type="button" onClick={onOpenConsole} className="btn-ghost !px-2.5 !py-1.5 text-[10px]"><Terminal className="inline w-3 h-3 mr-1" />{t.opsOpenConsole}</button>
@@ -228,6 +370,13 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
               <div className="ops-metric-grid">
                 <Metric label={t.opsHistoryRows} value={snapshot.mqtt.history.rows.toLocaleString()} color="var(--sky)" />
                 <Metric label={t.opsHistoryStore} value={snapshot.mqtt.historyAvailable ? t.opsAvailable : t.opsUnavailable} color={snapshot.mqtt.historyAvailable ? 'var(--ok)' : 'var(--warn)'} />
+                {/* The write path is deliberately best-effort; the only way to
+                    know it lost something is for the count to be on screen. */}
+                <Metric
+                  label={t.opsHistoryLost}
+                  value={(snapshot.mqtt.history.lostRows ?? 0).toLocaleString()}
+                  color={snapshot.mqtt.history.lostRows ? 'var(--warn)' : 'var(--text-primary)'}
+                />
                 <Metric label={t.opsDownloadDir} value={snapshot.mqtt.downloadDirWritable ? t.opsWritable : t.opsReadOnly} color={snapshot.mqtt.downloadDirWritable ? 'var(--ok)' : 'var(--bad)'} hint={snapshot.mqtt.downloadDir} />
                 <Metric label={t.inbound} value={snapshot.mqtt.history.inbound.toLocaleString()} />
                 <Metric label={t.outbound} value={snapshot.mqtt.history.outbound.toLocaleString()} />
@@ -265,6 +414,8 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
               ))}
             </div>
           </Section>
+
+          <MetricsCard t={t} />
 
           <div className="panel p-3 flex items-start gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             <Gauge className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--info)' }} />

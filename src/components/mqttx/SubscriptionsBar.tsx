@@ -1,17 +1,30 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Radio, X, RotateCcw } from 'lucide-react';
-import { TopicSubscription } from '../../types';
-import { Translations } from '../../i18n';
+import { Plus, Radio, X, RotateCcw, SlidersHorizontal, Users } from 'lucide-react';
+import { BrokerCapabilities, SubOptions, TopicSubscription, subOptionsDefaults } from '../../types';
+import { Translations, fill } from '../../i18n';
+import { ackHex, describeAck } from '../../utils/ackReason';
+import type { SubscriptionAck } from '../../hooks/useSubscriptionStats';
 import { useObservedTopics } from '../../utils/topicStore';
 
 interface SubscriptionsBarProps {
   subscriptions: TopicSubscription[];
-  onAddSubscription: (topic: string, qos: number, color?: string) => void;
+  onAddSubscription: (topic: string, qos: number, color?: string, options?: SubOptions) => void;
   onRemoveSubscription: (topic: string) => void;
   /** Topic filter -> inbound publish hit count (backend-maintained) */
   hitStats: Record<string, number>;
+  /**
+   * Topic filter -> Subscription Identifier we asked the broker to label it with.
+   * A filter missing here has its hits counted by our own topic matching.
+   */
+  subIds: Record<string, number>;
+  /** What the broker actually said about each filter (SUBACK verdicts) */
+  ack: SubscriptionAck;
+  /** CONNACK capabilities: a filter the broker cannot serve is refused here. */
+  caps?: BrokerCapabilities | null;
   onResetStats: () => void;
   connected: boolean;
+  /** v5 subscription options have no v3.1.1 wire equivalent. */
+  isV5: boolean;
   t: Translations;
 }
 
@@ -22,12 +35,23 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
   onAddSubscription,
   onRemoveSubscription,
   hitStats,
+  subIds,
+  ack,
+  caps,
   onResetStats,
   connected,
+  isV5,
   t,
 }) => {
   const [topicInput, setTopicInput] = useState('');
   const [qos, setQos] = useState<number>(0);
+  const [opts, setOpts] = useState<SubOptions>(subOptionsDefaults(0));
+  const [showOptions, setShowOptions] = useState(false);
+  const [sharedOn, setSharedOn] = useState(false);
+  const [shareGroup, setShareGroup] = useState('');
+  // A submit that cannot build a filter has to say so: silently doing nothing is
+  // how the share-group case presented itself in testing — the button looked dead.
+  const [shareError, setShareError] = useState(false);
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
   const observedTopics = useObservedTopics();
   // Suggest live topics not already subscribed (drop trailing segment into a filter later)
@@ -41,15 +65,77 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
 
   const totalHits = Object.values(hitStats).reduce((a, b) => a + b, 0);
 
+  /** `$share/<group>/<filter>` -> the group, for display only. */
+  const shareGroupOf = (topic: string): string | null => {
+    const m = /^\$share\/([^/]+)\/(.+)$/.exec(topic);
+    return m ? m[1] : null;
+  };
+
+  /**
+   * Roll-up per share group. This is everything a client can honestly say: which
+   * groups this instance subscribes through, and how many messages it received
+   * through them. How many *other* members a group has is not observable from a
+   * subscription — the broker decides the split and tells nobody — so the panel
+   * says that instead of estimating it.
+   */
+  const groups = useMemo(() => {
+    const byName = new Map<string, { name: string; subs: number; hits: number }>();
+    for (const sub of subscriptions) {
+      const name = shareGroupOf(sub.topic);
+      if (!name) continue;
+      const entry = byName.get(name) ?? { name, subs: 0, hits: 0 };
+      entry.subs += 1;
+      entry.hits += hitStats[sub.topic] ?? 0;
+      byName.set(name, entry);
+    }
+    return [...byName.values()].sort((a, b) => b.hits - a.hits || a.name.localeCompare(b.name));
+  }, [subscriptions, hitStats]);
+
+  const composedTopic = (): string => {
+    const raw = topicInput.trim();
+    if (isV5 && sharedOn && shareGroup.trim()) return `$share/${shareGroup.trim()}/${raw}`;
+    return raw;
+  };
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
+    const topic = composedTopic();
     if (!topicInput.trim()) return;
-    onAddSubscription(topicInput.trim(), qos, selectedColor);
+    if (sharedOn && !shareGroup.trim()) {
+      setShareError(true);
+      return;
+    }
+    setShareError(false);
+    onAddSubscription(topic, qos, selectedColor, isV5 ? { ...opts, qos } : undefined);
     setTopicInput('');
     // Cycle to next color
     const nextIdx = (COLOR_PALETTE.indexOf(selectedColor) + 1) % COLOR_PALETTE.length;
     setSelectedColor(COLOR_PALETTE[nextIdx]);
   };
+
+  // A refused filter is the one case where the broker contradicts the green dot.
+  const refusalNote = (topic: string): { label: string; detail: string } | null => {
+    const r = ack.rejected[topic];
+    if (!r) return null;
+    const label = describeAck(r.code, 'sub', t);
+    const detail = [
+      `${ackHex(r.code)} ${label}`,
+      t.subQuarantinedHint,
+      r.reasonString ? `broker: ${r.reasonString}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return { label, detail };
+  };
+
+  const activeFlags = (o?: SubOptions) =>
+    o
+      ? [
+          o.noLocal && 'noLocal',
+          o.retainAsPublished && 'retainAsPublished',
+          o.retainHandling !== 0 && `retainHandling=${o.retainHandling}`,
+        ].filter(Boolean)
+      : [];
 
   return (
     <div className="panel p-4 space-y-3.5 font-mono">
@@ -59,7 +145,7 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           <span>{t.subscriptions} ({subscriptions.length})</span>
           {totalHits > 0 && (
             <span className="text-[11px] font-normal" style={{ color: 'var(--text-muted)' }}>
-              · {t.hitTotal.replace('{count}', String(totalHits))}
+              · {fill(t.hitTotal, { count: String(totalHits) })}
             </span>
           )}
         </span>
@@ -84,9 +170,11 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
             value={topicInput}
             onChange={(e) => setTopicInput(e.target.value)}
             placeholder={t.topicPattern}
+            aria-label={t.topicPattern}
             list="dropqtt-observed-topics"
             className="field-input w-full"
             style={{ color: 'var(--success)' }}
+            data-testid="sub-topic-input"
           />
           <datalist id="dropqtt-observed-topics">
             {topicSuggestions.map((tp) => (
@@ -99,11 +187,75 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
           value={qos}
           onChange={(e) => setQos(Number(e.target.value))}
           className="field-input px-2.5"
+          aria-label={t.qosLevel}
+          title={caps ? fill(t.capQosCeiling, { n: String(caps.maxQos) }) : undefined}
         >
-          <option value={0}>QoS 0</option>
-          <option value={1}>QoS 1</option>
-          <option value={2}>QoS 2</option>
+          {[0, 1, 2].map((q) => (
+            <option key={q} value={q} disabled={!!caps && q > caps.maxQos}>
+              QoS {q}
+              {caps && q > caps.maxQos ? ' ✕' : ''}
+            </option>
+          ))}
         </select>
+
+        {isV5 && (
+          <label
+            className="flex items-center gap-1.5 text-[11px] cursor-pointer"
+            style={{
+              color: sharedOn ? 'var(--accent)' : 'var(--text-muted)',
+              opacity: caps && !caps.sharedAvailable ? 0.45 : 1,
+            }}
+            title={caps && !caps.sharedAvailable ? t.capSharedOff : t.subShareHint}
+            htmlFor="dropqtt-sub-share"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>{t.subShareToggle}</span>
+            <input
+              type="checkbox"
+              id="dropqtt-sub-share"
+              disabled={caps ? !caps.sharedAvailable : false}
+              checked={sharedOn}
+              onChange={(e) => setSharedOn(e.target.checked)}
+              className="w-3 h-3"
+            />
+          </label>
+        )}
+        {isV5 && sharedOn && (
+          <input
+            type="text"
+            id="dropqtt-sub-share-group"
+            value={shareGroup}
+            onChange={(e) => {
+              setShareGroup(e.target.value);
+              if (e.target.value.trim()) setShareError(false);
+            }}
+            placeholder="consumers"
+            aria-label={t.subShareGroup}
+            className="field-input w-28 text-[11px]"
+            aria-invalid={shareError || undefined}
+            style={{
+              color: 'var(--success)',
+              borderColor: shareError ? 'var(--danger)' : undefined,
+            }}
+          />
+        )}
+
+        {isV5 && (
+          <button
+            type="button"
+            onClick={() => setShowOptions((v) => !v)}
+            aria-expanded={showOptions}
+            title={t.subV5Options}
+            className="btn-ghost !px-2 flex items-center gap-1 text-[11px]"
+            style={{ color: showOptions || activeFlags({ ...opts, qos }).length ? 'var(--accent)' : undefined }}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>v5</span>
+            {activeFlags({ ...opts, qos }).length > 0 && (
+              <span className="text-[10px]">({activeFlags({ ...opts, qos }).length})</span>
+            )}
+          </button>
+        )}
 
         {/* Color picker pills */}
         <div className="flex items-center space-x-1 px-1.5 inset-box py-1.5">
@@ -112,6 +264,10 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
               key={color}
               type="button"
               onClick={() => setSelectedColor(color)}
+              // The swatch is the only label, so its name has to carry the hex too:
+              // "colour 3 of 6" tells a screen-reader user nothing they can act on.
+              aria-label={`${t.pickColor} ${color}`}
+              title={color}
               className="w-3.5 h-3.5 rounded-full transition"
               style={{
                 backgroundColor: color,
@@ -133,6 +289,57 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
         </button>
       </form>
 
+      {shareError && (
+        <div className="text-[11px]" data-testid="sub-share-error" style={{ color: 'var(--danger)' }}>
+          {t.subShareGroupRequired}
+        </div>
+      )}
+
+      {caps && (!caps.wildcardAvailable || !caps.subscriptionIdsAvailable) && (
+        <div className="text-[11px]" data-testid="sub-cap-note" style={{ color: 'var(--warn)' }}>
+          {!caps.wildcardAvailable ? t.capWildcardOff : ''}
+        </div>
+      )}
+
+      {isV5 && showOptions && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-md border text-[11px]" style={{ borderColor: 'var(--border-panel)', background: 'var(--bg-inset)' }}>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={opts.noLocal} onChange={(e) => setOpts((o) => ({ ...o, noLocal: e.target.checked }))} />
+            <span style={{ color: 'var(--text-secondary)' }}>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>No Local</span>
+              <span className="block" style={{ color: 'var(--text-muted)' }}>{t.subNoLocalHint}</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={opts.retainAsPublished} onChange={(e) => setOpts((o) => ({ ...o, retainAsPublished: e.target.checked }))} />
+            <span style={{ color: 'var(--text-secondary)' }}>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>Retain As Published</span>
+              <span className="block" style={{ color: 'var(--text-muted)' }}>{t.subRetainAsPublishedHint}</span>
+            </span>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{t.subRetainHandling}</span>
+            <select className="field-input w-full !py-1" value={opts.retainHandling} onChange={(e) => setOpts((o) => ({ ...o, retainHandling: Number(e.target.value) }))}>
+              <option value={0}>{t.subRetainHandling0}</option>
+              <option value={1}>{t.subRetainHandling1}</option>
+              <option value={2}>{t.subRetainHandling2}</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      {ack.refusedUnsubscribes.length > 0 && (
+        <div
+          className="text-[11px] px-2 py-1.5 rounded inset-box"
+          style={{ color: 'var(--warn)' }}
+          data-testid="unsub-refused-note"
+        >
+          {ack.refusedUnsubscribes
+            .map((r) => `${r.filter} (${ackHex(r.code)} ${describeAck(r.code, 'unsub', t)})`)
+            .join(' · ')}
+        </div>
+      )}
+
       {/* Active Subscriptions Chips */}
       <div className="flex flex-wrap gap-2 pt-1 min-h-[36px] items-center">
         {subscriptions.length === 0 ? (
@@ -140,20 +347,67 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
             {t.noSubscriptions}
           </div>
         ) : (
-          subscriptions.map((sub) => (
+          subscriptions.map((sub) => {
+            const refusal = refusalNote(sub.topic);
+            const capped = ack.capped[sub.topic];
+            // A labelled subscription's hit count is the broker's statement; an
+            // unlabelled one is our own topic match. The badge says which.
+            const id = subIds[sub.topic];
+            const flags = [...activeFlags(sub.options), ...(id ? [`id #${id}`] : [])];
+            return (
             <div
               key={sub.topic}
               className="flex items-center space-x-2 px-3 py-1.5 inset-box text-xs shadow-sm"
-              style={{ color: 'var(--text-secondary)' }}
+              style={{
+                color: 'var(--text-secondary)',
+                outline: refusal ? '1px solid var(--danger)' : 'none',
+              }}
             >
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: sub.color || '#10b981' }}
+                style={{ backgroundColor: refusal ? 'var(--danger)' : sub.color || '#10b981' }}
               />
               <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{sub.topic}</span>
+              {shareGroupOf(sub.topic) && (
+                <span
+                  className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
+                  title={t.subShareHint}
+                >
+                  {fill(t.subShareChip, { name: shareGroupOf(sub.topic) as string })}
+                </span>
+              )}
               <span className="text-[11px] px-1 py-0.5 inset-box font-mono" style={{ color: 'var(--text-muted)' }}>
                 QoS {sub.qos}
+                {capped !== undefined && <span> → {capped}</span>}
               </span>
+              {refusal && (
+                <span
+                  className="text-[10px] px-1 py-0.5 chip font-mono"
+                  data-testid={`sub-refused-${sub.topic}`}
+                  style={{ background: 'var(--danger)', color: 'var(--accent-contrast)' }}
+                  title={refusal.detail}
+                >
+                  {fill(t.subRejectedChip, { reason: refusal.label })}
+                </span>
+              )}
+              {!refusal && capped !== undefined && (
+                <span
+                  className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
+                  data-testid={`sub-capped-${sub.topic}`}
+                  title={fill(t.subDowngradedToast, { topic: sub.topic, qos: String(capped) })}
+                >
+                  {fill(t.ackCodeGrantedQos, { qos: String(capped) })}
+                </span>
+              )}
+              {flags.length > 0 && (
+                <span
+                  className="text-[10px] px-1 py-0.5 chip chip-info font-mono"
+                  data-testid={`sub-flags-${sub.topic}`}
+                  title={flags.join(', ')}
+                >
+                  {flags.join(' · ')}
+                </span>
+              )}
               <span
                 className={`chip ${
                   (hitStats[sub.topic] ?? 0) > 0 ? 'chip-ok' : 'chip-neutral'
@@ -165,15 +419,42 @@ export const SubscriptionsBar: React.FC<SubscriptionsBarProps> = ({
               <button
                 onClick={() => onRemoveSubscription(sub.topic)}
                 title={t.unsubscribe}
+                aria-label={t.unsubscribe}
                 className="p-0.5 transition hover:opacity-100 opacity-50 ml-1"
                 style={{ color: 'var(--danger)' }}
               >
                 <X className="w-3 h-3" />
               </button>
             </div>
-          ))
+            );
+          })
         )}
       </div>
+
+      {groups.length > 0 && (
+        <div className="px-3 pb-2.5 pt-1 border-t" style={{ borderColor: 'var(--border-inset)' }} data-testid="share-groups">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Users className="w-3 h-3 shrink-0" style={{ color: 'var(--accent)' }} />
+            <span className="text-[10px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {t.shareGroupsTitle}
+            </span>
+            {groups.map((g) => (
+              <span
+                key={g.name}
+                data-testid={`share-group-${g.name}`}
+                className="text-[10px] font-mono px-1.5 py-0.5 rounded inset-box select-text"
+                style={{ color: 'var(--text-secondary)' }}
+                title={fill(t.shareGroupTip, { subs: String(g.subs), hits: String(g.hits) })}
+              >
+                {g.name} · {fill(t.shareGroupHits, { hits: g.hits.toLocaleString() })}
+              </span>
+            ))}
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {t.shareGroupsLimit}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

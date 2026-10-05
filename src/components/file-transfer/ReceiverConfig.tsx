@@ -36,7 +36,7 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
     }
   };
 
-  const cleanPrefix = subscribeTopic.trim().replace(/\/\#$/, '').replace(/\/\+$/, '');
+  const cleanPrefix = subscribeTopic.trim().replace(/\/#$/, '').replace(/\/\+$/, '');
 
   return (
     <div className="panel p-4 space-y-4">
@@ -64,13 +64,18 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
         <div className="flex items-center space-x-2">
           <input
             type="text"
+            aria-label={t.subscribeTopic}
             value={subscribeTopic}
             onChange={(e) => setSubscribeTopic(e.target.value)}
             placeholder="dropqtt/public-lobby/#"
             className="field-input flex-1 font-mono"
             style={{ color: 'var(--ok)' }}
           />
-          <button onClick={handleApply} disabled={!connected || isApplying} className="btn-ghost px-3 py-1.5 flex items-center space-x-1">
+          <button
+            onClick={handleApply}
+            disabled={!connected || isApplying}
+            title={!connected ? t.whyNotConnected : isApplying ? t.whyBusy : t.subscribe}
+            className="btn-ghost px-3 py-1.5 flex items-center space-x-1">
             <RefreshCw className={`w-3 h-3 ${isApplying ? 'animate-spin' : ''}`} />
             <span>{t.subscribe}</span>
           </button>
@@ -107,6 +112,7 @@ export const ReceiverConfig: React.FC<ReceiverConfigProps> = ({
           type="button"
           role="switch"
           aria-checked={autoReceive}
+          aria-label={t.autoAcceptFiles}
           onClick={() => onToggleAutoReceive(!autoReceive)}
           className="relative w-10 h-5 rounded-full border transition shrink-0"
           style={{ background: autoReceive ? 'var(--ok)' : 'var(--bg-inset)', borderColor: autoReceive ? 'var(--ok)' : 'var(--border-inset)' }}

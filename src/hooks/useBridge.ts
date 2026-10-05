@@ -5,13 +5,18 @@ import {
   BrokerConfig,
   BridgeConnInfo,
   BridgeEvent,
+  BridgeOutboxState,
   BridgeRule,
   BridgeRuleStats,
   bridgeRuleDefaults,
+  emptyBridgeOutboxState,
 } from '../types';
 import { usePersistentState } from './usePersistentState';
 
-const EVENT_LOG_CAP = 150;
+// The panel quotes this number in its own truncation notice, so it is
+// exported rather than duplicated: a changed cap must not leave a message
+// claiming a different length.
+export const EVENT_LOG_CAP = 150;
 type BridgeRole = 'src' | 'dst';
 
 /** What each bridge role last connected to, for quick reconnect / autostart */
@@ -29,7 +34,8 @@ export interface BridgeEventEntry {
 /**
  * Bridge session state: two independent broker connections ("src"/"dst"),
  * forwarding rules (persisted here; pushed to the backend on every change),
- * per-rule stats and a capped live event log.
+ * per-rule stats, the webhook outbox the backend keeps on disk, and a capped
+ * live event log.
  */
 export function useBridge(visible: boolean) {
   const [conns, setConns] = useState<BridgeConnInfo[]>([]);
@@ -38,6 +44,7 @@ export function useBridge(visible: boolean) {
   const [events, setEvents] = useState<BridgeEventEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [outbox, setOutbox] = useState<BridgeOutboxState>(emptyBridgeOutboxState);
 
   // Last endpoints per role + autostart switch (survives restarts) 
   const [remember, setRemember] = usePersistentState<BridgeRemember>('dropqtt_bridge_remember', {});
@@ -80,7 +87,7 @@ export function useBridge(visible: boolean) {
 
   // ---- Push rule set to the backend whenever it changes ----
   useEffect(() => {
-    invoke('bridge_sync_rules', { rules }).catch((e) => {
+    invoke('bridge_sync_rules', { rules }).then(() => setLastError(null)).catch((e) => {
       // Surface validation failures (empty filter, src===dst, …) in the UI
       setLastError(String(e));
     });
@@ -106,6 +113,33 @@ export function useBridge(visible: boolean) {
       clearInterval(id);
     };
   }, [visible, anyConnected]);
+
+  // ---- Outbox: the queue lives on disk, so it is read whether or not anything is
+  // connected. A dead letter is most important to show exactly when the endpoint is
+  // down, and a restart must not make the owed deliveries look like zero.
+  const readOutbox = useCallback(async (): Promise<BridgeOutboxState | null> => {
+    try {
+      return await invoke<BridgeOutboxState>('bridge_outbox_state');
+    } catch {
+      // A transient failure keeps the last known counts on screen.
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    const tick = async () => {
+      const s = await readOutbox();
+      if (alive && s) setOutbox(s);
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [visible, readOutbox]);
 
   // ---- Connection actions ----
   const connect = useCallback(async (id: string, config: BrokerConfig) => {
@@ -194,6 +228,37 @@ export function useBridge(visible: boolean) {
 
   const clearEvents = useCallback(() => setEvents([]), []);
 
+  /** Skip the remaining backoff and try the queued webhooks now. */
+  const flushOutbox = useCallback(
+    async (ruleId?: string) => {
+      try {
+        await invoke('bridge_outbox_flush', { ruleId: ruleId ?? null });
+      } catch (e) {
+        setLastError(String(e));
+        return;
+      }
+      const s = await readOutbox();
+      if (s) setOutbox(s);
+    },
+    [readOutbox],
+  );
+
+  /** Discard the dead letters. Never automatic — they are the only proof an
+   * endpoint was unreachable. */
+  const dropDeadLetters = useCallback(
+    async (ruleId?: string) => {
+      try {
+        await invoke('bridge_outbox_drop', { ruleId: ruleId ?? null });
+      } catch (e) {
+        setLastError(String(e));
+        return;
+      }
+      const s = await readOutbox();
+      if (s) setOutbox(s);
+    },
+    [readOutbox],
+  );
+
   const totalSent = Object.values(stats).reduce((acc, s) => acc + s.forwarded, 0);
 
   return {
@@ -205,6 +270,7 @@ export function useBridge(visible: boolean) {
     lastError,
     anyConnected,
     totalSent,
+    outbox,
     remember,
     autoReconnect,
     setAutoReconnect,
@@ -217,5 +283,7 @@ export function useBridge(visible: boolean) {
     importRules,
     resetStats,
     clearEvents,
+    flushOutbox,
+    dropDeadLetters,
   };
 }

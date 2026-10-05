@@ -1,5 +1,8 @@
 export type Theme = 'cyberpunk' | 'obsidian' | 'nord' | 'solaris';
 
+/** Cycling order used by the command palette's theme command. */
+export const THEMES: Theme[] = ['cyberpunk', 'obsidian', 'nord', 'solaris'];
+
 export interface ThemeTokens {
   '--bg-app': string;
   '--bg-panel': string;
@@ -81,7 +84,11 @@ const darkBase: ThemeTokens = {
   '--border-inset': 'rgba(51, 65, 85, 0.5)',
   '--text-primary': '#f1f5f9',
   '--text-secondary': '#94a3b8',
-  '--text-muted': '#64748b',
+  // Muted text is rendered at 10-11px across the console, which is normal-size text
+  // for WCAG and therefore needs 4.5:1. The slate this used to carry measured
+  // 3.75:1 on this panel and 3.9:1 on obsidian's, so every hint, caption and
+  // timestamp was quietly unreadable. Still dimmer than --text-secondary.
+  '--text-muted': '#7c8da3',
   '--accent': '#06b6d4',
   '--accent-strong': '#0891b2',
   '--accent-contrast': '#ffffff',
@@ -155,7 +162,7 @@ export const themes: Record<Theme, ThemeDefinition> = {
       '--border-inset': 'rgba(136, 192, 208, 0.15)',
       '--text-primary': '#eceff4',
       '--text-secondary': '#d8dee9',
-      '--text-muted': '#7b88a1',
+      '--text-muted': '#a8b3c4',
       '--accent': '#88c0d0',
       '--accent-strong': '#5e81ac',
       '--accent-contrast': '#2e3440',
@@ -186,7 +193,7 @@ export const themes: Record<Theme, ThemeDefinition> = {
       '--border-inset': 'rgba(120, 113, 108, 0.17)',
       '--text-primary': '#292524',
       '--text-secondary': '#57534e',
-      '--text-muted': '#a8a29e',
+      '--text-muted': '#78716c',
       '--accent': '#2563eb',
       '--accent-strong': '#1d4ed8',
       '--accent-contrast': '#ffffff',
@@ -236,7 +243,3 @@ export function applyTheme(theme: Theme) {
   root.dataset.theme = theme;
 }
 
-/** Back-compatible flat accessor used by legacy props */
-export function themeBodyBg(theme: Theme): string {
-  return themes[theme]?.tokens['--bg-app'] ?? themes.cyberpunk.tokens['--bg-app'];
-}

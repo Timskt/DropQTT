@@ -7,7 +7,7 @@
 //! untouched) onto the target connection, with optional topic remapping and
 //! QoS/retain policies.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -16,14 +16,15 @@ use bytes::Bytes;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::diagnostics::BridgeDiagnostics;
-use crate::mqtt_manager::wildcard_match;
-use crate::protocol::{BrokerConfig, PubProperties};
+use crate::topic::wildcard_match;
+use crate::protocol::{BrokerConfig, PubProperties, SubOptions};
 use crate::transform::{apply_transform, TransformOutcome, SCRIPT_SIZE_LIMIT};
 use crate::transport::{build_connection, MqttClient, NetEvent, NormalizedPublish};
+use crate::webhook::{self, WebhookConfig};
 
 /// One exact/wildcard topic mapping entry for "map" mode
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -49,6 +50,17 @@ pub struct BridgeRule {
     pub source_qos: u8,
     /// Logical connection id receiving the forwarded publish
     pub target_conn: String,
+    #[serde(default = "default_target_kind")]
+    pub target_kind: String,
+    #[serde(default)]
+    pub webhook: WebhookConfig,
+    /// Extra sinks this rule fans the same message out to, after its primary
+    /// `webhook`. One device stream usually has to reach the business API, an
+    /// archive and an alert hook at once; each sink is delivered and retried on
+    /// its own, because one endpoint being down is not the others' excuse.
+    /// Index 0 in the outbox is the primary, 1.. these in order.
+    #[serde(default)]
+    pub targets: Vec<WebhookConfig>,
     /// "same" (keep original topic) | "prefix" (replace prefix)
     /// | "fixed" (single aggregate topic) | "regex" (capture-group rewrite)
     /// | "map" (per-topic mapping table, exact then wildcard)
@@ -105,6 +117,7 @@ pub struct BridgeRule {
 fn default_qos1() -> u8 {
     1
 }
+fn default_target_kind() -> String { "mqtt".into() }
 fn default_topic_mode() -> String {
     "same".to_string()
 }
@@ -126,6 +139,9 @@ pub struct BridgeRuleStats {
     /// Messages skipped by exclusion or rate limiting
     pub dropped: u64,
     pub last_topic: String,
+    /// Webhook bodies waiting in the outbox, and dead letters that stopped being retried
+    pub queued: u64,
+    pub dead: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -186,7 +202,6 @@ fn gate_allow(window: &mut RateWindow, now_sec: u64, limit: u32) -> bool {
 /// Eventloop task handle + cooperative shutdown flag
 pub type LoopControl = (JoinHandle<()>, Arc<AtomicBool>);
 
-#[derive(Default)]
 pub struct BridgeManager {
     conns: Mutex<HashMap<String, BridgeConn>>,
     tasks: Mutex<HashMap<String, LoopControl>>,
@@ -194,7 +209,26 @@ pub struct BridgeManager {
     stats: Mutex<HashMap<String, BridgeRuleStats>>,
     gates: Mutex<HashMap<String, RateWindow>>,
     /// Currently registered subscription filters per connection
-    subs: Mutex<HashMap<String, HashSet<String>>>,
+    subs: Mutex<HashMap<String, HashMap<String, u8>>>,
+    subscription_sync: Mutex<()>,
+    webhook_client: std::sync::OnceLock<Result<reqwest::Client, String>>,
+    webhook_slots: Arc<Semaphore>,
+    /// Attached during setup. An `Err` here means the queue could not be opened, and
+    /// `outbox_error` says why — "retries are off" must never be the silent default.
+    outbox: std::sync::OnceLock<Result<Arc<crate::outbox::Outbox>, String>>,
+}
+
+impl Default for BridgeManager {
+    fn default() -> Self {
+        Self {
+            conns: Mutex::new(HashMap::new()), tasks: Mutex::new(HashMap::new()),
+            rules: Mutex::new(HashMap::new()), stats: Mutex::new(HashMap::new()),
+            gates: Mutex::new(HashMap::new()), subs: Mutex::new(HashMap::new()),
+            subscription_sync: Mutex::new(()), webhook_client: std::sync::OnceLock::new(),
+            webhook_slots: Arc::new(Semaphore::new(4)),
+            outbox: std::sync::OnceLock::new(),
+        }
+    }
 }
 
 /// Map the incoming topic through the rule's topic policy
@@ -308,6 +342,158 @@ impl BridgeManager {
         Arc::new(Self::default())
     }
 
+    pub fn attach_outbox(self: &Arc<Self>, opened: Result<Arc<crate::outbox::Outbox>, String>) {
+        let _ = self.outbox.set(opened);
+    }
+
+    fn outbox(&self) -> Option<&Arc<crate::outbox::Outbox>> {
+        self.outbox.get().and_then(|r| r.as_ref().ok())
+    }
+
+    pub fn outbox_state(&self) -> crate::outbox::OutboxState {
+        use crate::outbox::{OutboxState, MAX_ATTEMPTS};
+        match self.outbox() {
+            Some(outbox) => OutboxState {
+                counts: outbox.counts(),
+                error: None,
+                preview: outbox.preview(12).unwrap_or_default(),
+                max_attempts: MAX_ATTEMPTS,
+            },
+            None => OutboxState {
+                counts: Default::default(),
+                error: self.outbox_error().or_else(|| Some("no webhook outbox attached".to_string())),
+                preview: Vec::new(),
+                max_attempts: MAX_ATTEMPTS,
+            },
+        }
+    }
+
+    pub fn outbox_flush(&self, rule_id: Option<&str>) -> Result<u64, String> {
+        self.outbox()
+            .ok_or_else(|| "the webhook outbox is unavailable".to_string())?
+            .flush_now(rule_id)
+    }
+
+    pub fn outbox_drop_dead(&self, rule_id: Option<&str>) -> Result<u64, String> {
+        self.outbox()
+            .ok_or_else(|| "the webhook outbox is unavailable".to_string())?
+            .drop_dead(rule_id)
+    }
+
+    pub fn outbox_error(&self) -> Option<String> {
+        self.outbox.get().and_then(|r| r.as_ref().err().cloned())
+    }
+
+    /// Drain what is due and send it. Runs on its own tick so a recovered endpoint
+    /// is retried without any user action, and the pump itself can fail silently
+    /// only in the sense that the next tick tries again.
+    pub async fn pump_outbox(self: &Arc<Self>, app: &AppHandle) {
+        let Some(outbox) = self.outbox().cloned() else { return };
+        let due = match outbox.due(chrono::Utc::now().timestamp_millis()) {
+            Ok(rows) => rows,
+            Err(e) => {
+                let _ = app.emit("bridge-event-error", e);
+                return;
+            }
+        };
+        for entry in due {
+            let rule = self.rules.lock().await.get(&entry.rule_id).cloned();
+            let Some(rule) = rule else {
+                // The rule is gone, so nobody can say where this goes any more.
+                let _ = outbox.record_failure(
+                    entry.id,
+                    crate::outbox::MAX_ATTEMPTS - 1,
+                    "the rule was removed while this was queued",
+                    chrono::Utc::now().timestamp_millis(),
+                );
+                continue;
+            };
+            if !rule.enabled || rule.target_kind != "http" {
+                let _ = outbox.record_failure(
+                    entry.id,
+                    entry.attempts,
+                    "the rule is disabled or no longer an HTTP target",
+                    chrono::Utc::now().timestamp_millis(),
+                );
+                continue;
+            }
+            // The entry says which sink it owes, and only that sink. If the rule has
+            // since lost it, the delivery is failed rather than redirected: posting
+            // someone's telemetry to whichever endpoint happens to be left is worse
+            // than not posting it.
+            let sink = match crate::webhook::sink_at(&rule.webhook, &rule.targets, entry.target_index) {
+                Some(sink) => sink,
+                None => {
+                    let _ = outbox.record_failure(
+                        entry.id,
+                        crate::outbox::MAX_ATTEMPTS - 1,
+                        "that sink is no longer on the rule",
+                        chrono::Utc::now().timestamp_millis(),
+                    );
+                    continue;
+                }
+            };
+            let permit = match self.webhook_slots.clone().try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => continue, // still due on the next tick; nothing is lost
+            };
+            let client = self.webhook_client.get_or_init(crate::webhook::client).clone();
+            let bytes = entry.body.len();
+            let body = bytes::Bytes::from(entry.body.clone());
+            let outbox2 = outbox.clone();
+            let id = entry.id;
+            let attempts = entry.attempts;
+            let this = self.clone();
+            let rule2 = rule.clone();
+            let app2 = app.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let result = match client {
+                    Ok(client) => crate::webhook::deliver(&client, &sink, body).await,
+                    Err(e) => Err(e),
+                };
+                match result {
+                    Ok(()) => {
+                        let _ = outbox2.record_success(id);
+                        this.bump(&rule2.id, true, &entry.topic).await;
+                        let _ = app2.emit("bridge-event", BridgeEvent {
+                            rule_id: rule2.id.clone(),
+                            rule_name: rule2.name.clone(),
+                            from_topic: entry.topic.clone(),
+                            to_topic: sink.display_target(),
+                            bytes,
+                            qos: entry.qos,
+                            retain: entry.retain,
+                            ok: true,
+                            error: None,
+                            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        });
+                    }
+                    Err(e) => {
+                        // A failed retry does not move the rule's error counter: that
+                        // one counts payloads whose *first* delivery failed. The
+                        // attempt history lives on the queued row, which the panel
+                        // shows as retries and as the preview's last error.
+                        let _ = outbox2.record_failure(id, attempts, &e, now_ms);
+                        let _ = app2.emit("bridge-event", BridgeEvent {
+                            rule_id: rule2.id.clone(),
+                            rule_name: rule2.name.clone(),
+                            from_topic: entry.topic.clone(),
+                            to_topic: sink.display_target(),
+                            bytes,
+                            qos: entry.qos,
+                            retain: entry.retain,
+                            ok: false,
+                            error: Some(e),
+                            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        });
+                    }
+                }
+            });
+        }
+    }
+
     /// All newline-separated source filters of a rule
     pub fn rule_filters(rule: &BridgeRule) -> Vec<String> {
         rule.source_filter
@@ -337,38 +523,52 @@ impl BridgeManager {
         desired
     }
 
-    /// Bring every connection's live subscriptions in line with the rules
-    async fn resync_subs(self: &Arc<Self>) -> Result<(), String> {
+    /// Bring every connection's live subscriptions in line with the rules.
+    /// One failing SUBSCRIBE must not strand the other connections, so errors
+    /// are collected and the first one is reported after every filter is tried.
+    async fn resync_subs(self: &Arc<Self>, reconnect: Option<&str>) -> Result<(), String> {
+        let _sync = self.subscription_sync.lock().await;
+        if let Some(id) = reconnect {
+            self.subs.lock().await.remove(id);
+        }
         let rules = self.rules.lock().await.clone();
         let conns = self.conns.lock().await.clone();
+        let mut failure = None;
         for (id, conn) in conns {
             if !conn.connected.load(Ordering::SeqCst) {
                 continue;
             }
             let desired = Self::desired_filters(&rules, &id);
-            let desired_keys: HashSet<String> = desired.keys().cloned().collect();
             let current = {
                 let mut subs = self.subs.lock().await;
                 subs.entry(id.clone()).or_default().clone()
             };
+            let mut applied = HashMap::new();
             for (filter, qos) in &desired {
-                if current.contains(filter) {
+                if current.get(filter) == Some(qos) {
+                    applied.insert(filter.clone(), *qos);
                     continue;
                 }
                 // Re-subscription is cheap and idempotent on reconnect too.
-                let _ = conn.client.subscribe(filter, *qos).await;
+                match conn.client.subscribe(filter, &SubOptions { qos: *qos, ..Default::default() }).await {
+                    Ok(()) => {
+                        applied.insert(filter.clone(), *qos);
+                    }
+                    Err(e) => {
+                        if failure.is_none() {
+                            failure = Some(format!("{filter}: {e}"));
+                        }
+                    }
+                }
             }
-            for filter in current.difference(&desired_keys) {
+            // A filter whose re-subscribe failed keeps its old live subscription
+            // and drops out of the cache, so the next sync retries it.
+            for filter in current.keys().filter(|f| !desired.contains_key(*f)) {
                 conn.client.unsubscribe(filter).await;
             }
-            let mut subs = self.subs.lock().await;
-            if let Some(entry) = subs.get_mut(&id) {
-                *entry = desired_keys;
-            } else {
-                subs.insert(id, desired_keys);
-            }
+            self.subs.lock().await.insert(id, applied);
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 
     pub async fn bridge_status(self: &Arc<Self>) -> Vec<BridgeConnInfo> {
@@ -429,12 +629,20 @@ impl BridgeManager {
         // console's client id would get the older session kicked.
         let mut config = config;
         let suffix: String = uuid::Uuid::new_v4().simple().to_string()[..6].to_string();
-        config.client_id = format!("{}_b{}", config.client_id, suffix)
-            .chars()
-            .take(23)
-            .collect();
+        // The suffix is what keeps two bridged sessions apart, so it must survive
+        // any length cap: truncate the base instead of the whole string. MQTT 3.1
+        // recommends a 23-character id; v5 has no such limit.
+        let tail = format!("_b{}", suffix);
+        let budget = if config.is_v5() {
+            usize::MAX
+        } else {
+            23usize.saturating_sub(tail.chars().count())
+        };
+        let base: String = config.client_id.chars().take(budget).collect();
+        let base = if base.trim().is_empty() { "dropqtt".to_string() } else { base };
+        config.client_id = format!("{}{}", base, tail);
 
-        let (client, mut eventloop) = build_connection(&config);
+        let (client, mut eventloop) = build_connection(&config)?;
         let connected = Arc::new(AtomicBool::new(false));
 
         let info = BridgeConnInfo {
@@ -464,13 +672,21 @@ impl BridgeManager {
         let handle = tokio::spawn(async move {
             while !flag.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
-                    NetEvent::Connected => {
+                    NetEvent::Connected(_) => {
                         let first = !connected.swap(true, Ordering::SeqCst);
                         this.set_conn_error(&conn_id, None).await;
                         // Re-apply rule-driven subscriptions after (re)CONNACK
-                        if let Err(e) = this.resync_subs().await {
-                            eprintln!("bridge resync failed: {}", e);
-                        }
+                        // Poll must keep draining the bounded rumqttc request
+                        // channel, even with hundreds of restored subscriptions.
+                        let sync = this.clone();
+                        let sync_id = conn_id.clone();
+                        let sync_app = app_handle.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = sync.resync_subs(Some(&sync_id)).await {
+                                sync.set_conn_error(&sync_id, Some(e)).await;
+                                sync.emit_status(&sync_app).await;
+                            }
+                        });
                         if first {
                             let _ = app_handle.emit("bridge-connected", conn_id.clone());
                         }
@@ -486,6 +702,26 @@ impl BridgeManager {
                     }
                     NetEvent::Publish(publish) => {
                         this.route(&app_handle, &conn_id, publish).await;
+                    }
+                    // Bridge links forward; nothing here waits on a publish ack.
+                    NetEvent::PublishAcked { .. } => {}
+                    NetEvent::SubAck { .. } | NetEvent::UnsubAck { .. } => {
+                        // Attribution needs the filter each ack answers, which is
+                        // the console's registry, not a bridge link's. A refused
+                        // bridge subscription surfaces as its own dropped traffic.
+                    }
+                    NetEvent::AckRejected { stage, code, text } => {
+                        // rumqttc drops the link on a refusal, so the bridge status
+                        // has to carry the reason or the link just looks unstable.
+                        let message = format!(
+                            "{stage:?} refused by the broker: {text} (0x{code:02X})"
+                        );
+                        if connected.swap(false, Ordering::SeqCst) {
+                            this.emit_status(&app_handle).await;
+                        }
+                        this.set_conn_error(&conn_id, Some(message)).await;
+                        this.emit_status(&app_handle).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                     }
                     NetEvent::Other => {}
                 }
@@ -510,8 +746,11 @@ impl BridgeManager {
             conn.connected.store(false, Ordering::SeqCst);
             let _ = conn.client.disconnect().await;
         }
-        if let Some(handle) = handle {
-            let _ = tokio::time::timeout(std::time::Duration::from_millis(500), handle).await;
+        if let Some(mut handle) = handle {
+            if tokio::time::timeout(std::time::Duration::from_millis(500), &mut handle).await.is_err() {
+                handle.abort();
+                let _ = handle.await;
+            }
         }
         self.subs.lock().await.remove(id);
     }
@@ -530,7 +769,33 @@ impl BridgeManager {
             if filters.is_empty() {
                 return Err(format!("Rule '{}' has an empty source filter", r.name));
             }
-            if r.source_conn == r.target_conn {
+            if !matches!(r.target_kind.as_str(), "mqtt" | "http") {
+                return Err("Unknown bridge target kind".into());
+            }
+            if r.target_kind == "http" && r.enabled {
+                if r.targets.len() > webhook::MAX_EXTRA_TARGETS {
+                    return Err(format!(
+                        "Rule '{}' fans out to {} extra sinks; the limit is {}",
+                        r.name,
+                        r.targets.len(),
+                        webhook::MAX_EXTRA_TARGETS
+                    ));
+                }
+                // The primary may be left blank when the rule only archives, but then
+                // at least one extra sink has to exist — an HTTP rule that delivers
+                // nowhere is a rule that silently eats traffic.
+                let primary = r.webhook.url.trim();
+                if !primary.is_empty() {
+                    r.webhook.validate()?;
+                } else if r.targets.is_empty() {
+                    return Err(format!("Rule '{}' has no webhook target to deliver to", r.name));
+                }
+                for (i, t) in r.targets.iter().enumerate() {
+                    t.validate()
+                        .map_err(|e| format!("Rule '{}' extra sink #{}: {}", r.name, i + 1, e))?;
+                }
+            }
+            if r.target_kind == "mqtt" && r.source_conn == r.target_conn {
                 return Err(format!("Rule '{}' must use two different connections", r.name));
             }
             if r.topic_mode == "fixed" && r.fixed_topic.trim().is_empty() {
@@ -564,13 +829,23 @@ impl BridgeManager {
             gates.retain(|id, _| map.contains_key(id));
         }
         *self.rules.lock().await = map;
-        self.resync_subs().await?;
+        self.resync_subs(None).await?;
         let _ = app.emit("bridge-rules-synced", ());
         Ok(())
     }
 
     pub async fn stats(self: &Arc<Self>) -> HashMap<String, BridgeRuleStats> {
-        self.stats.lock().await.clone()
+        let mut stats = self.stats.lock().await.clone();
+        // The queue lives in SQLite, so its numbers are merged in on read rather
+        // than incremented on every attempt: a restart then still reports the truth.
+        if let Some(outbox) = self.outbox() {
+            for (id, entry) in stats.iter_mut() {
+                let counts = outbox.counts_for(id);
+                entry.queued = counts.pending;
+                entry.dead = counts.dead;
+            }
+        }
+        stats
     }
 
     pub async fn reset_stats(self: &Arc<Self>) {
@@ -579,6 +854,12 @@ impl BridgeManager {
         stats.clear();
         for id in rules {
             stats.insert(id, BridgeRuleStats::default());
+        }
+        // The outbox counters are shown in the same row as these, so a reset that
+        // left them running would make "Reset Stats" half a lie. Work still queued
+        // is not touched — only the lifetime tallies.
+        if let Some(outbox) = self.outbox() {
+            let _ = outbox.reset_counters();
         }
     }
 
@@ -637,32 +918,45 @@ impl BridgeManager {
             // Loop guard: never bounce a message back onto the same topic it
             // arrived on (would ping-pong through the same connection).
             let target_topic = map_topic(rule, &publish.topic);
-            if rule.target_conn == src_id && target_topic == publish.topic {
+            if rule.target_kind == "mqtt" && rule.target_conn == src_id && target_topic == publish.topic {
                 continue;
             }
             if !self.rate_allow(&rule.id, rule.rate_limit).await {
                 self.bump_dropped(&rule.id, &publish.topic).await;
                 continue;
             }
-            let target = match conns.get(&rule.target_conn) {
-                Some(c) => c.client.clone(),
-                None => continue,
-            };
-
             let qos = resolve_qos(rule, publish.qos);
             let retain = resolve_retain(rule, publish.retain);
             let props = if rule.forward_props
                 && (publish.content_type.is_some()
                     || !publish.user_properties.is_empty()
                     || publish.response_topic.is_some()
-                    || publish.correlation_data.is_some())
+                    || publish.correlation_data.is_some()
+                    || publish.payload_format.is_some())
             {
                 Some(PubProperties {
                     content_type: publish.content_type.clone(),
                     user_properties: publish.user_properties.clone(),
                     message_expiry: None,
                     response_topic: publish.response_topic.clone(),
-                    correlation_data: publish.correlation_data.clone(),
+                    // Bytes in, bytes out: text only when the device's correlation
+                    // actually is text, hex when it is not.
+                    correlation_data: publish
+                        .correlation_data
+                        .as_deref()
+                        .and_then(|b| std::str::from_utf8(b).ok())
+                        .map(str::to_string),
+                    correlation_hex: publish
+                        .correlation_data
+                        .as_deref()
+                        .filter(|b| std::str::from_utf8(b).is_err())
+                        .map(hex::encode),
+                    // The payload-format flag describes the bytes themselves, so it
+                    // survives a hop. A topic alias is only meaningful within the
+                    // connection that registered it, so it is deliberately not
+                    // forwarded: the target link has its own alias space.
+                    payload_format: publish.payload_format,
+                    topic_alias: None,
                 })
             } else {
                 None
@@ -675,13 +969,20 @@ impl BridgeManager {
 
             // JS transform wins over static payload edits when configured
             if !rule.transform_script.trim().is_empty() {
-                match apply_transform(
-                    rule.transform_script.trim(),
-                    &publish.topic,
-                    &payload_out,
-                    qos,
-                    retain,
-                ) {
+                // rquickjs is a synchronous interpreter. Running it inline would
+                // hold this tokio worker for the whole script deadline, so a
+                // single slow rule could stall every other subscription in the
+                // process. Offload it, but keep waiting for the result: the
+                // bridge's ordering per message must not change.
+                let script = rule.transform_script.trim().to_string();
+                let in_topic = publish.topic.clone();
+                let in_payload = payload_out.clone();
+                let outcome = tokio::task::spawn_blocking(move || {
+                    apply_transform(&script, &in_topic, &in_payload, qos, retain)
+                })
+                .await
+                .unwrap_or_else(|_| Err("transform worker panicked".to_string()));
+                match outcome {
                     Ok(TransformOutcome::Send(b)) => {
                         payload_len = b.len();
                         payload_out = b;
@@ -712,6 +1013,90 @@ impl BridgeManager {
                 }
             }
 
+            if rule.target_kind == "http" {
+                // One attempt per sink, each with its own body encoding (a raw POST
+                // to the archive and a JSON envelope to the API are the same message
+                // with different bytes) and its own queue entry if it fails.
+                for (index, sink) in webhook::sinks_with_indexes(&rule.webhook, &rule.targets) {
+                    let permit = match self.webhook_slots.clone().try_acquire_owned() {
+                        Ok(permit) => permit,
+                        Err(_) => { self.bump_dropped(&rule.id, &publish.topic).await; continue; }
+                    };
+                    let body = webhook::encode_body(&sink, &target_topic, &payload_out, qos, retain);
+                    if body.len() > 2 * 1024 * 1024 {
+                        self.bump_dropped(&rule.id, &publish.topic).await;
+                        continue;
+                    }
+                    let this = self.clone();
+                    let app = app.clone();
+                    let rule = rule.clone();
+                    let from_topic = publish.topic.clone();
+                    let client = self.webhook_client.get_or_init(webhook::client).clone();
+                    let queued = this.outbox().map(|_| body.clone());
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        let bytes = body.len();
+                        let result = match client {
+                            Ok(client) => webhook::deliver(&client, &sink, body).await,
+                            Err(e) => Err(e),
+                        };
+                        // A failed delivery is queued rather than counted and
+                        // forgotten. The error counter still moves, because the
+                        // attempt did fail.
+                        if let (Err(_), Some(outbox), Some(body)) = (&result, this.outbox().cloned(), queued) {
+                            let entry = crate::outbox::OutboxEntry {
+                                id: 0,
+                                rule_id: rule.id.clone(),
+                                topic: from_topic.clone(),
+                                body: body.to_vec(),
+                                qos,
+                                retain,
+                                attempts: 0,
+                                target_index: index,
+                            };
+                            let _ = outbox.enqueue(&entry, chrono::Utc::now().timestamp_millis());
+                        }
+                        this.bump(&rule.id, result.is_ok(), &from_topic).await;
+                        let _ = app.emit("bridge-event", BridgeEvent {
+                            rule_id: rule.id, rule_name: rule.name, from_topic,
+                            to_topic: sink.display_target(), bytes, qos, retain,
+                            ok: result.is_ok(), error: result.err(),
+                            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        });
+                    });
+                }
+                continue;
+            }
+
+            let target = match conns.get(&rule.target_conn) {
+                Some(c) => c.client.clone(),
+                None => {
+                    // Every other exit in this loop accounts for what it did.
+                    // Silently skipping here is the worst failure mode a bridge
+                    // can have: the rule reads as enabled with a clean zero-error
+                    // stat while the data goes nowhere.
+                    self.bump(&rule.id, false, &publish.topic).await;
+                    let _ = app.emit(
+                        "bridge-event",
+                        BridgeEvent {
+                            rule_id: rule.id.clone(),
+                            rule_name: rule.name.clone(),
+                            from_topic: publish.topic.clone(),
+                            to_topic: target_topic.clone(),
+                            bytes: 0,
+                            qos,
+                            retain,
+                            ok: false,
+                            error: Some(format!(
+                                "target connection '{}' is not connected",
+                                rule.target_conn
+                            )),
+                            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        },
+                    );
+                    continue;
+                }
+            };
             let result = target
                 .publish(&target_topic, qos, retain, payload_out, props.as_ref())
                 .await;
@@ -756,6 +1141,9 @@ mod tests {
             source_filter: "a/#".into(),
             source_qos: 1,
             target_conn: "dst".into(),
+            target_kind: "mqtt".into(),
+            webhook: WebhookConfig::default(),
+            targets: Vec::new(),
             topic_mode: mode.into(),
             prefix_from: from.into(),
             prefix_to: to.into(),

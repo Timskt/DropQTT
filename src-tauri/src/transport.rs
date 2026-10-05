@@ -6,16 +6,37 @@
 use std::time::Duration;
 
 use bytes::Bytes;
+use rumqttc::v5::mqttbytes::v5::{Filter, RetainForwardRule, SubscribeProperties};
 use rumqttc::{MqttOptions, QoS, Transport as RumqttcTransport};
 
-use crate::protocol::{BrokerConfig, PubProperties};
+use crate::protocol::{BrokerConfig, PubProperties, SubOptions};
 
 /// Resolve the transport for a config across the four combinations:
 /// plain TCP, TLS (mTLS-capable), WebSocket, and WSS (TLS over WebSocket).
 /// Returns `None` for a plain TCP connection.
-fn build_transport(config: &BrokerConfig) -> Option<RumqttcTransport> {
+///
+/// Explicitly configured TLS material never degrades silently: falling back to
+/// system roots would let a user believe a private-CA or mTLS pin is enforced
+/// while the broker is in fact validated against the public trust store (or
+/// client auth is simply absent).
+/// Keep-alive band the app accepts. The UI clamps to the same numbers, and this
+/// side is authoritative: a hand-edited profile must not be able to ask for a
+/// zero-second or a hundred-thousand-second keep-alive and quietly break the
+/// session (or flood the broker with PINGREQs).
+pub const MIN_KEEP_ALIVE_SECS: u64 = 5;
+pub const MAX_KEEP_ALIVE_SECS: u64 = 600;
+
+pub fn clamp_keep_alive(requested: u64) -> u64 {
+    requested.clamp(MIN_KEEP_ALIVE_SECS, MAX_KEEP_ALIVE_SECS)
+}
+
+fn read_tls_file(path: &str, kind: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("{} '{}' is unreadable: {}", kind, path, e))
+}
+
+fn build_transport(config: &BrokerConfig) -> Result<Option<RumqttcTransport>, String> {
     if !config.use_tls && !config.use_websocket {
-        return None;
+        return Ok(None);
     }
 
     // Optional custom CA + client cert/key (mutual TLS) material.
@@ -24,25 +45,22 @@ fn build_transport(config: &BrokerConfig) -> Option<RumqttcTransport> {
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .and_then(|p| match std::fs::read(p) {
-            Ok(ca) => Some(ca),
-            Err(e) => {
-                eprintln!("[dropqtt] CA file '{}' unreadable ({e}); using system roots", p);
-                None
-            }
-        });
+        .map(|p| read_tls_file(p, "TLS CA file"))
+        .transpose()?;
     let client_auth = match (
         config.tls_client_cert_path.as_deref().map(str::trim),
         config.tls_client_key_path.as_deref().map(str::trim),
     ) {
-        (Some(cert), Some(key)) if !cert.is_empty() && !key.is_empty() => {
-            match (std::fs::read(cert), std::fs::read(key)) {
-                (Ok(c), Ok(k)) => Some((c, k)),
-                _ => {
-                    eprintln!("[dropqtt] mTLS client cert/key unreadable; connecting without client auth");
-                    None
-                }
-            }
+        (Some(cert), Some(key)) if !cert.is_empty() && !key.is_empty() => Some((
+            read_tls_file(cert, "mTLS client certificate")?,
+            read_tls_file(key, "mTLS client key")?,
+        )),
+        // One half configured is a misconfiguration, not an opt-out.
+        (Some(cert), _) if !cert.is_empty() => {
+            return Err("mTLS client certificate set without a private key".into());
+        }
+        (_, Some(key)) if !key.is_empty() => {
+            return Err("mTLS private key set without a client certificate".into());
         }
         _ => None,
     };
@@ -50,21 +68,19 @@ fn build_transport(config: &BrokerConfig) -> Option<RumqttcTransport> {
     if config.use_websocket {
         // Plain WebSocket needs no TLS material.
         if !config.use_tls {
-            return Some(RumqttcTransport::Ws);
+            return Ok(Some(RumqttcTransport::Ws));
         }
-        let transport = match ca_bytes {
+        return Ok(Some(match ca_bytes {
             Some(ca) => RumqttcTransport::wss(ca, client_auth, None),
             None => RumqttcTransport::wss_with_default_config(),
-        };
-        return Some(transport);
+        }));
     }
 
     // TCP + TLS
-    let transport = match ca_bytes {
+    Ok(Some(match ca_bytes {
         Some(ca) => RumqttcTransport::tls(ca, client_auth, None),
         None => RumqttcTransport::tls_with_default_config(),
-    };
-    Some(transport)
+    }))
 }
 
 /// Whether a non-empty will topic is configured (WILL FLAG should be set).
@@ -82,20 +98,216 @@ pub struct NormalizedPublish {
     pub content_type: Option<String>,
     pub user_properties: Vec<(String, String)>,
     pub response_topic: Option<String>,
-    pub correlation_data: Option<String>,
+    /// MQTT5 Correlation Data, kept as the bytes the broker sent. The spec makes
+    /// it an opaque byte string, and devices commonly use a 4-byte UUID or a
+    /// protobuf tag; decoding it as UTF-8 would make request/response pairing
+    /// depend on the payload happening to be text.
+    pub correlation_data: Option<Vec<u8>>,
+    /// MQTT5 Payload Format Indicator as the publisher declared it
+    pub payload_format: Option<u8>,
+    /// MQTT5 Subscription Identifiers the broker attached to this delivery, i.e.
+    /// "these are the subscriptions of yours that I matched". Empty on v3.1.1,
+    /// and on any link where we did not ask for ids.
+    pub subscription_ids: Vec<u32>,
+}
+
+/// Which acknowledgement a broker refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AckStage {
+    Subscribe,
+    Unsubscribe,
+    PublishAck,
+    PublishReceive,
+    PublishRelease,
+    PublishComplete,
+    /// The broker sent a DISCONNECT packet with an error reason.
+    ServerDisconnect,
+    /// The CONNACK itself was refused.
+    Connect,
 }
 
 /// Normalized eventloop notifications.
 #[derive(Debug)]
 pub enum NetEvent {
-    /// CONNACK received (initial connect or automatic reconnect)
-    Connected,
+    /// CONNACK received (initial connect or automatic reconnect), reduced to the
+    /// capabilities the broker announced. Anything we send outside that set is a
+    /// protocol violation the broker may answer by dropping the connection, so it
+    /// is refused here instead.
+    Connected(ConnCapabilities),
     /// Transport-level failure; rumqttc keeps retrying on the next poll
     ConnectionError(String),
     /// Incoming publish packet
     Publish(NormalizedPublish),
-    /// Any other packet we intentionally ignore (SubAck, PubAck, ...)
+    /// PUBACK (QoS1), PUBREC (QoS2 first half) or PUBCOMP (QoS2 final half) for
+    /// one of our publishes. `code` is the v5 reason byte; `None` means v3.1.1,
+    /// which has no reason codes and acknowledges only by the packet's presence.
+    PublishAcked {
+        /// v5 reason byte. 0x00 is the only delivery acknowledgement; 0x10 means
+        /// the broker took the packet but nobody was subscribed; 0x80 and above
+        /// are refusals. v3.1.1 has no reason codes and always reports 0x00,
+        /// because there the packet's presence *is* the acknowledgement.
+        code: u8,
+        reason_string: Option<String>,
+    },
+    /// SUBACK: one reason byte per filter, in the order we sent them.
+    SubAck {
+        codes: Vec<u8>,
+        reason_string: Option<String>,
+    },
+    /// UNSUBACK: same shape, and a refusal means the broker may still be
+    /// delivering on a filter we just dropped locally.
+    UnsubAck {
+        codes: Vec<u8>,
+        reason_string: Option<String>,
+    },
+    /// A broker **refusal** of an ack. This is not a packet we got to see:
+    /// rumqttc's v5 state machine turns any non-success ack code into a fatal
+    /// `StateError` (`SubFail`, `PubAckFail`, ...), which tears the connection
+    /// down *instead of* delivering the SUBACK. Recognizing it is the only way
+    /// to tell the user why the session keeps dropping — and the only way to
+    /// stop replaying the filter that caused it.
+    AckRejected {
+        stage: AckStage,
+        code: u8,
+        /// `Debug` form of rumqttc's variant, for the diagnostics report only;
+        /// the UI speaks from `code`.
+        text: String,
+    },
+    /// Any other packet we intentionally ignore (AUTH, PINGRESP, ...)
     Other,
+}
+
+/// What the broker said it supports, with MQTT 5 §3.2.2.3.0 / §3.2.2.2.0 defaults
+/// applied to whatever it did not send. `None` means "absent on the wire", which
+/// is a different fact from "zero" only where the spec says so.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnCapabilities {
+    /// 0 means the broker takes no topic aliases at all.
+    pub topic_alias_max: u16,
+    /// Highest QoS accepted for a publish. Default 2.
+    pub max_qos: u8,
+    /// `retain-available`, default true.
+    pub retain_available: bool,
+    pub wildcard_available: bool,
+    pub shared_available: bool,
+    pub subscription_ids_available: bool,
+    /// `receive-maximum`: in-flight publishes we may leave unacked. Default 65535.
+    pub receive_max: u16,
+    /// `maximum-packet-size`, `None` = no limit announced.
+    pub max_packet_size: Option<u32>,
+    /// `server-keep-alive`, in seconds, when the broker overrode ours.
+    pub server_keep_alive: Option<u16>,
+    pub session_expiry: Option<u32>,
+    pub assigned_client_id: Option<String>,
+    pub response_information: Option<String>,
+    pub server_reference: Option<String>,
+}
+
+impl Default for ConnCapabilities {
+    /// The values a v5 broker gets by *not* sending the property.
+    fn default() -> Self {
+        Self {
+            topic_alias_max: 0,
+            max_qos: 2,
+            retain_available: true,
+            wildcard_available: true,
+            shared_available: true,
+            subscription_ids_available: true,
+            receive_max: 65_535,
+            max_packet_size: None,
+            server_keep_alive: None,
+            session_expiry: None,
+            assigned_client_id: None,
+            response_information: None,
+            server_reference: None,
+        }
+    }
+}
+
+impl ConnCapabilities {
+    /// v3.1.1 has no capability negotiation, so this table is the protocol itself.
+    /// Aliases cannot be sent at all; shared subscriptions and subscription
+    /// identifiers do not exist in the version, whatever the broker behind it
+    /// supports — a `$share/...` filter over 3.1.1 is just a literal topic name,
+    /// which is how a subscription silently receives nothing.
+    pub fn v3() -> Self {
+        Self {
+            topic_alias_max: 0,
+            shared_available: false,
+            subscription_ids_available: false,
+            ..Default::default()
+        }
+    }
+
+    pub fn from_v5(props: Option<&rumqttc::v5::mqttbytes::v5::ConnAckProperties>) -> Self {
+        let Some(p) = props else {
+            return Self::default();
+        };
+        let byte_flag = |v: &Option<u8>| v.map(|x| x != 0).unwrap_or(true);
+        Self {
+            topic_alias_max: p.topic_alias_max.unwrap_or(0),
+            max_qos: p.max_qos.unwrap_or(2).min(2),
+            retain_available: byte_flag(&p.retain_available),
+            wildcard_available: byte_flag(&p.wildcard_subscription_available),
+            shared_available: byte_flag(&p.shared_subscription_available),
+            subscription_ids_available: byte_flag(&p.subscription_identifiers_available),
+            receive_max: p.receive_max.unwrap_or(65_535).max(1),
+            max_packet_size: p.max_packet_size.filter(|v| *v > 0),
+            server_keep_alive: p.server_keep_alive.filter(|v| *v > 0),
+            session_expiry: p.session_expiry_interval,
+            assigned_client_id: p.assigned_client_identifier.clone(),
+            response_information: p.response_information.clone(),
+            server_reference: p.server_reference.clone(),
+        }
+    }
+}
+
+/// Reject a QoS the broker said it does not accept. Publishing above
+/// `maximum-qos` is a protocol violation, so the choice is between telling the
+/// user and letting the broker drop the session.
+pub fn qos_rejection(requested: u8, max: u8) -> Option<String> {
+    (requested > max).then(|| {
+        format!("broker accepts QoS up to {max}, not {requested} (lower it to publish)")
+    })
+}
+
+/// Retain is refused the same way: `retain-available = 0` means the broker will
+/// not store it, and sending the flag anyway risks a disconnect.
+pub fn retain_rejection(retain: bool, available: bool) -> Option<String> {
+    (retain && !available)
+        .then(|| "broker has retain unavailable (retain-available = 0); clear retain to publish".to_string())
+}
+
+/// The broker's `maximum-packet-size` covers the whole CONTROL packet, so the
+/// payload alone is not the number to compare — this is the conservative check
+/// the app can make without a full encoder: payload plus a fixed overhead budget.
+pub fn packet_size_rejection(
+    payload_len: usize,
+    topic_len: usize,
+    max: Option<u32>,
+) -> Option<String> {
+    let max = max?;
+    // 2 (topic len) + topic + 5 (fixed header + property-length + id slack)
+    let estimate = payload_len + topic_len + 16;
+    (estimate > max as usize).then(|| {
+        format!(
+            "packet would be ~{estimate} bytes, over the broker's maximum-packet-size of {max} (shorten it)"
+        )
+    })
+}
+
+/// A subscribe the broker announced it cannot serve. Refusing locally is strictly
+/// better than sending it: the refusal would come back as a SUBACK reason code,
+/// which rumqttc treats as fatal and tears the session down over.
+pub fn subscribe_capability_error(filter: &str, caps: &ConnCapabilities) -> Option<String> {
+    if !caps.wildcard_available && (filter.contains('#') || filter.contains('+')) {
+        return Some("broker does not support wildcard subscriptions (wildcard-subscription-available = 0)".to_string());
+    }
+    if !caps.shared_available && crate::topic::parse_shared(filter).is_some() {
+        return Some("broker does not support shared subscriptions (shared-subscription-available = 0)".to_string());
+    }
+    None
 }
 
 pub enum MqttClient {
@@ -150,11 +362,219 @@ fn qos_to_u8_v5(q: rumqttc::v5::mqttbytes::QoS) -> u8 {
     }
 }
 
+/// Wire byte for a v3.1.1 SUBACK code. Kept in sync with the spec by the tests
+/// at the bottom of this module.
+fn sub_code_v3(code: &rumqttc::mqttbytes::v4::SubscribeReasonCode) -> u8 {
+    use rumqttc::mqttbytes::v4::SubscribeReasonCode as C;
+    match code {
+        C::Success(q) => qos_to_u8(*q),
+        C::Failure => 0x80,
+    }
+}
+
+/// Wire byte for a v5 SUBACK code (MQTT 5 §3.2.2.2.0).
+fn sub_code_v5(code: &rumqttc::v5::mqttbytes::v5::SubscribeReasonCode) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::SubscribeReasonCode as C;
+    match code {
+        C::Success(q) => qos_to_u8_v5(*q),
+        C::Failure | C::Unspecified => 0x80,
+        C::ImplementationSpecific => 0x83,
+        C::NotAuthorized => 0x87,
+        C::TopicFilterInvalid => 0x8F,
+        C::PkidInUse => 0x91,
+        C::QuotaExceeded => 0x97,
+        C::SharedSubscriptionsNotSupported => 0x9E,
+        C::SubscriptionIdNotSupported => 0xA1,
+        C::WildcardSubscriptionsNotSupported => 0xA2,
+    }
+}
+
+fn unsub_code_v5(code: &rumqttc::v5::mqttbytes::v5::UnsubAckReason) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::UnsubAckReason as C;
+    match code {
+        C::Success => 0x00,
+        C::NoSubscriptionExisted => 0x11,
+        C::UnspecifiedError => 0x80,
+        C::ImplementationSpecificError => 0x83,
+        C::NotAuthorized => 0x87,
+        C::TopicFilterInvalid => 0x8F,
+        C::PacketIdentifierInUse => 0x91,
+    }
+}
+
+fn puback_code_v5(code: &rumqttc::v5::mqttbytes::v5::PubAckReason) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::PubAckReason as C;
+    match code {
+        C::Success => 0x00,
+        C::NoMatchingSubscribers => 0x10,
+        C::UnspecifiedError => 0x80,
+        C::ImplementationSpecificError => 0x83,
+        C::NotAuthorized => 0x87,
+        C::TopicNameInvalid => 0x90,
+        C::PacketIdentifierInUse => 0x91,
+        C::QuotaExceeded => 0x97,
+        C::PayloadFormatInvalid => 0x99,
+    }
+}
+
+fn pubrec_code_v5(code: &rumqttc::v5::mqttbytes::v5::PubRecReason) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::PubRecReason as C;
+    match code {
+        C::Success => 0x00,
+        C::NoMatchingSubscribers => 0x10,
+        C::UnspecifiedError => 0x80,
+        C::ImplementationSpecificError => 0x83,
+        C::NotAuthorized => 0x87,
+        C::TopicNameInvalid => 0x90,
+        C::PacketIdentifierInUse => 0x91,
+        C::QuotaExceeded => 0x97,
+        C::PayloadFormatInvalid => 0x99,
+    }
+}
+
+fn pubcomp_code_v5(code: &rumqttc::v5::mqttbytes::v5::PubCompReason) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::PubCompReason as C;
+    match code {
+        C::Success => 0x00,
+        C::PacketIdentifierNotFound => 0x92,
+    }
+}
+
+/// `mqttbytes` gives every ack packet its own properties struct with no shared
+/// trait, so the optional reason string is pulled out through this one seam.
+/// Capped because the value is broker-controlled and ends up in UI events.
+pub trait AckProperties {
+    fn reason_string(&self) -> Option<String>;
+}
+
+macro_rules! impl_ack_properties {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl AckProperties for $ty {
+                fn reason_string(&self) -> Option<String> {
+                    self.reason_string.as_ref().map(|s| {
+                        let cut = s.chars().take(200).collect::<String>();
+                        cut
+                    })
+                }
+            }
+        )+
+    };
+}
+
+impl_ack_properties!(
+    rumqttc::v5::mqttbytes::v5::SubAckProperties,
+    rumqttc::v5::mqttbytes::v5::UnsubAckProperties,
+    rumqttc::v5::mqttbytes::v5::PubAckProperties,
+    rumqttc::v5::mqttbytes::v5::PubRecProperties,
+    rumqttc::v5::mqttbytes::v5::PubCompProperties,
+);
+
+fn ack_reason_string<P: AckProperties>(props: Option<&P>) -> Option<String> {
+    props.and_then(|p| p.reason_string()).filter(|s| !s.trim().is_empty())
+}
+
+/// UI publish properties → the wire struct. Empty strings are dropped rather
+/// than sent, because a zero-length property is a different statement from an
+/// absent one.
+fn v5_publish_properties(p: &PubProperties) -> rumqttc::v5::mqttbytes::v5::PublishProperties {
+    rumqttc::v5::mqttbytes::v5::PublishProperties {
+        // 0 (ByteStream) and 1 (UTF-8) are the only defined values; anything else
+        // would be a protocol error, so it stays off the wire.
+        payload_format_indicator: p.payload_format.filter(|v| *v <= 1),
+        // Alias 0 is not assignable, and an unset alias must not register every
+        // topic under 0.
+        topic_alias: p.topic_alias.filter(|a| *a > 0),
+        content_type: p.content_type.clone(),
+        user_properties: p.user_properties.clone(),
+        message_expiry_interval: p.message_expiry,
+        response_topic: p
+            .response_topic
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        correlation_data: correlation_bytes(p),
+        ..Default::default()
+    }
+}
+
+/// Correlation bytes for the wire. The hex form wins when it is present, because
+/// it is how a non-UTF-8 correlation survives a bridge hop; otherwise the text
+/// field is sent as its own UTF-8 bytes.
+fn correlation_bytes(p: &PubProperties) -> Option<Bytes> {
+    if let Some(raw) = p.correlation_hex.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Ok(bytes) = hex::decode(raw) {
+            if !bytes.is_empty() {
+                return Some(Bytes::from(bytes));
+            }
+        }
+    }
+    p.correlation_data
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| Bytes::copy_from_slice(s.as_bytes()))
+}
+
+/// Reject a topic alias the broker would refuse. Sending one anyway is a
+/// protocol violation that rumqttc reports by tearing the connection down, so a
+/// silent publish failure would look like the app dropping the link.
+pub fn alias_rejection(alias: Option<u16>, broker_max: u16) -> Option<String> {
+    let alias = alias.filter(|a| *a > 0)?;
+    if broker_max == 0 {
+        return Some(format!(
+            "broker announced no topic-alias support; cannot send alias {alias} (clear it to publish)"
+        ));
+    }
+    (alias > broker_max).then(|| {
+        format!("broker allows topic aliases up to {broker_max}, not {alias} (clear it to publish)")
+    })
+}
+
+/// v5 will properties from the connection config. `None` keeps the will packet
+/// property-free, which is what a v3.1.1-style will looks like on the wire.
+fn will_properties(
+    config: &BrokerConfig,
+) -> Option<rumqttc::v5::mqttbytes::v5::LastWillProperties> {
+    let delay = config.will_delay_secs.filter(|d| *d > 0);
+    let text = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let content_type = text(&config.will_content_type);
+    let response_topic = text(&config.will_response_topic);
+    let correlation = text(&config.will_correlation_data);
+    let expiry = config.will_message_expiry;
+    // 2 and above are undefined values, and sending one is a protocol error.
+    let format = config.will_payload_format.filter(|v| *v <= 1);
+    if delay.is_none()
+        && content_type.is_none()
+        && response_topic.is_none()
+        && correlation.is_none()
+        && expiry.is_none()
+        && format.is_none()
+    {
+        return None;
+    }
+    Some(rumqttc::v5::mqttbytes::v5::LastWillProperties {
+        delay_interval: delay,
+        payload_format_indicator: format,
+        message_expiry_interval: expiry,
+        content_type,
+        response_topic,
+        correlation_data: correlation.map(|s| Bytes::copy_from_slice(s.as_bytes())),
+        user_properties: Vec::new(),
+    })
+}
+
 /// Build a fresh client + eventloop pair for the given broker config.
-pub fn build_connection(config: &BrokerConfig) -> (MqttClient, MqttEventLoop) {
+pub fn build_connection(config: &BrokerConfig) -> Result<(MqttClient, MqttEventLoop), String> {
+    let transport = build_transport(config)?;
     if config.is_v5() {
         let mut opts = rumqttc::v5::MqttOptions::new(&config.client_id, &config.host, config.port);
-        opts.set_keep_alive(Duration::from_secs(config.keep_alive_secs.max(5)));
+        opts.set_keep_alive(Duration::from_secs(clamp_keep_alive(config.keep_alive_secs)));
         opts.set_clean_start(config.clean_session);
         opts.set_max_packet_size(Some(10 * 1024 * 1024));
 
@@ -169,18 +589,28 @@ pub fn build_connection(config: &BrokerConfig) -> (MqttClient, MqttEventLoop) {
                 config.will_payload.clone().unwrap_or_default(),
                 qos_from_u8_v5(config.will_qos),
                 config.will_retain,
-                None,
+                will_properties(config),
             ));
         }
-        if let Some(transport) = build_transport(config) {
+        if let Some(transport) = transport {
             opts.set_transport(transport);
+        }
+        // Session-Expiry-Interval rides on CONNECT properties and rumqttc has no
+        // dedicated setter for it. Read-modify-write, because `set_max_packet_size`
+        // above already populated this same struct.
+        if let Some(secs) = config.session_expiry_secs {
+            let mut props = opts
+                .connect_properties()
+                .unwrap_or_default();
+            props.session_expiry_interval = Some(secs);
+            opts.set_connect_properties(props);
         }
 
         let (client, eventloop) = rumqttc::v5::AsyncClient::new(opts, 100);
-        (MqttClient::V5(client), MqttEventLoop::V5(Box::new(eventloop)))
+        Ok((MqttClient::V5(client), MqttEventLoop::V5(Box::new(eventloop))))
     } else {
         let mut opts = MqttOptions::new(&config.client_id, &config.host, config.port);
-        opts.set_keep_alive(Duration::from_secs(config.keep_alive_secs.max(5)));
+        opts.set_keep_alive(Duration::from_secs(clamp_keep_alive(config.keep_alive_secs)));
         opts.set_clean_session(config.clean_session);
         opts.set_max_packet_size(10 * 1024 * 1024, 10 * 1024 * 1024);
 
@@ -197,12 +627,12 @@ pub fn build_connection(config: &BrokerConfig) -> (MqttClient, MqttEventLoop) {
                 config.will_retain,
             ));
         }
-        if let Some(transport) = build_transport(config) {
+        if let Some(transport) = transport {
             opts.set_transport(transport);
         }
 
         let (client, eventloop) = rumqttc::AsyncClient::new(opts, 100);
-        (MqttClient::V3(client), MqttEventLoop::V3(Box::new(eventloop)))
+        Ok((MqttClient::V3(client), MqttEventLoop::V3(Box::new(eventloop))))
     }
 }
 
@@ -221,23 +651,7 @@ impl MqttClient {
                 .await
                 .map_err(|e| format!("{:?}", e)),
             MqttClient::V5(client) => {
-                let v5_props = props.map(|p| rumqttc::v5::mqttbytes::v5::PublishProperties {
-                    content_type: p.content_type.clone(),
-                    user_properties: p.user_properties.clone(),
-                    message_expiry_interval: p.message_expiry,
-                    response_topic: p
-                        .response_topic
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string),
-                    correlation_data: p
-                        .correlation_data
-                        .as_deref()
-                        .filter(|s| !s.is_empty())
-                        .map(|s| Bytes::copy_from_slice(s.as_bytes())),
-                    ..Default::default()
-                });
+                let v5_props = props.map(v5_publish_properties);
                 match v5_props {
                     Some(vp) => client
                         .publish_with_properties(
@@ -258,16 +672,55 @@ impl MqttClient {
         }
     }
 
-    pub async fn subscribe(&self, topic: &str, qos: u8) -> Result<(), String> {
+    /// Subscribe with v5 options. On a v3.1.1 connection only QoS is meaningful;
+    /// the extra flags are silently inapplicable rather than rejected, because
+    /// the same subscription registry is replayed after a protocol downgrade.
+    pub async fn subscribe(&self, topic: &str, opts: &SubOptions) -> Result<(), String> {
         match self {
-            MqttClient::V3(client) => {
-                client.subscribe(topic, qos_from_u8(qos)).await.map_err(|e| format!("{:?}", e))
-            }
+            MqttClient::V3(client) => client
+                .subscribe(topic, qos_from_u8(opts.qos))
+                .await
+                .map_err(|e| format!("{:?}", e)),
             MqttClient::V5(client) => {
-                client
-                    .subscribe(topic, qos_from_u8_v5(qos))
-                    .await
-                    .map_err(|e| format!("{:?}", e))
+                let plain =
+                    !opts.no_local && !opts.retain_as_published && opts.retain_handling == 0;
+                if plain && opts.subscription_id.is_none() {
+                    return client
+                        .subscribe(topic, qos_from_u8_v5(opts.qos))
+                        .await
+                        .map_err(|e| format!("{:?}", e));
+                }
+                let filter = Filter {
+                    path: topic.to_string(),
+                    qos: qos_from_u8_v5(opts.qos),
+                    nolocal: opts.no_local,
+                    preserve_retain: opts.retain_as_published,
+                    retain_forward_rule: match opts.retain_handling {
+                        1 => RetainForwardRule::OnNewSubscribe,
+                        2 => RetainForwardRule::Never,
+                        _ => RetainForwardRule::OnEverySubscribe,
+                    },
+                };
+                // The identifier is a SUBSCRIBE *packet* property, so it applies to
+                // every filter in the packet. We send exactly one filter per
+                // SUBSCRIBE, which is what makes the broker's answer attributable
+                // to a single subscription rather than to a batch of them.
+                match opts.subscription_id {
+                    Some(id) => client
+                        .subscribe_many_with_properties(
+                            [filter],
+                            SubscribeProperties {
+                                id: Some(id as usize),
+                                user_properties: Vec::new(),
+                            },
+                        )
+                        .await
+                        .map_err(|e| format!("{:?}", e)),
+                    None => client
+                        .subscribe_many([filter])
+                        .await
+                        .map_err(|e| format!("{:?}", e)),
+                }
             }
         }
     }
@@ -301,7 +754,9 @@ impl MqttEventLoop {
     pub async fn poll(&mut self) -> NetEvent {
         match self {
             MqttEventLoop::V3(loop3) => match loop3.poll().await {
-                Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => NetEvent::Connected,
+                Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
+                    NetEvent::Connected(ConnCapabilities::v3())
+                }
                 Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(p))) => {
                     NetEvent::Publish(NormalizedPublish {
                         topic: p.topic,
@@ -312,27 +767,54 @@ impl MqttEventLoop {
                         user_properties: Vec::new(),
                         response_topic: None,
                         correlation_data: None,
+                        payload_format: None,
+                        // v3.1.1 has no Subscription Identifier; hit accounting
+                        // falls back to matching our own filters.
+                        subscription_ids: Vec::new(),
                     })
                 }
+                Ok(rumqttc::Event::Incoming(
+                    rumqttc::Packet::PubAck(_) | rumqttc::Packet::PubComp(_),
+                )) => NetEvent::PublishAcked {
+                    code: 0x00,
+                    reason_string: None,
+                },
+                Ok(rumqttc::Event::Incoming(rumqttc::Packet::SubAck(s))) => NetEvent::SubAck {
+                    codes: s.return_codes.iter().map(sub_code_v3).collect(),
+                    reason_string: None,
+                },
+                Ok(rumqttc::Event::Incoming(rumqttc::Packet::UnsubAck(_))) => NetEvent::UnsubAck {
+                    // One synthetic success byte per UNSUBSCRIBE sent: v3 carries
+                    // no reason payload, but the pending slot still has to be
+                    // drained or the attribution FIFO would drift.
+                    codes: vec![0x00],
+                    reason_string: None,
+                },
                 Ok(_) => NetEvent::Other,
                 Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
             },
             MqttEventLoop::V5(loop5) => match loop5.poll().await {
-                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(_))) => {
-                    NetEvent::Connected
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(a))) => {
+                    NetEvent::Connected(ConnCapabilities::from_v5(a.properties.as_ref()))
                 }
                 Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(p))) => {
-                    let (content_type, user_properties, response_topic, correlation_data) =
+                    let subscription_ids = p
+                        .properties
+                        .as_ref()
+                        .map(|pr| {
+                            pr.subscription_identifiers.iter().map(|i| *i as u32).collect()
+                        })
+                        .unwrap_or_default();
+                    let (content_type, user_properties, response_topic, correlation_data, payload_format) =
                         match p.properties {
                             Some(vp) => (
                                 vp.content_type,
                                 vp.user_properties,
                                 vp.response_topic,
-                                vp.correlation_data
-                                    .as_deref()
-                                    .map(|b| String::from_utf8_lossy(b).to_string()),
+                                vp.correlation_data.map(|b| b.to_vec()),
+                                vp.payload_format_indicator,
                             ),
-                            None => (None, Vec::new(), None, None),
+                            None => (None, Vec::new(), None, None, None),
                         };
                     NetEvent::Publish(NormalizedPublish {
                         topic: String::from_utf8_lossy(&p.topic).to_string(),
@@ -343,11 +825,640 @@ impl MqttEventLoop {
                         user_properties,
                         response_topic,
                         correlation_data,
+                        payload_format,
+                        subscription_ids,
                     })
                 }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::PubAck(a))) => {
+                    NetEvent::PublishAcked {
+                        code: puback_code_v5(&a.reason),
+                        reason_string: ack_reason_string(a.properties.as_ref()),
+                    }
+                }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::PubComp(c))) => {
+                    NetEvent::PublishAcked {
+                        code: pubcomp_code_v5(&c.reason),
+                        reason_string: ack_reason_string(c.properties.as_ref()),
+                    }
+                }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::PubRec(r))) => {
+                    // A granted PUBREC is only the first half of the QoS2
+                    // handshake; PUBCOMP is the terminal ack, so this must not
+                    // count as one. A refused PUBREC has no later packet at all,
+                    // so it is reported now rather than going missing.
+                    let code = pubrec_code_v5(&r.reason);
+                    if code == 0x00 {
+                        NetEvent::Other
+                    } else {
+                        NetEvent::PublishAcked {
+                            code,
+                            reason_string: ack_reason_string(r.properties.as_ref()),
+                        }
+                    }
+                }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::SubAck(s))) => {
+                    NetEvent::SubAck {
+                        codes: s.return_codes.iter().map(sub_code_v5).collect(),
+                        reason_string: ack_reason_string(s.properties.as_ref()),
+                    }
+                }
+                Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::UnsubAck(u))) => {
+                    NetEvent::UnsubAck {
+                        codes: u.reasons.iter().map(unsub_code_v5).collect(),
+                        reason_string: ack_reason_string(u.properties.as_ref()),
+                    }
+                }
                 Ok(_) => NetEvent::Other,
-                Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
+                Err(e) => v5_error_event(&e),
             },
         }
+    }
+}
+
+/// Split rumqttc's one error channel into what actually happened.
+///
+/// Every ack refusal arrives here rather than as a packet: `MqttState` treats a
+/// non-success reason code as fatal, closes the connection, and the eventloop
+/// reconnects. Without this split the app sees an opaque `MqttState(SubFail ..)`
+/// string and a session that flaps forever, because the offending filter is
+/// replayed on every CONNACK.
+fn v5_error_event(e: &rumqttc::v5::ConnectionError) -> NetEvent {
+    use rumqttc::v5::mqttbytes::v5::{PubCompReason, PubRecReason, PubRelReason, UnsubAckReason};
+    use rumqttc::v5::StateError as S;
+    use rumqttc::v5::ConnectionError as C;
+
+    if let C::MqttState(state) = e {
+        match state {
+            S::SubFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::Subscribe,
+                    code: sub_code_v5(reason),
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::UnsubFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::Unsubscribe,
+                    code: match reason {
+                        UnsubAckReason::Success => 0x00,
+                        UnsubAckReason::NoSubscriptionExisted => 0x11,
+                        UnsubAckReason::UnspecifiedError => 0x80,
+                        UnsubAckReason::ImplementationSpecificError => 0x83,
+                        UnsubAckReason::NotAuthorized => 0x87,
+                        UnsubAckReason::TopicFilterInvalid => 0x8F,
+                        UnsubAckReason::PacketIdentifierInUse => 0x91,
+                    },
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::PubAckFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::PublishAck,
+                    code: puback_code_v5(reason),
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::PubRecFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::PublishReceive,
+                    code: match reason {
+                        PubRecReason::Success => 0x00,
+                        PubRecReason::NoMatchingSubscribers => 0x10,
+                        PubRecReason::UnspecifiedError => 0x80,
+                        PubRecReason::ImplementationSpecificError => 0x83,
+                        PubRecReason::NotAuthorized => 0x87,
+                        PubRecReason::TopicNameInvalid => 0x90,
+                        PubRecReason::PacketIdentifierInUse => 0x91,
+                        PubRecReason::QuotaExceeded => 0x97,
+                        PubRecReason::PayloadFormatInvalid => 0x99,
+                    },
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::PubRelFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::PublishRelease,
+                    code: match reason {
+                        PubRelReason::Success => 0x00,
+                        PubRelReason::PacketIdentifierNotFound => 0x92,
+                    },
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::PubCompFail { reason } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::PublishComplete,
+                    code: match reason {
+                        PubCompReason::Success => 0x00,
+                        PubCompReason::PacketIdentifierNotFound => 0x92,
+                    },
+                    text: format!("{reason:?}"),
+                }
+            }
+            S::ServerDisconnect {
+                reason_code,
+                reason_string,
+            } => {
+                return NetEvent::AckRejected {
+                    stage: AckStage::ServerDisconnect,
+                    code: *reason_code as u8,
+                    text: reason_string.clone().unwrap_or_else(|| format!("{reason_code:?}")),
+                }
+            }
+            _ => {}
+        }
+    }
+    NetEvent::ConnectionError(format!("{:?}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> BrokerConfig {
+        BrokerConfig {
+            host: "127.0.0.1".into(),
+            port: 8883,
+            ..Default::default()
+        }
+    }
+
+    /// `MqttClient`/`MqttEventLoop` are not `Debug`, so `expect_err` is unusable.
+    fn connect_err(c: &BrokerConfig) -> String {
+        match build_connection(c) {
+            Ok(_) => panic!("expected the connection build to fail"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn topic_aliases_are_gated_by_what_the_broker_announced() {
+        // A CONNACK without the property means "no aliases at all", and sending
+        // one anyway kills the connection at the protocol layer.
+        assert_eq!(alias_rejection(None, 0), None);
+        assert_eq!(alias_rejection(Some(0), 0), None, "alias 0 is not sent");
+        assert!(alias_rejection(Some(3), 0).unwrap().contains("no topic-alias support"));
+        assert!(alias_rejection(Some(3), 2).unwrap().contains("up to 2"));
+        assert_eq!(alias_rejection(Some(2), 2), None, "the limit is inclusive");
+        assert_eq!(alias_rejection(Some(10), 65535), None);
+    }
+
+    #[test]
+    fn publish_properties_only_carry_what_the_ui_set() {
+        let empty = v5_publish_properties(&PubProperties::default());
+        assert_eq!(empty.payload_format_indicator, None);
+        assert_eq!(empty.topic_alias, None);
+        assert_eq!(empty.content_type, None);
+        assert_eq!(empty.correlation_data, None);
+
+        // ByteStream is a real statement (0), not "absent".
+        let bytes = v5_publish_properties(&PubProperties {
+            payload_format: Some(0),
+            topic_alias: Some(3),
+            response_topic: Some("   ".into()),
+            correlation_data: Some(String::new()),
+            message_expiry: Some(60),
+            ..Default::default()
+        });
+        assert_eq!(bytes.payload_format_indicator, Some(0));
+        assert_eq!(bytes.topic_alias, Some(3), "alias 3 is assignable");
+        assert_eq!(bytes.response_topic, None, "blank is not a topic");
+        assert_eq!(bytes.correlation_data, None);
+        assert_eq!(bytes.message_expiry_interval, Some(60));
+
+        // Out-of-range values stay off the wire instead of corrupting the packet.
+        assert_eq!(
+            v5_publish_properties(&PubProperties {
+                payload_format: Some(7),
+                topic_alias: Some(0),
+                ..Default::default()
+            })
+            .payload_format_indicator,
+            None
+        );
+        assert_eq!(
+            v5_publish_properties(&PubProperties {
+                payload_format: Some(7),
+                topic_alias: Some(0),
+                ..Default::default()
+            })
+            .topic_alias,
+            None
+        );
+    }
+
+    #[test]
+    fn absent_connack_properties_mean_the_specs_defaults_not_zeros() {
+        use rumqttc::v5::mqttbytes::v5::ConnAckProperties;
+        let bare = ConnCapabilities::from_v5(None);
+        assert_eq!(bare.max_qos, 2);
+        assert!(bare.retain_available && bare.wildcard_available && bare.shared_available);
+        assert_eq!(bare.receive_max, 65_535);
+        assert_eq!(bare.topic_alias_max, 0, "alias support really is opt-in");
+        assert_eq!(bare.max_packet_size, None);
+
+        // A property present with 0 is a statement: "not available".
+        let no = ConnAckProperties {
+            retain_available: Some(0),
+            wildcard_subscription_available: Some(0),
+            shared_subscription_available: Some(0),
+            subscription_identifiers_available: Some(0),
+            max_qos: Some(3), // above the protocol ceiling
+            receive_max: Some(0), // 0 is not a usable credit
+            max_packet_size: Some(0),
+            session_expiry_interval: None,
+            assigned_client_identifier: None,
+            topic_alias_max: None,
+            reason_string: None,
+            user_properties: Vec::new(),
+            server_keep_alive: None,
+            response_information: None,
+            server_reference: None,
+            authentication_method: None,
+            authentication_data: None,
+        };
+        let caps = ConnCapabilities::from_v5(Some(&no));
+        assert!(!caps.retain_available);
+        assert!(!caps.wildcard_available);
+        assert!(!caps.shared_available);
+        assert!(!caps.subscription_ids_available);
+        assert_eq!(caps.max_qos, 2, "an out-of-range announcement cannot raise the ceiling");
+        assert_eq!(caps.receive_max, 1, "zero receive credit would deadlock the session");
+        assert_eq!(caps.max_packet_size, None, "0 means no limit, not a zero-byte limit");
+    }
+
+    #[test]
+    fn packets_outside_the_announced_capability_set_are_refused_locally() {
+        assert_eq!(qos_rejection(2, 2), None);
+        assert!(qos_rejection(2, 1).unwrap().contains("up to 1"));
+        assert_eq!(retain_rejection(false, false), None, "not asking for retain is fine");
+        assert!(retain_rejection(true, false).unwrap().contains("retain unavailable"));
+        assert_eq!(retain_rejection(true, true), None);
+
+        // 1 KiB payload on a 4096-byte limit fits; on a 512-byte limit it does not.
+        assert_eq!(packet_size_rejection(1024, 20, Some(4096)), None);
+        assert!(packet_size_rejection(1024, 20, Some(512)).unwrap().contains("maximum-packet-size"));
+        assert_eq!(packet_size_rejection(10_000_000, 20, None), None, "no limit announced");
+
+        let mut caps = ConnCapabilities::default();
+        assert_eq!(subscribe_capability_error("a/#", &caps), None);
+        caps.wildcard_available = false;
+        assert!(subscribe_capability_error("a/#", &caps).unwrap().contains("wildcard"));
+        assert_eq!(subscribe_capability_error("a/b", &caps), None, "an exact filter is not a wildcard");
+        caps.wildcard_available = true;
+        caps.shared_available = false;
+        assert!(subscribe_capability_error("$share/g/a/b", &caps)
+            .unwrap()
+            .contains("shared"));
+    }
+
+    #[test]
+    fn correlation_bytes_prefer_the_lossless_hex_form() {
+        // The bridge uses hex to forward a correlation that is not text.
+        let p = PubProperties {
+            correlation_data: Some("stale".into()),
+            correlation_hex: Some("04d481f7".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            v5_publish_properties(&p).correlation_data,
+            Some(Bytes::from_static(&[0x04, 0xd4, 0x81, 0xf7]))
+        );
+
+        // No hex: the text goes out as its own UTF-8 bytes.
+        let p = PubProperties {
+            correlation_data: Some("req-7".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            v5_publish_properties(&p).correlation_data,
+            Some(Bytes::from_static(b"req-7"))
+        );
+
+        // Unparseable or empty hex is not a licence to send garbage; the text
+        // field still speaks.
+        let p = PubProperties {
+            correlation_data: Some("req-7".into()),
+            correlation_hex: Some("zz".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            v5_publish_properties(&p).correlation_data,
+            Some(Bytes::from_static(b"req-7"))
+        );
+        let p = PubProperties {
+            correlation_hex: Some("  ".into()),
+            ..Default::default()
+        };
+        assert_eq!(v5_publish_properties(&p).correlation_data, None);
+    }
+
+    #[test]
+    fn will_properties_are_omitted_until_the_v5_fields_are_used() {
+        let mut c = cfg();
+        c.will_topic = Some("device/offline".into());
+        c.will_payload = Some("bye".into());
+        assert!(will_properties(&c).is_none(), "a plain v3-style will stays bare");
+
+        c.will_delay_secs = Some(0);
+        assert!(will_properties(&c).is_none(), "delay 0 is the protocol default");
+
+        c.will_delay_secs = Some(30);
+        let w = will_properties(&c).expect("delay produces properties");
+        assert_eq!(w.delay_interval, Some(30));
+        assert_eq!(w.content_type, None);
+
+        c.will_content_type = Some("  ".into());
+        assert_eq!(
+            will_properties(&c).expect("still has the delay").content_type,
+            None,
+            "blank content type is not a media type"
+        );
+        c.will_content_type = Some("application/json".into());
+        assert_eq!(
+            will_properties(&c).expect("both set").content_type.as_deref(),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn a_will_can_carry_the_request_context_a_peer_needs() {
+        // The two will uses that a plain v3.1.1 will cannot express: "expire this
+        // death notice after a minute" and "answer about it on this topic".
+        let mut c = cfg();
+        c.will_topic = Some("device/offline".into());
+        c.will_payload = Some("{}".into());
+        c.will_response_topic = Some("ops/alarm".into());
+        c.will_correlation_data = Some("gate-7".into());
+        c.will_message_expiry = Some(60);
+        c.will_payload_format = Some(1);
+        let w = will_properties(&c).expect("v5 will properties");
+        assert_eq!(w.response_topic.as_deref(), Some("ops/alarm"));
+        assert_eq!(w.message_expiry_interval, Some(60));
+        assert_eq!(w.payload_format_indicator, Some(1));
+        assert_eq!(
+            w.correlation_data,
+            Some(Bytes::from_static(b"gate-7")),
+            "the text field travels as its own UTF-8 bytes"
+        );
+
+        // An out-of-range format stays off the wire rather than corrupting it.
+        c.will_payload_format = Some(9);
+        assert_eq!(
+            will_properties(&c).expect("still has the rest").payload_format_indicator,
+            None
+        );
+        // Blank strings are not statements; a will with nothing left stays bare.
+        let mut bare = cfg();
+        bare.will_topic = Some("device/offline".into());
+        bare.will_response_topic = Some("   ".into());
+        bare.will_correlation_data = Some("".into());
+        assert!(will_properties(&bare).is_none());
+    }
+
+    #[test]
+    fn plain_tcp_and_default_tls_stay_valid() {
+        // No TLS at all, and TLS trusting the system store, are both intentional.
+        assert!(build_transport(&cfg()).unwrap().is_none());
+        let mut tls = cfg();
+        tls.use_tls = true;
+        assert!(build_transport(&tls).is_ok());
+        let mut ws = cfg();
+        ws.use_websocket = true;
+        assert!(matches!(
+            build_transport(&ws).unwrap(),
+            Some(RumqttcTransport::Ws)
+        ));
+    }
+
+    #[test]
+    fn unreadable_tls_material_fails_instead_of_degrading() {
+        let missing = "Z:/definitely/not/here.pem";
+
+        let mut c = cfg();
+        c.use_tls = true;
+        c.tls_ca_path = Some(missing.into());
+        let err = connect_err(&c);
+        assert!(err.contains("unreadable"), "{err}");
+        assert!(err.contains("definitely/not/here"), "{err}");
+
+        let mut c = cfg();
+        c.use_tls = true;
+        c.tls_client_cert_path = Some(missing.into());
+        c.tls_client_key_path = Some(missing.into());
+        assert!(connect_err(&c).contains("certificate"));
+
+        // WSS shares the same code path, so it must fail the same way.
+        let mut c = cfg();
+        c.use_tls = true;
+        c.use_websocket = true;
+        c.tls_ca_path = Some(missing.into());
+        assert!(build_connection(&c).is_err());
+    }
+
+    #[test]
+    fn half_configured_mtls_is_a_mistake_not_an_optout() {
+        let mut c = cfg();
+        c.use_tls = true;
+        c.tls_client_cert_path = Some("Z:/client.pem".into());
+        assert!(connect_err(&c).contains("without a private key"));
+
+        let mut c = cfg();
+        c.use_tls = true;
+        c.tls_client_key_path = Some("Z:/client.key".into());
+        assert!(connect_err(&c).contains("without a client certificate"));
+    }
+
+    /// (byte, variant) pairs straight from MQTT 5 §3.2.2.2.0, cross-checked
+    /// against the table mqtt.js ships in `mqtt-packet/constants.js`. If one of
+    /// these ever fails, the UI would be labelling a broker's refusal with the
+    /// wrong reason — which is the whole point of surfacing them.
+    #[test]
+    fn suback_reason_bytes_match_the_spec() {
+        use rumqttc::v5::mqttbytes::v5::SubscribeReasonCode as C;
+        let table: &[(u8, C)] = &[
+            (0x00, C::Success(rumqttc::v5::mqttbytes::QoS::AtMostOnce)),
+            (0x01, C::Success(rumqttc::v5::mqttbytes::QoS::AtLeastOnce)),
+            (0x02, C::Success(rumqttc::v5::mqttbytes::QoS::ExactlyOnce)),
+            (0x80, C::Unspecified),
+            (0x83, C::ImplementationSpecific),
+            (0x87, C::NotAuthorized),
+            (0x8F, C::TopicFilterInvalid),
+            (0x91, C::PkidInUse),
+            (0x97, C::QuotaExceeded),
+            (0x9E, C::SharedSubscriptionsNotSupported),
+            (0xA1, C::SubscriptionIdNotSupported),
+            (0xA2, C::WildcardSubscriptionsNotSupported),
+        ];
+        for (byte, variant) in table {
+            assert_eq!(&sub_code_v5(variant), byte, "variant {variant:?}");
+            // Every byte we can produce must have a label, and only the ≥0x80
+            // ones may be described as failures.
+            assert_ne!(
+                crate::acks::describe_sub(*byte),
+                "unrecognized reason code",
+                "byte {byte:#x}"
+            );
+            assert_eq!(crate::acks::is_error(*byte), *byte >= 0x80);
+        }
+    }
+
+    #[test]
+    fn unsuback_and_publish_reason_bytes_match_the_spec() {
+        use rumqttc::v5::mqttbytes::v5::{PubAckReason, PubCompReason, PubRecReason, UnsubAckReason};
+        assert_eq!(unsub_code_v5(&UnsubAckReason::Success), 0x00);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::NoSubscriptionExisted), 0x11);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::NotAuthorized), 0x87);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::TopicFilterInvalid), 0x8F);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::PacketIdentifierInUse), 0x91);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::UnspecifiedError), 0x80);
+        assert_eq!(unsub_code_v5(&UnsubAckReason::ImplementationSpecificError), 0x83);
+
+        assert_eq!(puback_code_v5(&PubAckReason::Success), 0x00);
+        assert_eq!(puback_code_v5(&PubAckReason::NoMatchingSubscribers), 0x10);
+        assert_eq!(puback_code_v5(&PubAckReason::TopicNameInvalid), 0x90);
+        assert_eq!(puback_code_v5(&PubAckReason::PacketIdentifierInUse), 0x91);
+        assert_eq!(puback_code_v5(&PubAckReason::QuotaExceeded), 0x97);
+        assert_eq!(puback_code_v5(&PubAckReason::PayloadFormatInvalid), 0x99);
+        assert_eq!(pubrec_code_v5(&PubRecReason::NotAuthorized), 0x87);
+        assert_eq!(pubcomp_code_v5(&PubCompReason::Success), 0x00);
+        assert_eq!(pubcomp_code_v5(&PubCompReason::PacketIdentifierNotFound), 0x92);
+
+        // "No matching subscribers" is the case the UI must not call an error and
+        // must not call a delivery either.
+        assert!(!crate::acks::is_error(0x10));
+        assert!(!crate::acks::is_plain_success(0x10));
+        assert_eq!(crate::acks::describe_pub(0x10), "no matching subscribers");
+    }
+
+    #[test]
+    fn v3_suback_codes_use_the_same_byte_space() {
+        use rumqttc::mqttbytes::v4::SubscribeReasonCode as C;
+        assert_eq!(sub_code_v3(&C::Success(rumqttc::QoS::AtLeastOnce)), 0x01);
+        assert_eq!(sub_code_v3(&C::Success(rumqttc::QoS::ExactlyOnce)), 0x02);
+        assert_eq!(sub_code_v3(&C::Failure), 0x80);
+        assert!(crate::acks::is_error(sub_code_v3(&C::Failure)));
+    }
+
+    #[test]
+    fn reason_strings_are_capped_because_they_are_broker_controlled() {
+        let long = "x".repeat(5000);
+        let props = rumqttc::v5::mqttbytes::v5::SubAckProperties {
+            reason_string: Some(long.clone()),
+            user_properties: Vec::new(),
+        };
+        let got = ack_reason_string(Some(&props)).expect("present");
+        assert_eq!(got.chars().count(), 200);
+        assert_ne!(got, long);
+
+        let blank = rumqttc::v5::mqttbytes::v5::SubAckProperties {
+            reason_string: Some("   ".into()),
+            user_properties: Vec::new(),
+        };
+        assert_eq!(ack_reason_string(Some(&blank)), None);
+        assert_eq!(ack_reason_string(None::<&rumqttc::v5::mqttbytes::v5::SubAckProperties>), None);
+    }
+}
+
+/// Golden wire bytes for the packets this app builds by hand.
+///
+/// Every v5 property in the review rounds so far was verified by writing a throwaway
+/// broker or sink and reading what came out — correct, but the test vanished with the
+/// script. These fixtures pin the byte layout instead, and the expected hex was
+/// computed from MQTT5 by hand (property ids, ordering, remaining lengths), not copied
+/// out of the encoder: a writer that starts dropping `Response Topic` or reordering
+/// `Correlation Data` fails here rather than in a support conversation.
+///
+/// Property *order* inside a packet is free per the spec; it is fixed here because a
+/// regression is only visible against something stable.
+#[cfg(test)]
+mod wire_golden {
+    use bytes::Bytes;
+    use bytes::BytesMut;
+    use rumqttc::v5::mqttbytes::v5::{
+        Filter, PubAck, PubAckReason, Publish, PublishProperties, Subscribe, SubscribeProperties,
+    };
+    use rumqttc::v5::mqttbytes::QoS;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn publish_qos1_without_properties() {
+        let mut pkt = Publish::new("sensors/a", QoS::AtLeastOnce, Bytes::from_static(b"hi"), None);
+        // A QoS 1 publish with no packet id is refused outright (`PacketIdZero`),
+        // which is the spec rule rather than a quirk worth papering over.
+        pkt.pkid = 7;
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        // 32 | 10 len(16) | 0009 + "sensors/a" | 0007 pkid | 00 no properties | 6869
+        assert_eq!(hex(&buf), "3210000973656e736f72732f610007006869");
+    }
+
+    #[test]
+    fn publish_carries_response_topic_correlation_and_user_property() {
+        let props = PublishProperties {
+            response_topic: Some("r".to_string()),
+            // Binary on purpose: 0x00 0xff is not text, and a correlation that only
+            // survives when it happens to be UTF-8 is the bug this pins down.
+            correlation_data: Some(Bytes::from(vec![0x00u8, 0xffu8])),
+            user_properties: vec![("k".to_string(), "v".to_string())],
+            ..Default::default()
+        };
+        let mut pkt = Publish::new("a/b", QoS::AtMostOnce, Bytes::from_static(b"hi"), Some(props));
+        pkt.retain = true;
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        // 31 retain | 18 len(24) | 0003 "a/b" | 10 properties length(16)
+        // | 08 0001 "r" | 09 0002 00ff | 26 0001 "k" 0001 "v" | 6869 payload
+        // Property ids are from MQTT5: Response Topic 0x08, Correlation Data 0x09,
+        // Subscription Identifier 0x0B, User Property 0x26.
+        assert_eq!(
+            hex(&buf),
+            concat!(
+                "31180003612f6210",
+                "08000172",
+                "09000200ff",
+                "2600016b000176",
+                "6869",
+            )
+        );
+    }
+
+    #[test]
+    fn subscribe_labels_its_filter_with_a_subscription_identifier() {
+        let mut pkt = Subscribe::new(
+            Filter::new("sensors/#", QoS::AtLeastOnce),
+            Some(SubscribeProperties { id: Some(7), user_properties: Vec::new() }),
+        );
+        // The client assigns the packet id at send time; the constructor leaves it 0.
+        pkt.pkid = 1;
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        // 82 | 11 len(17) | 0001 pkid | 02 properties length | 0b07 identifier
+        // | 0009 + "sensors/#" | 01 options (qos 1, rh 0, rap 0, nl 0)
+        assert_eq!(hex(&buf), "82110001020b07000973656e736f72732f2301");
+    }
+
+    #[test]
+    fn a_refused_publish_ack_is_one_byte_wider_than_a_plain_one() {
+        let pkt = PubAck { pkid: 7, reason: PubAckReason::NotAuthorized, properties: None };
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        // 40 | 04 len | 0007 pkid | 87 NotAuthorized | 00 property length
+        // A refused ack carries the property length explicitly; only the Success
+        // short form (below) may leave it off.
+        assert_eq!(hex(&buf), "400400078700");
+    }
+
+    #[test]
+    fn a_successful_ack_is_the_short_form() {
+        // Success is encoded without the reason byte at all, so a reader that
+        // assumes a fixed length would mispair the next packet in the stream.
+        let pkt = PubAck { pkid: 9, reason: PubAckReason::Success, properties: None };
+        let mut buf = BytesMut::new();
+        pkt.write(&mut buf).expect("encode");
+        assert_eq!(hex(&buf), "40020009");
     }
 }

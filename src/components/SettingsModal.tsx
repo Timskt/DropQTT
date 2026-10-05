@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { BrokerConfig, BROKER_PRESETS, BrokerProfile } from '../types';
-import { Language, Translations } from '../i18n';
+import { Language, Translations, fill } from '../i18n';
 import { Theme } from '../themes';
 import {
   X, Server, Shield, Key, Sliders, CheckCircle2, Globe, Palette,
@@ -43,11 +43,20 @@ const pickFile = async (onPath: (p: string) => void) => {
 };
 
 /** Token-driven peer toggle switch */
-const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; onVar?: string }> = ({
-  checked, onChange, onVar = 'var(--accent)',
+const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; onVar?: string; label: string }> = ({
+  checked, onChange, onVar = 'var(--accent)', label,
 }) => (
   <label className="relative inline-flex items-center cursor-pointer shrink-0">
-    <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="sr-only peer" />
+    {/* The wrapping <label> holds no text -- the caption is rendered by the caller
+        in a sibling element -- so without this the switch announces as an unnamed
+        checkbox. */}
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={(e) => onChange(e.target.checked)}
+      className="sr-only peer"
+      aria-label={label}
+    />
     <div
       className="w-9 h-5 rounded-full peer-focus:outline-none border peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"
       style={{
@@ -87,14 +96,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
   useEffect(() => {
     if (isOpen) {
       setForm(config);
       setTestResult(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, config]);
 
   // Escape closes the dialog, Tab stays inside it, and focus returns on close.
@@ -158,7 +166,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTestResult(null);
     try {
       const latency = await invoke<number>('test_broker_connection', { config: form });
-      setTestResult({ success: true, message: t.connectionSuccess.replace('{ms}', latency.toString()) });
+      setTestResult({ success: true, message: fill(t.connectionSuccess, { ms: latency.toString() }) });
     } catch (err) {
       setTestResult({ success: false, message: `${t.connectionFailed}: ${String(err)}` });
     } finally {
@@ -208,7 +216,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Palette className="w-3.5 h-3.5" style={{ color: 'var(--indigo)' }} /><span>{t.theme}</span></span>
               </label>
-              <select value={theme} onChange={(e) => onThemeChange(e.target.value as Theme)} className="field-input w-full">
+              <select value={theme} onChange={(e) => onThemeChange(e.target.value as Theme)} className="field-input w-full" aria-label={t.theme}>
                 <option value="cyberpunk" style={OPT_STYLE}>{t.themeCyberpunk}</option>
                 <option value="obsidian" style={OPT_STYLE}>{t.themeObsidian}</option>
                 <option value="nord" style={OPT_STYLE}>{t.themeNord}</option>
@@ -219,7 +227,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Globe className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} /><span>{t.language}</span></span>
               </label>
-              <select value={lang} onChange={(e) => onLangChange(e.target.value as Language)} className="field-input w-full">
+              <select value={lang} onChange={(e) => onLangChange(e.target.value as Language)} className="field-input w-full" aria-label={t.language}>
                 <option value="zh-CN" style={OPT_STYLE}>简体中文 (Simplified Chinese)</option>
                 <option value="en" style={OPT_STYLE}>English</option>
                 <option value="zh-TW" style={OPT_STYLE}>繁體中文 (Traditional Chinese)</option>
@@ -266,7 +274,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-secondary)' }}
                       >
                         <button type="button" onClick={() => handleApplyProfile(p)} className="cursor-pointer">{p.name}</button>
-                        <button type="button" onClick={() => onDeleteProfile(p.id)} className="opacity-60 hover:opacity-100 p-0.5 ml-1" style={{ color: 'var(--bad)' }} title={t.deleteProfile}>
+                        <button type="button" onClick={() => onDeleteProfile(p.id)} className="opacity-60 hover:opacity-100 p-0.5 ml-1" style={{ color: 'var(--bad)' }} title={t.deleteProfile} aria-label={t.deleteProfile}>
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
@@ -283,11 +291,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center justify-between"><span>{t.brokerHost}</span><span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>IP / Domain</span></span>
               </label>
-              <input type="text" value={form.host} required onChange={(e) => { setSelectedPreset('Custom'); setForm({ ...form, host: e.target.value }); setTestResult(null); }} className="field-input w-full font-mono" placeholder="192.168.1.100 or mqtt.example.com" />
+              <input type="text" value={form.host} required onChange={(e) => { setSelectedPreset('Custom'); setForm({ ...form, host: e.target.value }); setTestResult(null); }} className="field-input w-full font-mono" placeholder="192.168.1.100 or mqtt.example.com" aria-label={t.brokerHost} />
             </div>
             <div>
               <label className={LABEL} style={LABEL_COLOR}>{t.port}</label>
-              <input type="number" value={form.port} required onChange={(e) => { setForm({ ...form, port: Math.min(65535, Math.max(1, parseInt(e.target.value) || 1883)) }); setTestResult(null); }} className="field-input w-full font-mono" placeholder="1883" />
+              <input type="number" value={form.port} required onChange={(e) => { setForm({ ...form, port: Math.min(65535, Math.max(1, parseInt(e.target.value) || 1883)) }); setTestResult(null); }} className="field-input w-full font-mono" placeholder="1883" aria-label={t.port} />
             </div>
           </div>
 
@@ -319,10 +327,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Protocol Version & Clean Session */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={LABEL} style={LABEL_COLOR}>
+              <label htmlFor="dropqtt-protocol-version" className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" style={{ color: 'var(--violet)' }} /><span>{t.protocolVersion}</span></span>
               </label>
-              <select value={form.protocolVersion ?? 3} onChange={(e) => { setForm({ ...form, protocolVersion: parseInt(e.target.value) }); setTestResult(null); }} className="field-input w-full">
+              <select
+                id="dropqtt-protocol-version"
+                value={form.protocolVersion ?? 3}
+                onChange={(e) => { setForm({ ...form, protocolVersion: parseInt(e.target.value) }); setTestResult(null); }}
+                className="field-input w-full"
+              >
                 <option value={3} style={OPT_STYLE}>{t.mqttV311}</option>
                 <option value={5} style={OPT_STYLE}>{t.mqttV5}</option>
               </select>
@@ -332,7 +345,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <p className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{t.cleanSession}</p>
                 <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{t.cleanSessionDesc}</p>
               </div>
-              <Toggle checked={form.cleanSession ?? true} onChange={(v) => setForm({ ...form, cleanSession: v })} onVar="var(--violet)" />
+              <Toggle checked={form.cleanSession ?? true} onChange={(v) => setForm({ ...form, cleanSession: v })} onVar="var(--violet)" label={t.cleanSession} />
             </div>
           </div>
 
@@ -345,7 +358,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{t.tlsDesc}</p>
               </div>
             </div>
-            <Toggle checked={form.useTls} onChange={(v) => { setForm({ ...form, useTls: v }); setTestResult(null); }} />
+            <Toggle checked={form.useTls} onChange={(v) => { setForm({ ...form, useTls: v }); setTestResult(null); }} label={t.tls} />
           </div>
 
           {/* Advanced: Last Will & mTLS trust */}
@@ -354,16 +367,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className={LABEL} style={LABEL_COLOR}>{t.willTopic}</label>
-                <input type="text" value={form.willTopic || ''} onChange={(e) => setForm({ ...form, willTopic: e.target.value || undefined })} className="field-input w-full font-mono" placeholder="device/{id}/status" />
+                <input type="text" value={form.willTopic || ''} onChange={(e) => setForm({ ...form, willTopic: e.target.value || undefined })} className="field-input w-full font-mono" placeholder="device/{id}/status" aria-label={t.willTopic} />
               </div>
               <div>
                 <label className={LABEL} style={LABEL_COLOR}>{t.willPayload}</label>
-                <input type="text" value={form.willPayload || ''} onChange={(e) => setForm({ ...form, willPayload: e.target.value || undefined })} className="field-input w-full font-mono" placeholder="offline" />
+                <input type="text" value={form.willPayload || ''} onChange={(e) => setForm({ ...form, willPayload: e.target.value || undefined })} className="field-input w-full font-mono" placeholder="offline" aria-label={t.willPayload} />
               </div>
               <div className="flex items-end gap-2">
                 <div className="flex-1">
                   <label className={LABEL} style={LABEL_COLOR}>{t.willQos}</label>
-                  <select value={form.willQos ?? 0} onChange={(e) => setForm({ ...form, willQos: Number(e.target.value) })} className="field-input w-full">
+                  <select value={form.willQos ?? 0} onChange={(e) => setForm({ ...form, willQos: Number(e.target.value) })} className="field-input w-full" aria-label={t.willQos}>
                     {[0, 1, 2].map((q) => (<option key={q} value={q} style={OPT_STYLE}>QoS {q}</option>))}
                   </select>
                 </div>
@@ -372,6 +385,87 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {t.willRetain}
                 </label>
               </div>
+              {/* v5-only session/will properties. Left empty they stay off the wire,
+                  which is what a v3.1.1-compatible CONNECT looks like. */}
+              {form.protocolVersion === 5 && (
+                <div className="col-span-2 grid grid-cols-3 gap-2">
+                  <div>
+                    <label htmlFor="dropqtt-session-expiry" className={LABEL} style={LABEL_COLOR} title={t.sessionExpiryHint}>
+                      {t.sessionExpiry}
+                    </label>
+                    <input
+                      id="dropqtt-session-expiry"
+                      type="number" min={0} className="field-input w-full"
+                      value={form.sessionExpirySecs ?? ''}
+                      placeholder="—"
+                      onChange={(e) => setForm({ ...form, sessionExpirySecs: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-delay" className={LABEL} style={LABEL_COLOR}>{t.willDelay}</label>
+                    <input
+                      id="dropqtt-will-delay"
+                      type="number" min={0} className="field-input w-full"
+                      value={form.willDelaySecs ?? ''}
+                      placeholder="—"
+                      onChange={(e) => setForm({ ...form, willDelaySecs: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-content-type" className={LABEL} style={LABEL_COLOR}>{t.willContentType}</label>
+                    <input
+                      id="dropqtt-will-content-type"
+                      type="text" className="field-input w-full font-mono"
+                      value={form.willContentType || ''}
+                      placeholder="application/json"
+                      onChange={(e) => setForm({ ...form, willContentType: e.target.value || undefined })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-expiry" className={LABEL} style={LABEL_COLOR}>{t.messageExpiryLabel}</label>
+                    <input
+                      id="dropqtt-will-expiry"
+                      type="number" min={0} className="field-input w-full"
+                      value={form.willMessageExpiry ?? ''}
+                      placeholder="—"
+                      onChange={(e) => setForm({ ...form, willMessageExpiry: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-format" className={LABEL} style={LABEL_COLOR}>{t.payloadFormat}</label>
+                    <select
+                      id="dropqtt-will-format"
+                      className="field-input w-full"
+                      value={form.willPayloadFormat ?? ''}
+                      onChange={(e) => setForm({ ...form, willPayloadFormat: e.target.value === '' ? undefined : Number(e.target.value) })}
+                    >
+                      <option value="">{t.payloadFormatUnset}</option>
+                      <option value={1}>PFI · UTF-8</option>
+                      <option value={0}>PFI · Bytes</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-response-topic" className={LABEL} style={LABEL_COLOR}>{t.responseTopicLabel}</label>
+                    <input
+                      id="dropqtt-will-response-topic"
+                      type="text" className="field-input w-full font-mono"
+                      value={form.willResponseTopic || ''}
+                      placeholder="ops/alarm"
+                      onChange={(e) => setForm({ ...form, willResponseTopic: e.target.value || undefined })}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dropqtt-will-correlation" className={LABEL} style={LABEL_COLOR}>{t.correlationDataLabel}</label>
+                    <input
+                      id="dropqtt-will-correlation"
+                      type="text" className="field-input w-full font-mono"
+                      value={form.willCorrelationData || ''}
+                      placeholder="—"
+                      onChange={(e) => setForm({ ...form, willCorrelationData: e.target.value || undefined })}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             {form.useTls && (
               <div className="grid grid-cols-1 gap-2 pt-2" style={{ borderTop: '1px solid var(--border-inset)' }}>
@@ -388,12 +482,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Hash className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} /><span>{t.baseTopic}</span></span>
               </label>
-              <input type="text" value={form.baseTopic || 'dropqtt'} onChange={(e) => setForm({ ...form, baseTopic: e.target.value.trim() || 'dropqtt' })} className="field-input w-full font-mono" placeholder="dropqtt" />
+              <input type="text" value={form.baseTopic || 'dropqtt'} onChange={(e) => setForm({ ...form, baseTopic: e.target.value.trim() || 'dropqtt' })} className="field-input w-full font-mono" placeholder="dropqtt" aria-label={t.baseTopic} />
               <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>{t.baseTopicDesc}</p>
             </div>
             <div>
               <label className={LABEL} style={LABEL_COLOR}>{t.clientId}</label>
-              <input type="text" value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} className="field-input w-full font-mono" />
+              <input type="text" value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} className="field-input w-full font-mono" aria-label={t.clientId} />
             </div>
           </div>
 
@@ -403,13 +497,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Key className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} /><span>{t.username}</span></span>
               </label>
-              <input type="text" value={form.username || ''} onChange={(e) => { setForm({ ...form, username: e.target.value || undefined }); setTestResult(null); }} className="field-input w-full" placeholder="User / Token" />
+              <input type="text" value={form.username || ''} onChange={(e) => { setForm({ ...form, username: e.target.value || undefined }); setTestResult(null); }} className="field-input w-full" placeholder={t.brokerUserPh} aria-label={t.username} />
             </div>
             <div>
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Key className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} /><span>{t.password}</span></span>
               </label>
-              <input type="password" value={form.password || ''} onChange={(e) => { setForm({ ...form, password: e.target.value || undefined }); setTestResult(null); }} className="field-input w-full" placeholder="••••••••" />
+              <input type="password" value={form.password || ''} onChange={(e) => { setForm({ ...form, password: e.target.value || undefined }); setTestResult(null); }} className="field-input w-full" placeholder="••••••••" aria-label={t.password} />
             </div>
           </div>
 
@@ -434,7 +528,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Save Profile */}
           <div className="flex items-center gap-2 pt-1">
-            <input type="text" value={newProfileName} onChange={(e) => setNewProfileName(e.target.value)} placeholder={t.profileName} className="field-input flex-1" />
+            <input type="text" value={newProfileName} onChange={(e) => setNewProfileName(e.target.value)} placeholder={t.profileName} aria-label={t.profileName} className="field-input flex-1" />
             <button type="button" onClick={handleSaveCurrentAsProfile} className="chip chip-indigo !px-3 !py-1.5 !text-xs transition">
               <BookmarkPlus className="w-3.5 h-3.5" /><span>{t.saveProfile}</span>
             </button>
@@ -446,7 +540,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Sliders className="w-3.5 h-3.5" style={{ color: 'var(--info)' }} /><span>{t.defaultQos}</span></span>
               </label>
-              <select value={form.defaultQos} onChange={(e) => setForm({ ...form, defaultQos: parseInt(e.target.value) })} className="field-input w-full">
+              <select value={form.defaultQos} onChange={(e) => setForm({ ...form, defaultQos: parseInt(e.target.value) })} className="field-input w-full" aria-label={t.defaultQos}>
                 <option value={0} style={OPT_STYLE}>{t.qos0Desc}</option>
                 <option value={1} style={OPT_STYLE}>{t.qos1Desc}</option>
                 <option value={2} style={OPT_STYLE}>{t.qos2Desc}</option>
@@ -454,7 +548,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <div>
               <label className={LABEL} style={LABEL_COLOR}>{t.keepAlive}</label>
-              <input type="number" value={form.keepAliveSecs} onChange={(e) => setForm({ ...form, keepAliveSecs: Math.min(600, Math.max(5, parseInt(e.target.value) || 60)) })} className="field-input w-full font-mono" />
+              <input type="number" value={form.keepAliveSecs} onChange={(e) => setForm({ ...form, keepAliveSecs: Math.min(600, Math.max(5, parseInt(e.target.value) || 60)) })} className="field-input w-full font-mono" aria-label={t.keepAlive} />
             </div>
           </div>
 

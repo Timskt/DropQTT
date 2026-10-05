@@ -13,8 +13,7 @@
 //! ~100 ms (kills accidental `while(true)`), and zero host APIs exposed to the
 //! script — it is a pure data function sandbox.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use rquickjs::{Context, Runtime, Value};
@@ -22,17 +21,6 @@ use rquickjs::{Context, Runtime, Value};
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
 const TIME_BUDGET: Duration = Duration::from_millis(100);
 pub const SCRIPT_SIZE_LIMIT: usize = 16 * 1024;
-
-/// Epoch-ms deadline for the QuickJS interrupt handler (shared because the
-/// handler closure must be Send; one transform runs at a time per bridge task).
-static DEADLINE_MS: AtomicU64 = AtomicU64::new(u64::MAX);
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 /// Outcome of running a transform script for one message.
 #[derive(Debug, PartialEq)]
@@ -58,10 +46,11 @@ pub fn apply_transform(
 
     let rt = Runtime::new().map_err(|e| format!("js runtime: {}", e))?;
     rt.set_memory_limit(MEMORY_LIMIT);
-    // Abort runaway scripts instead of hanging the bridge task.
-    DEADLINE_MS.store(now_ms() + TIME_BUDGET.as_millis() as u64, Ordering::SeqCst);
+    // Each runtime owns its deadline: another bridge or a dry-run must never
+    // extend a runaway script's budget. Instant also ignores wall-clock changes.
+    let deadline = Instant::now() + TIME_BUDGET;
     rt.set_interrupt_handler(Some(Box::new(move || {
-        now_ms() >= DEADLINE_MS.load(Ordering::Relaxed)
+        Instant::now() >= deadline
     })));
 
     let ctx = Context::full(&rt).map_err(|e| format!("js context: {}", e))?;
@@ -183,5 +172,34 @@ mod tests {
         // The interrupt handler must abort a runaway loop rather than hang.
         let err = run("function transform() { while (true) {} }", b"x");
         assert!(err.is_err(), "expected timeout/termination error");
+    }
+
+    #[test]
+    fn runaway_loop_dies_even_while_other_scripts_keep_starting() {
+        // Regression: the deadline used to live in a shared static, so every new
+        // transform pushed the runaway script's budget further out and it never
+        // stopped. Each runtime must own its own deadline.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let chatter = stop.clone();
+        std::thread::spawn(move || {
+            while !chatter.load(Ordering::SeqCst) {
+                let _ = run("function transform(t, p) { return p; }", b"ping");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        let started = Instant::now();
+        let err = run("function transform() { while (true) {} }", b"x");
+        stop.store(true, Ordering::SeqCst);
+
+        assert!(err.is_err(), "runaway script must be terminated");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "runaway script outlived its budget: {:?}",
+            started.elapsed()
+        );
     }
 }

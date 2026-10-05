@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Activity, Gauge, Search, Trash2 } from 'lucide-react';
 import { SysRow } from '../../types';
-import { Translations } from '../../i18n';
+import { Translations, fill } from '../../i18n';
+import { SysMetricId, detectDialect, detectVendor, pickMetrics } from '../../utils/sysDialect';
 
 interface BrokerSysPanelProps {
   rows: SysRow[];
@@ -9,10 +10,6 @@ interface BrokerSysPanelProps {
   onClear: () => void;
   t: Translations;
 }
-
-/** Best-effort pick of the first $SYS row whose topic contains any pattern. */
-const pick = (rows: SysRow[], patterns: string[]): SysRow | undefined =>
-  rows.find((r) => patterns.some((p) => r.topic.toLowerCase().includes(p)));
 
 /** Humanize a $SYS topic into a short leaf label (last 2 segments). */
 const leaf = (topic: string): string => {
@@ -24,32 +21,25 @@ export const BrokerSysPanel: React.FC<BrokerSysPanelProps> = ({ rows, connected,
   const [filter, setFilter] = useState('');
   const [expanded, setExpanded] = useState(false);
 
+  const dialect = useMemo(() => detectDialect(rows), [rows]);
+  const software = useMemo(() => detectVendor(rows), [rows]);
   const highlights = useMemo(() => {
-    const chosen: { label: string; row?: SysRow }[] = [
-      { label: t.sysVersion, row: pick(rows, ['version']) },
-      { label: t.sysUptime, row: pick(rows, ['uptime']) },
-      { label: t.sysConnections, row: pick(rows, ['clients/connected', '/connected', 'connections', 'sessions/connected']) },
-      { label: t.sysMsgReceived, row: pick(rows, ['messages/received', 'msgs/received', 'packets received', 'received']) },
-      { label: t.sysMsgSent, row: pick(rows, ['messages/sent', 'msgs/sent', 'sent']) },
-      { label: t.sysLoad, row: pick(rows, ['load']) },
-    ];
-    const seen = new Set<string>();
-    return chosen.filter((c) => {
-      if (!c.row || seen.has(c.row.topic)) return false;
-      seen.add(c.row.topic);
-      return true;
-    });
-  }, [rows, t]);
-
-  const software = useMemo(() => {
-    const v = pick(rows, ['version'])?.value?.toLowerCase() || '';
-    if (v.includes('mosquitto')) return 'Mosquitto';
-    if (v.includes('emqx')) return 'EMQX';
-    if (v.includes('hivemq')) return 'HiveMQ';
-    if (v.includes('verne')) return 'VerneMQ';
-    if (v.includes('nanomq')) return 'NanoMQ';
-    return v ? v.split(/\s+/)[0] : '';
-  }, [rows]);
+    // Built inside the memo so the translation object is a real dependency rather
+    // than a captured identity that needs a lint suppression to be believed.
+    const labels: Record<SysMetricId, string> = {
+      version: t.sysVersion,
+      uptime: t.sysUptime,
+      connections: t.sysConnections,
+      msgReceived: t.sysMsgReceived,
+      msgSent: t.sysMsgSent,
+      load1min: t.sysLoad,
+      retained: t.sysRetained,
+      subscriptions: t.sysSubscriptions,
+      bytesReceived: t.sysBytesIn,
+      bytesSent: t.sysBytesOut,
+    };
+    return pickMetrics(rows, dialect).map(({ id, row }) => ({ label: labels[id], row }));
+  }, [rows, dialect, t]);
 
   const filtered = useMemo(() => {
     if (!filter.trim()) return rows;
@@ -72,7 +62,7 @@ export const BrokerSysPanel: React.FC<BrokerSysPanelProps> = ({ rows, connected,
               {expanded ? t.collapse : t.expandAll}
             </button>
           )}
-          <button onClick={onClear} disabled={rows.length === 0} title={t.sysClear} className="btn-ghost !px-2 !py-1 text-[10px] flex items-center gap-1 disabled:opacity-40">
+          <button onClick={onClear} disabled={rows.length === 0} title={t.sysClear} aria-label={t.sysClear} className="btn-ghost !px-2 !py-1 text-[10px] flex items-center gap-1 disabled:opacity-40">
             <Trash2 className="w-3 h-3" />
           </button>
         </div>
@@ -84,6 +74,16 @@ export const BrokerSysPanel: React.FC<BrokerSysPanelProps> = ({ rows, connected,
         </div>
       ) : (
         <div className="p-3 space-y-3">
+          {!dialect && (
+            <div
+              className="text-[11px] px-2 py-1.5 rounded inset-box"
+              data-testid="sys-no-dialect"
+              style={{ color: 'var(--warn)' }}
+            >
+              {fill(t.sysNoDialect, { vendor: software || t.sysUnknownVendor })}
+            </div>
+          )}
+
           {/* Highlight cards */}
           {highlights.length > 0 && (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -105,7 +105,7 @@ export const BrokerSysPanel: React.FC<BrokerSysPanelProps> = ({ rows, connected,
             <div className="space-y-2 animate-fade-in">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-                <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t.sysFilter} className="field-input w-full pl-8" />
+                <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t.sysFilter} aria-label={t.sysFilter} className="field-input w-full pl-8" />
               </div>
               <div className="inset-box divide-y max-h-64 overflow-y-auto">
                 {filtered.map((r) => (
