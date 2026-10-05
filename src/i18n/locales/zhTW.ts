@@ -2,7 +2,8 @@ import type { Translations } from '../types';
 
 export const zhTW: Translations = {
     appName: 'DropQTT',
-    tagline: '基於 MQTT 的高可靠跨平台檔案傳輸工具',
+    tagline: 'MQTT 工作臺 —— 傳輸、主控臺、橋接、歷史與維運診斷',
+    appTitle: 'DropQTT - MQTT 工作臺',
     channel: '傳輸房間頻道',
     connected: '已連線',
     disconnected: '未連線',

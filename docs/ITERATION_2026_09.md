@@ -2363,6 +2363,39 @@ mosquitto 就把整棵 retained `$SYS` 树（几十条）再送一遍。reload �
 `rows 48713 / oldest 1790833773016 / newest 1790946348366 / payload 合计 268310 B / 最后一行 id+topic`
 **逐项与备份完全相同**。以后判断"有没有动到他的数据"，要看这个，而不是 md5。
 
+### 4.69 标题栏改名：一个被实测推翻的假设（第十七轮 2026-10-05）
+
+产品早就不止文件传输了（控制台、桥接、历史、运维、仿真、指标），但窗口标题还写着
+`DropQTT - Fast MQTT File Transfer`。这次把它改成 **MQTT Workbench**，并让标题栏**跟随语言**：
+中文 `DropQTT - MQTT 工作台`、繁中 `工作臺`、日文 `ワークベンチ`、英文 `MQTT Workbench`。
+连带修掉同一句旧话的另外三处：`index.html` 的 `<title>`、`Cargo.toml` 的 description、
+README 的 tagline 与开头段（功能清单其实一直是全的，只有定位句在说谎）。
+
+**我原本以为不用碰权限**——"Tauri 会把 `document.title` 同步到窗口标题"。
+实测直接把这一步打回：`document.title` 确实是中文了（effect 生效），
+而 OS 标题栏仍是静态配置值。**v2 在这里不做这个镜像。**
+于是去问窗口 API，报错把需要的权限点名了：
+`window.set_title not allowed. Permissions associated with this command: core:window:allow-set-title`。
+
+权衡后加了这一条权限而不是自写 Rust 命令：两者能做的事完全一样（都是让 webview 改自己窗口的标题），
+但官方权限走 ACL、且 capabilities 已经限定 `"windows": ["main"]`，评审时看得见摸得着；
+远程 URL 是关掉的、CSP 是 `default-src 'self'`，伪造标题栏的现实攻击面基本为零。
+`document.title = t.appTitle` 那行**保留**：非 Tauri 宿主（Playwright 的 mock）没有窗口插件可调，
+那一边只剩 document.title 可用，所以 `getCurrentWindow()` 外面套了一层 try/catch——
+这里不是"防御不存在的场景"，而是**挂载路径上的真实边界**：它一旦抛错，221 个 spec 全废。
+
+真机验证（改完 capabilities 必须重编，权限是编译进产物的）：
+
+| 语言 | OS 标题栏实测值 |
+| --- | --- |
+| zh-CN（默认） | `DropQTT - MQTT 工作台` |
+| 切到 en 并 reload | `DropQTT - MQTT Workbench` |
+
+（第一次做这个实验时我犯了个方法错误：静态兜底值和英文译文用了**同一个字符串**，
+所以"标题是英文"根本分不清是没同步还是同步了但值相同。改成让默认语言出中文、
+并把标题从进程外读（PowerShell `MainWindowTitle` 落 UTF-8 文件再核），
+才得到一个能区分的实验。）
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

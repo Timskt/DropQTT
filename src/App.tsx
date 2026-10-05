@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { check } from '@tauri-apps/plugin-updater';
 import { open } from '@tauri-apps/plugin-dialog';
 import { AlertCircle, WifiOff } from 'lucide-react';
@@ -85,7 +86,17 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.lang = lang;
-  }, [lang]);
+    document.title = t.appTitle;
+    // Tauri v2 does not mirror `document.title` onto the OS title bar, so the window
+    // has to be told (needs `core:window:allow-set-title`, scoped to this window).
+    // The document.title line above stays because a host without the window plugin —
+    // the Playwright mocks — has nothing to call.
+    try {
+      void getCurrentWindow().setTitle(t.appTitle).catch(() => {});
+    } catch {
+      /* non-Tauri host */
+    }
+  }, [lang, t]);
 
   // Density is a view preference like the theme: one attribute on the root, and CSS
   // tightens every row without a re-render of the feed.

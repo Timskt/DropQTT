@@ -2,6 +2,8 @@ export type Language = 'zh-CN' | 'en' | 'zh-TW' | 'ja';
 
 export interface Translations {
   appName: string;
+  /** The OS window title. Tauri syncs `document.title` to it, so this is what the title bar shows. */
+  appTitle: string;
   tagline: string;
   channel: string;
   connected: string;

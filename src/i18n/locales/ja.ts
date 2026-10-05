@@ -2,7 +2,8 @@ import type { Translations } from '../types';
 
 export const ja: Translations = {
     appName: 'DropQTT',
-    tagline: 'MQTT ベースの耐障害性クロスプラットフォーム ファイル転送ツール',
+    tagline: 'MQTT ワークベンチ — 転送・コンソール・ブリッジ・履歴・運用診断',
+    appTitle: 'DropQTT - MQTT ワークベンチ',
     channel: 'ルーム チャンネル',
     connected: '接続済み',
     disconnected: '切断',

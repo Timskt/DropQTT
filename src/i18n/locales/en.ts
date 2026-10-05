@@ -2,7 +2,8 @@ import type { Translations } from '../types';
 
 export const en: Translations = {
     appName: 'DropQTT',
-    tagline: 'High-speed Resilient File Transfer Over MQTT',
+    tagline: 'The MQTT workbench — transfer, console, bridge, history, diagnostics',
+    appTitle: 'DropQTT - MQTT Workbench',
     channel: 'Room Channel',
     connected: 'Connected',
     disconnected: 'Disconnected',

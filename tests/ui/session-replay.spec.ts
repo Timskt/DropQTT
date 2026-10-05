@@ -256,6 +256,10 @@ test('what History exports, Replay reads back — the round trip is the feature'
   await page.getByTestId('history-capture').click();
   // plugin-fs hands the body over as a byte array, which is what the mock decodes;
   // the path is not observable through it, so the content is what gets pinned here.
+  // The write is async through the plugin layer, so poll for it rather than racing it.
+  await expect
+    .poll(() => page.evaluate(() => ((window as any).written?.text || '').length), { timeout: 15000 })
+    .toBeGreaterThan(0);
   const written = await page.evaluate(() => (window as any).written ?? { text: '' });
   expect(written.text.length).toBeGreaterThan(0);
 

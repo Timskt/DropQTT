@@ -1,5 +1,5 @@
 # DropQTT 🚀
-> **Fast, Resilient Cross-Platform File Transfer Over MQTT**
+> **The MQTT workbench — file transfer, console, bridge, history and ops diagnostics**
 
 [![Release Tauri App](https://github.com/Timskt/DropQTT/actions/workflows/release.yml/badge.svg)](https://github.com/Timskt/DropQTT/actions/workflows/release.yml)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-blue?logo=tauri)](https://tauri.app)
@@ -10,7 +10,7 @@
   <img src="./app-icon.png" width="160" height="160" alt="DropQTT App Icon" />
 </p>
 
-**DropQTT** is a lightweight (~10–15 MB) desktop application built with **Tauri v2**, **Rust (`rumqttc`)**, and **React + Tailwind CSS**. It enables direct, secure, and verifiable file transfer across isolated network environments where standard HTTP uploads, P2P, SCP, or cloud storage are blocked, but standard MQTT broker connectivity (port `1883`, `8883` TLS, or WebSocket) is permitted.
+**DropQTT** is a lightweight (~10–15 MB) desktop MQTT workbench built with **Tauri v2**, **Rust (`rumqttc`)**, and **React + Tailwind CSS**. It began as verifiable file transfer across isolated network environments where standard HTTP uploads, P2P, SCP, or cloud storage are blocked, but standard MQTT broker connectivity (port `1883`, `8883` TLS, or WebSocket) is permitted. It is now five workspaces — **File Transfer**, **MQTT Console**, **Data Bridge**, **Message History**, and **Ops & Diagnostics** — held together by one rule: a refusal, a drop, or a stall is stated out loud rather than hidden behind a green light.
 
 ---
 

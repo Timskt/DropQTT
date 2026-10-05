@@ -125,6 +125,11 @@ test('export captures the rig and carries no alert endpoint', async ({ page }) =
   await page.reload();
   await page.getByTestId('scenario-name').fill('Gate A');
   await page.getByTestId('scenario-export').click();
+  // Same race the report export documents below: the write is async through the
+  // plugin layer, so a single read can arrive before it lands.
+  await expect
+    .poll(() => page.evaluate(() => ((window as any).written?.text || '').length), { timeout: 15000 })
+    .toBeGreaterThan(0);
   const written = await page.evaluate(() => (window as any).written.text);
   expect(written).toContain('dropqtt-scenario/1');
   expect(written).toContain('devices/x/#');
