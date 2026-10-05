@@ -247,6 +247,8 @@ export const zhTW: Translations = {
     opsBridgeConnections: '橋接連線',
     opsEnabledRules: '啟用規則',
     opsVersion: '版本',
+    opsUptime: '執行時長',
+    opsUptimeHint: '重啟會清零累計訊息數',
     opsPlatform: '平台',
     opsProtocol: '協定',
     opsTransport: '傳輸',

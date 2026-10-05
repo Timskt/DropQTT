@@ -696,6 +696,8 @@ export interface RuntimeInfo {
   os: string;
   arch: string;
   generatedAt: number;
+  /** Seconds this process has been alive; a fall means a restart reset the totals. */
+  uptimeSecs?: number;
 }
 
 export interface MqttDiagnostics {

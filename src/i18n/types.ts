@@ -247,6 +247,8 @@ export interface Translations {
   opsBridgeConnections: string;
   opsEnabledRules: string;
   opsVersion: string;
+  opsUptime: string;
+  opsUptimeHint: string;
   opsPlatform: string;
   opsProtocol: string;
   opsTransport: string;

@@ -247,6 +247,8 @@ export const en: Translations = {
     opsBridgeConnections: 'Bridge connections',
     opsEnabledRules: 'enabled rules',
     opsVersion: 'Version',
+    opsUptime: 'Uptime',
+    opsUptimeHint: 'a restart resets the lifetime message totals',
     opsPlatform: 'Platform',
     opsProtocol: 'Protocol',
     opsTransport: 'Transport',

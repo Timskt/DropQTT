@@ -19,6 +19,24 @@ pub struct RuntimeInfo {
     pub os: String,
     pub arch: String,
     pub generated_at: i64,
+    /// Seconds this process has been alive.
+    ///
+    /// The message counters start over on a restart, so without this a scrape cannot
+    /// tell "traffic stopped" from "the app was restarted" — and the two send very
+    /// different people to look at it.
+    pub uptime_secs: u64,
+}
+
+static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Stamp the process start. Called once from `run()`, so the uptime is "how long this
+/// process existed", not "how long someone has had the panel open".
+pub fn mark_start() {
+    let _ = START.set(std::time::Instant::now());
+}
+
+pub fn uptime_secs() -> u64 {
+    START.get().map(|s| s.elapsed().as_secs()).unwrap_or(0)
 }
 
 /// Rolling timing for a repeating operation, over the last `WINDOW` calls.
@@ -519,6 +537,7 @@ pub fn build_snapshot(mut mqtt: MqttDiagnostics, bridge: BridgeDiagnostics) -> D
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             generated_at: chrono::Utc::now().timestamp_millis(),
+            uptime_secs: uptime_secs(),
         },
         mqtt,
         bridge,

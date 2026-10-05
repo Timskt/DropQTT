@@ -65,7 +65,7 @@ const boot = async (
           }
           if (cmd === 'get_diagnostics_snapshot') {
             return {
-              runtime: { appVersion: '0.9.0', os: 'windows', arch: 'x64', generatedAt: Date.now() },
+              runtime: { appVersion: '0.9.0', os: 'windows', arch: 'x64', generatedAt: Date.now(), uptimeSecs: 3_725 },
               mqtt: {
                 configured: true, connected: false, host: '127.0.0.1', port: 1883, clientId: 'DropQTT_metrics',
                 useTls: false, useWebsocket: false, protocolVersion: 5, subscriptions: 0, incomingActive: 0,
@@ -176,6 +176,13 @@ test('the legend lists only series that mean something alone', async ({ page, co
   const text = await page.evaluate(() => navigator.clipboard.readText());
   expect(text).toContain('dropqtt_feed_lost_total');
   expect(text).toContain('dropqtt_check_status{id}');
+});
+
+test('uptime is on screen so a restart is not mistaken for dead traffic', async ({ page }) => {
+  // The lifetime totals reset when the process does. Without this number on the same
+  // screen, "received stopped climbing" has two very different explanations.
+  await boot(page);
+  await expect(page.getByText('1h 02m')).toBeVisible();
 });
 
 test('the lifetime counters are on screen next to the resettable ones', async ({ page }) => {

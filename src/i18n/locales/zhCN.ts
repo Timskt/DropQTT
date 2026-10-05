@@ -247,6 +247,8 @@ export const zhCN: Translations = {
     opsBridgeConnections: '桥接连接',
     opsEnabledRules: '启用规则',
     opsVersion: '版本',
+    opsUptime: '运行时长',
+    opsUptimeHint: '重启会清零累计消息数',
     opsPlatform: '平台',
     opsProtocol: '协议',
     opsTransport: '传输',

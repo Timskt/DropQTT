@@ -247,6 +247,8 @@ export const ja: Translations = {
     opsBridgeConnections: 'ブリッジ接続',
     opsEnabledRules: '有効ルール',
     opsVersion: 'バージョン',
+    opsUptime: '稼働時間',
+    opsUptimeHint: '再起動すると累計メッセージ数はリセットされます',
     opsPlatform: 'プラットフォーム',
     opsProtocol: 'プロトコル',
     opsTransport: 'トランスポート',

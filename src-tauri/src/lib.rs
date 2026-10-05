@@ -730,6 +730,9 @@ async fn reveal_file(app: AppHandle, file_path: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything that could produce a snapshot: uptime is measured from process
+    // start, not from the first time someone opens the operations panel.
+    diagnostics::mark_start();
     let mqtt_manager = Arc::new(MqttManager::new());
     let bridge_manager = BridgeManager::new();
 

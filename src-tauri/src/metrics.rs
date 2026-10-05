@@ -305,6 +305,14 @@ pub fn render(snapshot: &DiagnosticsSnapshot, outbox: &OutboxCounts, outbox_avai
         "1",
     );
 
+    // The restart detector. `dropqtt_messages_*_total` start over when the process
+    // does, and a drop that looks like dead traffic is a reboot unless this series
+    // dropped with it.
+    w.gauge(
+        "dropqtt_uptime_seconds",
+        "Seconds since this process started. A fall means a restart, which also resets the message counters.",
+        snapshot.runtime.uptime_secs as i64,
+    );
     w.gauge(
         "dropqtt_mqtt_configured",
         "1 when a broker profile has been selected.",
@@ -603,6 +611,7 @@ mod tests {
                 os: "windows".into(),
                 arch: "x64".into(),
                 generated_at: 1,
+                uptime_secs: 4242,
             },
             mqtt: MqttDiagnostics {
                 configured: true,
@@ -745,6 +754,19 @@ mod tests {
         );
         // The injected newline must not become a real line break in the exposition.
         assert!(!text.contains("\n:1883"), "raw newline leaked into a label value");
+    }
+
+    #[test]
+    fn uptime_is_exported_so_a_restart_is_not_read_as_dead_traffic() {
+        let text = body();
+        assert!(
+            text.contains("dropqtt_uptime_seconds 4242"),
+            "{text}"
+        );
+        assert!(
+            text.contains("# TYPE dropqtt_uptime_seconds gauge"),
+            "uptime goes up and then falls on a restart, so it is not a counter"
+        );
     }
 
     #[test]

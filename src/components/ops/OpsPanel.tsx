@@ -18,7 +18,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import { BrokerCapabilities, DiagnosticLevel } from '../../types';
-import { formatBytes } from '../../utils/format';
+import { formatBytes, formatUptime } from '../../utils/format';
 import { Translations } from '../../i18n';
 import { useDiagnostics } from '../../hooks/useDiagnostics';
 import { EnvironmentCard } from './EnvironmentCard';
@@ -240,6 +240,11 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
             <Section icon={<Terminal className="w-4 h-4" />} title={t.opsRuntime}>
               <div className="ops-metric-grid">
                 <Metric label={t.opsVersion} value={`v${snapshot.runtime.appVersion}`} />
+                <Metric
+                  label={t.opsUptime}
+                  value={formatUptime(snapshot.runtime.uptimeSecs ?? 0)}
+                  hint={t.opsUptimeHint}
+                />
                 <Metric label={t.opsPlatform} value={`${snapshot.runtime.os} / ${snapshot.runtime.arch}`} />
                 <Metric label={t.opsProtocol} value={snapshot.mqtt.protocolVersion === 5 ? 'MQTT 5.0' : 'MQTT 3.1.1'} />
                 <Metric label={t.opsTransport} value={snapshot.mqtt.useWebsocket ? (snapshot.mqtt.useTls ? 'WSS' : 'WebSocket') : (snapshot.mqtt.useTls ? 'TLS' : 'TCP')} color={snapshot.mqtt.useTls ? 'var(--ok)' : 'var(--warn)'} />
