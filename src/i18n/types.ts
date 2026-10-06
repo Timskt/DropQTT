@@ -768,6 +768,7 @@ export interface Translations {
   scenarioPass: string;
   scenarioFail: string;
   scenarioUnknown: string;
+  scenarioReportFailed: string;
   scenarioCaveat: string;
   scenarioYes: string;
   scenarioNo: string;

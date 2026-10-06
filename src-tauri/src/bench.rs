@@ -97,6 +97,58 @@ pub struct BenchVerdict {
     pub failures: Vec<BenchFailure>,
 }
 
+/// Compare a set of thresholds against measured numbers. Free function so a verdict
+/// can be assembled from a scenario's bar without inventing a spec id for it.
+pub fn evaluate_expect(
+    expect: &BenchExpect,
+    sent: u64,
+    acked: u64,
+    rate: u64,
+    p99_ms: Option<u64>,
+    finished: bool,
+) -> BenchVerdict {
+    let mut failures = Vec::new();
+    if let Some(min) = expect.min_rate {
+        let min = u64::from(min);
+        if rate < min {
+            failures.push(BenchFailure {
+                kind: "minRate".to_string(),
+                limit: min,
+                actual: Some(rate),
+            });
+        }
+    }
+    if let Some(max) = expect.max_p99_ms {
+        match p99_ms {
+            Some(p99) if p99 > max => failures.push(BenchFailure {
+                kind: "maxP99Ms".to_string(),
+                limit: max,
+                actual: Some(p99),
+            }),
+            None => failures.push(BenchFailure {
+                kind: "maxP99Ms".to_string(),
+                limit: max,
+                actual: None,
+            }),
+            Some(_) => {}
+        }
+    }
+    if let Some(max) = expect.max_lost {
+        let lost = sent.saturating_sub(acked);
+        if lost > max {
+            failures.push(BenchFailure {
+                kind: "maxLost".to_string(),
+                limit: max,
+                actual: Some(lost),
+            });
+        }
+    }
+    BenchVerdict {
+        settled: finished,
+        failures,
+    }
+}
+
 impl BenchSpec {
     /// Compare what happened against what was required. `p99_ms` and the latency
     /// bar only mean something when samples exist, so a run that looped back
@@ -110,46 +162,9 @@ impl BenchSpec {
         finished: bool,
     ) -> Option<BenchVerdict> {
         let expect = self.expect.as_ref()?;
-        let mut failures = Vec::new();
-        if let Some(min) = expect.min_rate {
-            let min = u64::from(min);
-            if rate < min {
-                failures.push(BenchFailure {
-                    kind: "minRate".to_string(),
-                    limit: min,
-                    actual: Some(rate),
-                });
-            }
-        }
-        if let Some(max) = expect.max_p99_ms {
-            match p99_ms {
-                Some(p99) if p99 > max => failures.push(BenchFailure {
-                    kind: "maxP99Ms".to_string(),
-                    limit: max,
-                    actual: Some(p99),
-                }),
-                None => failures.push(BenchFailure {
-                    kind: "maxP99Ms".to_string(),
-                    limit: max,
-                    actual: None,
-                }),
-                Some(_) => {}
-            }
-        }
-        if let Some(max) = expect.max_lost {
-            let lost = sent.saturating_sub(acked);
-            if lost > max {
-                failures.push(BenchFailure {
-                    kind: "maxLost".to_string(),
-                    limit: max,
-                    actual: Some(lost),
-                });
-            }
-        }
-        Some(BenchVerdict {
-            settled: finished,
-            failures,
-        })
+        Some(evaluate_expect(
+            expect, sent, acked, rate, p99_ms, finished,
+        ))
     }
 }
 

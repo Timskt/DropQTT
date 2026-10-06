@@ -102,11 +102,18 @@ dropqtt-cli sub --topic 'devices/#' --count 20 --payload
 dropqtt-cli pub --topic devices/gw1/cmd --payload '{"mode":"ota"}' --qos 1 --retain
 dropqtt-cli rpc --topic devices/gw1/get --payload '{}' --response-topic cli/reply --timeout 5s
 dropqtt-cli verify --topic 'devices/#' --assert '$.tempC < 80' --for 30s --junit > report.xml
+dropqtt-cli verify --scenario nightly.dqscn --for 30s --json > verdict.json
 ```
 
 `verify` takes the desktop app's own assertion grammar (`$.field <op> <value>`,
 `qos >= 1`, `$.fw present`) and the same SUBACK/PUBACK verdicts, so a rule that
 passes here means the same thing when it is armed in the console.
+
+`--scenario` reads a `.dqscn` saved from the acceptance panel: its subscriptions
+get armed, its assertion rules join the ones passed on the command line, and the
+verdict is produced by the same Rust code the panel displays. What it does not do
+yet is generate the bench traffic a performance bar measures, so a scenario run
+reports that claim as *not proven* rather than as a pass — and says so.
 
 **Exit codes are a contract** — `0` pass, `1` refused or violated, `2` bad command
 line, `3` broker unreachable, `4` *not proven*. The last one exists because "no
@@ -128,6 +135,9 @@ bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 18831
 # and against a broker with an ACL, to assert a genuine refusal (0x87 -> exit 1)
 GATE_DENY_TOPIC=secret/never-granted bash scripts/cli-gate.sh \
   ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 18831
+
+# scenario verdicts, including the ones that must stay at 4
+bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 18831
 ```
 
 ---

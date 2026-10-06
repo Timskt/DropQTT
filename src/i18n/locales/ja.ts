@@ -753,6 +753,7 @@ export const ja: Translations = {
     scenarioPass: '達成',
     scenarioFail: '未達成',
     scenarioUnknown: '判定不能',
+    scenarioReportFailed: 'バックエンドで判定レポートを生成できませんでした',
     scenarioCaveat: '基準が設定されていない項目は「達成」ではなく「判定不能」になります。判定はこのセッションで実測した範囲だけを対象とします。',
     scenarioYes: 'あり',
     scenarioNo: 'なし',

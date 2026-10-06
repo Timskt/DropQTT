@@ -753,6 +753,7 @@ export const zhCN: Translations = {
     scenarioPass: '达标',
     scenarioFail: '未达标',
     scenarioUnknown: '无法判定',
+    scenarioReportFailed: '后端未能生成验收结论文件',
     scenarioCaveat: '没有设定标准时这里是"无法判定"，不是"通过"。结论只覆盖本次会话实测到的数据。',
     scenarioYes: '有',
     scenarioNo: '无',

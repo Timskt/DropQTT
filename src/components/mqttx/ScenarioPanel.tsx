@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { ClipboardList, FileUp, Loader2, Save } from 'lucide-react';
 import { AssertionRule, ResponderRule, SilenceRule, SubOptions } from '../../types';
@@ -6,17 +6,16 @@ import { usePersistentState } from '../../hooks/usePersistentState';
 import { fill, Translations } from '../../i18n';
 import {
   applyPlan,
-  buildScenarioReportJson,
-  buildScenarioReportJunit,
+  claimLines,
   collectScenario,
-  OverallVerdict,
-  overallVerdict,
+  judgeScenario,
   parseScenario,
+  renderScenarioReport,
   reportFileName,
   Scenario,
   scenarioFileName,
-  scenarioVerdict,
   serializeScenario,
+  Verdict,
   VerdictLine,
 } from '../../utils/scenario';
 import { saveTextFile } from '../../utils/exportMessages';
@@ -39,7 +38,7 @@ const stateColor = (state: VerdictLine['state']): string =>
 
 /** The three roll-up states, in the reader's language: a bare "fail" on a button
  *  in an otherwise localised panel is the sort of thing that reads as a bug. */
-const stateWord = (state: VerdictLine['state'] | OverallVerdict, t: Translations): string =>
+const stateWord = (state: Verdict['overall'], t: Translations): string =>
   state === 'pass' ? t.scenarioPass : state === 'fail' ? t.scenarioFail : t.scenarioUnknown;
 
 /**
@@ -85,36 +84,47 @@ export const ScenarioPanel: React.FC<ScenarioPanelProps> = (props) => {
     [assertions, name, note, responders, silenceRules, subscriptions],
   );
 
-  const verdict = useMemo(
-    () =>
-      scenarioVerdict(
-        { assertionStats: props.assertionStats, rejectedSubs: props.rejectedSubs },
-        {
-          rate: t.scenarioClaimRate,
-          p99: t.scenarioClaimP99,
-          lost: t.scenarioClaimLost,
-          violations: t.scenarioClaimAssertions,
-          refused: t.scenarioClaimRefused,
-          notRun: t.scenarioNotRun,
-          noBar: t.scenarioNoBar,
-        },
-      ),
-    [props.assertionStats, props.rejectedSubs, t],
-  );
+  /**
+   * The bar belongs to the rig being judged, not to the panel: loading a scenario is
+   * what sets a bar, and an unloaded panel has nothing to measure against -- which the
+   * backend reports as `noBarSet`, unknown rather than green.
+   */
+  const expect = loaded?.bench?.expect ?? null;
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
 
-  const overall = overallVerdict(verdict);
+  // Judged by `scenario.rs`, the same code the CLI's exit code comes from. A verdict
+  // computed here as well would be a second opinion nobody asked for, and the first
+  // change to either rule would make the screen disagree with the pipeline.
+  useEffect(() => {
+    let alive = true;
+    void judgeScenario({ expect, assertions: props.assertionStats, refused: props.rejectedSubs }).then((next) => {
+      if (alive && next) setVerdict(next);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [expect, props.assertionStats, props.rejectedSubs]);
+
+  const lines = useMemo(() => claimLines(verdict?.claims ?? [], t), [verdict, t]);
+  const overall: Verdict['overall'] = verdict?.overall ?? 'unknown';
 
   const writeReport = async (ext: 'json' | 'xml') => {
-    const input = {
-      scenarioName: snapshot.name,
-      ...(snapshot.note ? { note: snapshot.note } : {}),
-      lines: verdict,
-      generatedAt: new Date().toISOString(),
-      words: { pass: t.scenarioPass, fail: t.scenarioFail, unknown: t.scenarioUnknown },
-    };
-    const text = ext === 'json' ? buildScenarioReportJson(input) : buildScenarioReportJunit(input);
     setBusy(true);
     try {
+      const text = await renderScenarioReport({
+        expect,
+        assertions: props.assertionStats,
+        refused: props.rejectedSubs,
+        name: snapshot.name,
+        ...(snapshot.note ? { note: snapshot.note } : {}),
+        labels: lines.map((line) => line.claim),
+        words: { fail: t.scenarioFail, unknown: t.scenarioUnknown },
+        format: ext === 'json' ? 'json' : 'junit',
+      });
+      if (text === null) {
+        setError(t.scenarioReportFailed);
+        return;
+      }
       await saveTextFile(reportFileName(snapshot.name, ext), text);
     } catch (e) {
       setError(String(e));
@@ -323,8 +333,8 @@ export const ScenarioPanel: React.FC<ScenarioPanelProps> = (props) => {
         <span className="text-[10px] font-semibold" style={{ color: 'var(--text-primary)' }}>
           {t.scenarioVerdict}
         </span>
-        {verdict.map((line) => (
-          <div key={line.claim} className="flex items-center gap-2 text-[10px] font-mono" data-testid={`verdict-${line.claim}`}>
+        {lines.map((line) => (
+          <div key={line.id} className="flex items-center gap-2 text-[10px] font-mono" data-testid={`verdict-${line.id}`}>
             <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: stateColor(line.state) }} aria-hidden />
             <span style={{ color: 'var(--text-primary)' }}>{line.claim}</span>
             <span className="ml-auto" style={{ color: stateColor(line.state) }}>

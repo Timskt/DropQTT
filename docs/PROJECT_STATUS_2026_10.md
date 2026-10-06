@@ -15,19 +15,20 @@
 
 | 指标 | 实测值 |
 | --- | --- |
-| Rust 源码 | 20,670 行 / 24 个模块（含 `bin/dropqtt-cli.rs`） |
-| TS + TSX 源码 | 23,256 行 / 89 个文件 |
-| Tauri 命令 | 77 个 `#[tauri::command]` |
-| i18n 键 | 961 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
+| Rust 源码 | 21,957 行 / 26 个模块（含 `bin/dropqtt-cli.rs`） |
+| TS + TSX 源码 | 23,266 行 / 89 个文件 |
+| Tauri 命令 | 79 个 `#[tauri::command]` |
+| i18n 键 | 962 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
 | 依赖 | npm 31（运行时 13）/ cargo 20 个直接依赖 |
 | 测试文件 | 18 个 unit + 32 个 Playwright spec |
 
 **门禁全绿（2026-10-07 本轮末次运行）**：
 
-- Rust 逻辑 **293 通过**（`~/dropqtt-rustcheck` harness，gnu 工具链）
-- 前端单测 **152 通过**（`npm test` = `vitest run tests/unit`）
-- 真 DOM UI **221 通过**（`npx playwright test`，6.4 分钟）
-- `tsc --noEmit` 干净；`cargo clippy --all-targets` **0 告警**
+- Rust 逻辑 **325 通过**（`~/dropqtt-rustcheck` harness，gnu 工具链）
+- 前端单测 **149 通过**（`npm test` = `vitest run tests/unit`）
+- 真 DOM UI **221 通过**（`npx playwright test`）
+- 真机 CLI 门禁 **cli-gate 36 项 + scenario-gate 18 项**（一次性 mosquitto `18831`，未碰本机 `1883`）
+- `tsc --noEmit` 干净；`cargo clippy --all-targets -- -D warnings` **通过**
 - ESLint **0 error / 10 warning**（预算锁在 10，本轮未涨）
 
 ## 3. 能力清单（按工作区）

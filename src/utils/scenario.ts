@@ -1,4 +1,6 @@
-import { AssertionRule, BenchExpect, BenchProgress, ResponderRule, SilenceRule, SubOptions } from '../types';
+import { invoke } from '@tauri-apps/api/core';
+import { AssertionRule, BenchExpect, ResponderRule, SilenceRule, SubOptions } from '../types';
+import { Translations } from '../i18n';
 
 /**
  * An acceptance scenario: the whole rig needed to answer "does this fleet behave",
@@ -153,146 +155,139 @@ export function applyPlan(scenario: Scenario, isV5: boolean, words: {
 export type VerdictState = 'pass' | 'fail' | 'unknown';
 
 export interface VerdictLine {
+  /** The claim's stable id, so a list key never depends on a translated label. */
+  id: string;
   claim: string;
   actual: string;
   state: VerdictState;
 }
 
 /**
- * The verdict is the point of the feature: MQTTX-style simulators draw curves, this
- * has to say passed or failed. So a bar that was never set reports `unknown`, not
- * `pass` — "no evidence either way" must not be able to read as a green light.
+ * The judgement itself lives in `scenario.rs`, behind `scenario_verdict`.
+ *
+ * It used to be here, in TypeScript, and that was a real hazard rather than a
+ * tidiness one: the number a person read on screen and the exit code a pipeline read
+ * were produced by two implementations of the same three rules, and the first change
+ * to either would make them disagree quietly. What is left below is presentation --
+ * which label a claim wears, and how its numbers are phrased.
  */
-export function scenarioVerdict(input: {
-  progress?: BenchProgress;
-  assertionStats?: { matched: number; passed: number; violated: number; unevaluable: number };
-  rejectedSubs?: number;
-  expect?: BenchExpect;
-}, words: {
-  rate: string;
-  p99: string;
-  lost: string;
-  violations: string;
-  refused: string;
-  notRun: string;
-  noBar: string;
-}): VerdictLine[] {
-  const lines: VerdictLine[] = [];
-  const p = input.progress;
-  const e = input.expect;
-  if (!p) {
-    lines.push({ claim: words.rate, actual: words.notRun, state: 'unknown' });
-  } else if (!e) {
-    lines.push({ claim: words.rate, actual: words.noBar, state: 'unknown' });
-  } else {
-    const lost = p.sent - p.observed;
-    if (e.minRate !== undefined && e.minRate !== null) {
-      lines.push({
-        claim: words.rate,
-        actual: `${Math.round(p.rate)} / ${e.minRate}`,
-        state: p.rate >= e.minRate ? 'pass' : 'fail',
-      });
-    }
-    if (e.maxP99Ms !== undefined && e.maxP99Ms !== null) {
-      const p99 = p.latency?.p99Ms ?? 0;
-      lines.push({ claim: words.p99, actual: `${p99} ms / ${e.maxP99Ms} ms`, state: p99 <= e.maxP99Ms ? 'pass' : 'fail' });
-    }
-    if (e.maxLost !== undefined && e.maxLost !== null) {
-      lines.push({ claim: words.lost, actual: `${lost} / ${e.maxLost}`, state: lost <= e.maxLost ? 'pass' : 'fail' });
-    }
-  }
-  const a = input.assertionStats;
-  if (a) {
-    lines.push({
-      claim: words.violations,
-      actual: `${a.violated} violated, ${a.unevaluable} unevaluable of ${a.matched} matched`,
-      // Nothing matched means no rule ever ran against a message, which is the same
-      // absence of evidence as an unset bar — it must not read as a pass.
-      state: a.violated > 0 ? 'fail' : a.unevaluable > 0 || a.matched === 0 ? 'unknown' : 'pass',
-    });
-  }
-  if (input.rejectedSubs && input.rejectedSubs > 0) {
-    lines.push({ claim: words.refused, actual: `${input.rejectedSubs}`, state: 'fail' });
-  }
-  return lines;
+export interface Claim {
+  id: string;
+  state: VerdictState;
+  actual?: number;
+  limit?: number;
+  /** Only for the assertion claim: `[matched, violated, unevaluable]`. */
+  counts?: [number, number, number];
 }
+
+export interface Verdict {
+  claims: Claim[];
+  overall: VerdictState;
+}
+
+export interface Measurement {
+  sent: number;
+  acked: number;
+  rate: number;
+  p99Ms?: number | null;
+  /** False while a run is still going: a rate over 200 ms is a sample, not a verdict. */
+  settled: boolean;
+}
+
+export interface VerdictRequest {
+  expect?: BenchExpect | null;
+  measurement?: Measurement | null;
+  assertions?: { matched: number; passed: number; violated: number; unevaluable: number } | null;
+  refused?: number;
+}
+
+/** `null` means "this host has no backend", which a browser preview is. */
+export async function judgeScenario(request: VerdictRequest): Promise<Verdict | null> {
+  try {
+    return await invoke<Verdict>('scenario_verdict', { request });
+  } catch {
+    return null;
+  }
+}
+
+export interface ReportRequest extends VerdictRequest {
+  name: string;
+  note?: string;
+  /** One label per claim, positionally, in the reader's language. */
+  labels: string[];
+  words: { fail: string; unknown: string };
+  format: 'json' | 'junit';
+}
+
+/** The report text, rendered by the backend from evidence rather than from claims. */
+export async function renderScenarioReport(input: ReportRequest): Promise<string | null> {
+  const { name, note, labels, words, format, ...evidence } = input;
+  try {
+    return await invoke<string>('scenario_report', {
+      request: {
+        evidence,
+        name,
+        ...(note ? { note } : {}),
+        generatedAt: new Date().toISOString(),
+        labels,
+        words,
+        format,
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Which translation a claim id wears. Two ids share the rate label on purpose: "not
+ *  run" and "no bar" are the same claim seen from two directions. */
+const CLAIM_LABEL: Record<string, keyof Translations> = {
+  minRate: 'scenarioClaimRate',
+  maxP99Ms: 'scenarioClaimP99',
+  maxLost: 'scenarioClaimLost',
+  assertions: 'scenarioClaimAssertions',
+  refusedSubscriptions: 'scenarioClaimRefused',
+  noBarSet: 'scenarioClaimRate',
+  notRun: 'scenarioClaimRate',
+};
+
+export function claimLabel(id: string, t: Translations): string {
+  const key = CLAIM_LABEL[id];
+  // An id this build does not know wears its own name rather than another claim's: a
+  // verdict under the wrong heading is worse than one under an untranslated one.
+  return key ? String(t[key]) : id;
+}
+
+/** Numbers stay numbers on the wire; only the phrasing is local. */
+export function claimActual(claim: Claim, t: Translations): string {
+  if (claim.counts) {
+    const [matched, violated, unevaluable] = claim.counts;
+    return `${violated} violated, ${unevaluable} unevaluable of ${matched} matched`;
+  }
+  if (claim.id === 'notRun') return t.scenarioNotRun;
+  if (claim.id === 'noBarSet') return t.scenarioNoBar;
+  // A refusal has no bar beside it: the number of them is the whole statement.
+  if (claim.id === 'refusedSubscriptions') return `${claim.actual ?? 0}`;
+  if (claim.actual === undefined) {
+    return claim.limit === undefined ? t.scenarioUnknown : `no measurement, bar was ${claim.limit}`;
+  }
+  if (claim.id === 'maxP99Ms' && claim.limit !== undefined) {
+    return `${claim.actual} ms / ${claim.limit} ms`;
+  }
+  return claim.limit === undefined ? `${claim.actual}` : `${claim.actual} / ${claim.limit}`;
+}
+
+export const claimLines = (claims: Claim[], t: Translations): VerdictLine[] =>
+  claims.map((claim) => ({
+    id: claim.id,
+    claim: claimLabel(claim.id, t),
+    actual: claimActual(claim, t),
+    state: claim.state,
+  }));
 
 export function scenarioFileName(name: string): string {
   const safe = name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
   return `dropqtt-scenario-${safe || 'untitled'}.${SCENARIO_EXTENSION}`;
-}
-
-export type OverallVerdict = 'pass' | 'fail' | 'unknown';
-
-/**
- * Any failed claim fails the run. Any unjudgeable claim withholds the pass —
- * "we could not check the p99" must never roll up into green.
- */
-export function overallVerdict(lines: VerdictLine[]): OverallVerdict {
-  if (lines.length === 0) return 'unknown';
-  if (lines.some((l) => l.state === 'fail')) return 'fail';
-  if (lines.some((l) => l.state === 'unknown')) return 'unknown';
-  return 'pass';
-}
-
-const escapeXml = (text: string): string =>
-  text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-
-export interface ReportInput {
-  scenarioName: string;
-  note?: string;
-  lines: VerdictLine[];
-  generatedAt: string;
-  /** Labels for the three states, so the report is readable without the app. */
-  words: { pass: string; fail: string; unknown: string };
-}
-
-/** Machine-readable verdict. JSON for a human's CI log, JUnit for the reporter. */
-export function buildScenarioReportJson(input: ReportInput): string {
-  const doc = {
-    format: 'dropqtt-scenario-report/1',
-    generatedAt: input.generatedAt,
-    scenario: { name: input.scenarioName, ...(input.note ? { note: input.note } : {}) },
-    overall: overallVerdict(input.lines),
-    claims: input.lines.map((l) => ({ claim: l.claim, expected: l.actual, state: l.state })),
-  };
-  return `${JSON.stringify(doc, null, 2)}\n`;
-}
-
-/**
- * JUnit mapping: pass → bare testcase, fail → `<failure>`, unknown → `<skipped>`.
- * `skipped` rather than a fake pass, because a bar that was never set is exactly what
- * the format's skipped-with-reason element is for, and a green suite would lie.
- */
-export function buildScenarioReportJunit(input: ReportInput): string {
-  const failures = input.lines.filter((l) => l.state === 'fail').length;
-  const skipped = input.lines.filter((l) => l.state === 'unknown').length;
-  const cases = input.lines
-    .map((l) => {
-      const attrs = `classname="dropqtt.scenario" name="${escapeXml(l.claim)}"`;
-      if (l.state === 'fail') {
-        return `    <testcase ${attrs}>\n      <failure message="${escapeXml(input.words.fail)}" type="verdict">${escapeXml(`${l.claim}: ${l.actual}`)}</failure>\n    </testcase>`;
-      }
-      if (l.state === 'unknown') {
-        return `    <testcase ${attrs}>\n      <skipped message="${escapeXml(input.words.unknown)}: ${escapeXml(l.actual)}"/>\n    </testcase>`;
-      }
-      return `    <testcase ${attrs}/>`;
-    })
-    .join('\n');
-  return [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    `<testsuites name="${escapeXml(input.scenarioName)}" tests="${input.lines.length}" failures="${failures}" skipped="${skipped}">`,
-    `  <testsuite name="${escapeXml(input.scenarioName)}" tests="${input.lines.length}" failures="${failures}" skipped="${skipped}" timestamp="${escapeXml(input.generatedAt)}">`,
-    cases,
-    '  </testsuite>',
-    '</testsuites>',
-    '',
-  ].join('\n');
 }
 
 export function reportFileName(name: string, ext: string): string {

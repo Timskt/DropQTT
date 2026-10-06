@@ -15,12 +15,14 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use tokio::sync::mpsc;
 
-use dropqtt_lib::assertions::{self, AssertionRule, AssertOutcome};
+use dropqtt_lib::assertions::{self, AssertionRule, AssertOutcome, AssertStats};
 use dropqtt_lib::cli::{
     self, Command, VerifyReport, EXIT_FAIL, EXIT_PASS, EXIT_UNAVAILABLE, EXIT_UNKNOWN, EXIT_USAGE,
 };
 use dropqtt_lib::protocol::{MqttGenericMessage, PubProperties, SubOptions};
+use dropqtt_lib::scenario::{self, Scenario};
 use dropqtt_lib::transport::{build_connection, ConnCapabilities, MqttClient, NetEvent};
+use dropqtt_lib::verdict::Outcome;
 
 /// How long to wait for a SUBACK/PUBACK verdict before calling the link dead.
 const ACK_WAIT: Duration = Duration::from_secs(5);
@@ -516,6 +518,30 @@ async fn run_rpc(cmd: cli::RpcCmd) -> i32 {
 }
 
 async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
+    // A scenario is read before anything else, and a broken one stops the run: the
+    // alternative is subscribing to half a rig and reporting the rest as a verdict.
+    let scenario = match cmd.scenario.as_deref() {
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(text) => match scenario::parse(&text) {
+                Ok(loaded) => Some(loaded),
+                Err(err) => {
+                    eprintln!("dropqtt-cli: {path}: {err}");
+                    return EXIT_USAGE;
+                }
+            },
+            Err(err) => {
+                eprintln!("dropqtt-cli: cannot read {path}: {err}");
+                return EXIT_USAGE;
+            }
+        },
+        None => None,
+    };
+    if let Some(loaded) = &scenario {
+        for note in scenario::notes(loaded, cmd.broker.protocol_version == 5) {
+            eprintln!("dropqtt-cli: note: {note}");
+        }
+    }
+
     // Validate every rule before touching the network: a typo in a predicate should
     // fail in milliseconds, not after a wait that produced nothing.
     let mut rules: Vec<AssertionRule> = Vec::new();
@@ -534,6 +560,15 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
             }
         }
     }
+    if let Some(loaded) = &scenario {
+        for rule in &loaded.assertions {
+            if let Some(err) = assertions::rule_error(rule) {
+                eprintln!("dropqtt-cli: {}: {err}", rule.id);
+                return EXIT_USAGE;
+            }
+            rules.push(rule.clone());
+        }
+    }
     let mut session = match Session::open(&cmd.broker, 5_000).await {
         Ok(s) => s,
         Err(e) => {
@@ -545,9 +580,20 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
         qos: cmd.qos,
         ..Default::default()
     };
+    // The scenario's own subscribe options carry over unchanged: a rule written against
+    // a `noLocal` subscription is not the same experiment as one written against a
+    // plain one, and quietly flattening them would be the second source of truth again.
+    let mut subs: Vec<(String, SubOptions)> = cmd
+        .filters
+        .iter()
+        .map(|filter| (filter.clone(), options))
+        .collect();
+    if let Some(loaded) = &scenario {
+        subs.extend(loaded.subscriptions.iter().map(|sub| (sub.topic.clone(), sub.options)));
+    }
     let mut refused = Vec::new();
-    for filter in &cmd.filters {
-        match session.subscribe_and_wait(filter, &options).await {
+    for (filter, sub_options) in &subs {
+        match session.subscribe_and_wait(filter, sub_options).await {
             Ok(Some(code)) if code < 0x80 => {}
             Ok(Some(code)) => {
                 eprintln!("dropqtt-cli: {filter:?} refused by the broker (0x{code:02x})");
@@ -611,6 +657,9 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
         observed,
         rules: tallies,
     };
+    if let Some(loaded) = &scenario {
+        return report_scenario(loaded, &report, cmd.json, cmd.junit, started.elapsed(), refused.len() as u64);
+    }
     if cmd.junit {
         print!("{}", report.to_junit());
     } else if cmd.json {
@@ -636,7 +685,7 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
         );
     }
     let outcome = report.outcome();
-    if !refused.is_empty() && outcome != cli::Outcome::Fail {
+    if !refused.is_empty() && outcome != Outcome::Fail {
         // A refused filter means the rules were judged against traffic that never
         // arrived. That is a broken fixture, not a passed gate.
         eprintln!("dropqtt-cli: {} filter(s) refused by the broker", refused.len());
@@ -645,8 +694,76 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
     outcome.exit_code()
 }
 
-fn judge_into(tallies: &mut [cli::RuleTally], rules: &[AssertionRule], msg: &MqttGenericMessage) {
-    for (tally, rule) in tallies.iter_mut().zip(rules) {
+/// The verdict of a scenario run, through the same `scenario::claims` the desktop
+/// panel uses. The rule tallies are still printed in text mode -- which rule matched
+/// what is the part an engineer reads first -- but the *answer* comes from the claims.
+fn report_scenario(
+    loaded: &Scenario,
+    report: &VerifyReport,
+    json: bool,
+    junit: bool,
+    elapsed: Duration,
+    refused: u64,
+) -> i32 {
+    let summed = |pick: fn(&dropqtt_lib::cli::RuleTally) -> u64| {
+        report.rules.iter().map(pick).sum::<u64>()
+    };
+    let stats = AssertStats {
+        matched: summed(|t| t.matched),
+        passed: summed(|t| t.passed),
+        violated: summed(|t| t.violated),
+        unevaluable: summed(|t| t.unevaluable),
+    };
+    let evidence = scenario::Evidence {
+        expect: loaded.bench.as_ref().and_then(|b| b.expect.clone()),
+        // verify generates no bench traffic, so there is nothing to grade the bar
+        // against. `None` here is what makes the rate claim come out as not proven.
+        bench: None,
+        assertions: (!report.rules.is_empty()).then_some(stats),
+        // A filter the broker refused is a hole in the rig, and a hole in the rig is
+        // not a pass: the rules beside it were judged against traffic that never came.
+        refused,
+    };
+    let claims = scenario::claims(&evidence);
+    let outcome = scenario::verdict_of(&claims);
+    let generated_at = chrono::Utc::now().to_rfc3339();
+    if junit {
+        print!(
+            "{}",
+            scenario::report_junit(&loaded.name, &generated_at, &claims, &scenario::ReportWords::default(), &[])
+        );
+    } else if json {
+        print!(
+            "{}",
+            scenario::report_json(&loaded.name, loaded.note.as_deref(), &generated_at, &claims)
+        );
+    } else {
+        for rule in &report.rules {
+            println!(
+                "{:<8} {:<28} matched {} · passed {} · violated {} · unevaluable {}",
+                rule.outcome().word(),
+                rule.expr,
+                rule.matched,
+                rule.passed,
+                rule.violated,
+                rule.unevaluable
+            );
+        }
+        for claim in &claims {
+            println!("{:<8} {:<22} {}", claim.state.word(), claim.id, scenario::describe(claim));
+        }
+        println!(
+            "{}: {} rule(s), {} message(s) in {} s",
+            outcome.word(),
+            report.rules.len(),
+            report.observed,
+            elapsed.as_secs_f32()
+        );
+    }
+    outcome.exit_code()
+}
+
+fn judge_into(tallies: &mut [cli::RuleTally], rules: &[AssertionRule], msg: &MqttGenericMessage) {    for (tally, rule) in tallies.iter_mut().zip(rules) {
         if !dropqtt_lib::topic::wildcard_match(rule.filter.trim(), &msg.topic) {
             continue;
         }

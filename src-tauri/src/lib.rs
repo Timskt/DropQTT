@@ -12,12 +12,14 @@ pub mod outbox;
 pub mod protocol;
 pub mod rpc;
 pub mod responder;
+pub mod scenario;
 pub mod scheduler;
 pub mod secrets;
 pub mod silence;
 pub mod transport;
 pub mod topic;
 pub mod transform;
+pub mod verdict;
 pub mod webhook;
 
 use std::path::PathBuf;
@@ -170,6 +172,22 @@ async fn secret_exists(reference: String) -> Result<bool, String> {
 #[tauri::command]
 async fn secret_delete(reference: String) -> Result<(), String> {
     secrets::delete(&reference)
+}
+
+/// The acceptance verdict, judged by the same code the CLI runs. The panel used to
+/// decide this in TypeScript, which meant the number a person saw on screen and the
+/// exit code a pipeline saw could disagree.
+#[tauri::command]
+async fn scenario_verdict(request: scenario::VerdictRequest) -> Result<scenario::Verdict, String> {
+    Ok(scenario::judge(request))
+}
+
+/// The same verdict rendered as a file, with the caller's language supplied as labels.
+/// The claims are re-judged here rather than accepted from the panel, so a report
+/// cannot be talked into a conclusion the evidence does not support.
+#[tauri::command]
+async fn scenario_report(request: scenario::ReportRequest) -> Result<String, String> {
+    Ok(scenario::report(request))
 }
 
 #[tauri::command]
@@ -835,6 +853,8 @@ pub fn run() {
             secret_put,
             secret_exists,
             secret_delete,
+            scenario_verdict,
+            scenario_report,
             start_send_file,
             pause_transfer,
             resume_transfer,

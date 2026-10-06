@@ -88,6 +88,52 @@ const boot = async (
           if (cmd === 'get_broker_capabilities')
             return { topicAliasMax: 10, maxQos: 2, retainAvailable: true, wildcardAvailable: true, sharedAvailable: true, subscriptionIdsAvailable: true, receiveMax: 65535, maxPacketSize: null, serverKeepAlive: null, sessionExpiry: null, assignedClientId: null, responseInformation: null, serverReference: null };
           if (cmd === 'history_stats') return { rows: 0, inbound: 0, outbound: 0 };
+          // The verdict belongs to `scenario.rs`; the double answers in its shape. The
+          // three-state rule is deliberately short here — the long version, and the
+          // tests that hold it to account, live on the side that owns it.
+          if (cmd === 'scenario_verdict' || cmd === 'scenario_report') {
+            const req = cmd === 'scenario_verdict' ? args.request : args.request.evidence;
+            const claims: any[] = [
+              req?.expect ? { id: 'notRun', state: 'unknown' } : { id: 'noBarSet', state: 'unknown' },
+            ];
+            const s = req?.assertions;
+            if (s) {
+              claims.push({
+                id: 'assertions',
+                state: s.violated > 0 ? 'fail' : s.matched === 0 || s.unevaluable > 0 ? 'unknown' : 'pass',
+                counts: [s.matched, s.violated, s.unevaluable],
+              });
+            }
+            if ((req?.refused ?? 0) > 0) {
+              claims.push({ id: 'refusedSubscriptions', state: 'fail', actual: req.refused, limit: 0 });
+            }
+            const overall = claims.some((c) => c.state === 'fail')
+              ? 'fail'
+              : claims.some((c) => c.state === 'unknown') ? 'unknown' : 'pass';
+            if (cmd === 'scenario_verdict') return { claims, overall };
+            const labels: string[] = args.request.labels || [];
+            if (args.request.format === 'junit') {
+              const failures = claims.filter((c) => c.state === 'fail').length;
+              const skipped = claims.filter((c) => c.state === 'unknown').length;
+              const cases = claims
+                .map((c, i) => {
+                  const name = labels[i] ?? c.id;
+                  const detail = c.counts
+                    ? `${c.counts[1]} violated, ${c.counts[2]} unevaluable of ${c.counts[0]} matched`
+                    : name === 'Message rate' ? 'not run yet' : `${c.actual ?? ''}`;
+                  if (c.state === 'fail') {
+                    return `    <testcase classname="dropqtt.scenario" name="${name}" time="0">\n      <failure message="not met" type="verdict">${name}: ${detail}</failure>\n    </testcase>`;
+                  }
+                  if (c.state === 'unknown') {
+                    return `    <testcase classname="dropqtt.scenario" name="${name}" time="0">\n      <skipped message="unknown: ${detail}"/>\n    </testcase>`;
+                  }
+                  return `    <testcase classname="dropqtt.scenario" name="${name}" time="0"/>`;
+                })
+                .join('\n');
+              return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${args.request.name}" tests="${claims.length}" failures="${failures}" skipped="${skipped}">\n  <testsuite name="${args.request.name}" tests="${claims.length}" failures="${failures}" skipped="${skipped}">\n${cases}\n  </testsuite>\n</testsuites>\n`;
+            }
+            return JSON.stringify({ format: 'dropqtt-scenario-report/1', overall, claims }, null, 2) + '\n';
+          }
           return null;
         },
       };
@@ -188,8 +234,10 @@ test('an unset bar reads unknown, never met', async ({ page }) => {
   const verdict = page.getByTestId('scenario-verdict');
   await expect(verdict).toContainText('Message assertions');
   await expect(verdict).toContainText('0 violated, 0 unevaluable of 0 matched');
-  // Nothing has run, so the traffic claims must not appear as a pass.
-  await expect(verdict).toContainText('not run yet');
+  // Nothing has run, so the traffic claims must not appear as a pass. With no rig
+  // loaded there is not even a bar, which the backend names as its own claim.
+  await expect(verdict).toContainText('no bar set');
+  await expect(verdict).toContainText('unknown');
 });
 
 test('a violated assertion fails the verdict', async ({ page }) => {
@@ -219,4 +267,10 @@ test('the verdict leaves the window as a file a CI can read', async ({ page }) =
   expect(xml).toContain('2 violated, 0 unevaluable of 6 matched');
   // The rate claim never ran, so it must be skipped rather than a green testcase.
   expect(xml).toContain('<skipped message="unknown: not run yet"/>');
+  // The panel asks for the report and writes back what it is given, and it hands the
+  // renderer its own translated labels rather than letting the file drift into English.
+  const calls = await callsFor(page, 'scenario_report');
+  expect(calls.at(-1).args.request.format).toBe('junit');
+  expect(calls.at(-1).args.request.labels).toContain('Message assertions');
+  expect(calls.at(-1).args.request.words.fail).toBe('not met');
 });

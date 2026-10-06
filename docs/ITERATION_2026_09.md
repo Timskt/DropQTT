@@ -2617,6 +2617,71 @@ Playwright 全绿。
 
 ---
 
+### 4.73 场景判定下沉到 Rust：一条规则只能有一个作者（§3.2 延伸，2026-10-07）
+
+`dropqtt-cli verify` 能用 `--assert` 写规则，但**验收场景（.dqscn）的聚合与判定只存在于
+`src/utils/scenario.ts`**。结果是：GUI 能判的那套 rig，CI 打不开。把判定搬到 Rust，
+让屏幕上的结论和流水线的退出码来自同一份代码。
+
+**新增两个模块，都是 tauri-free 的：**
+
+- `verdict.rs`：`Outcome`（pass / fail / unknown）、`overall()` 汇总、`tally()`
+  （断言三态规则）、`Claim`，以及**项目里唯一的 JUnit 写出器**。
+- `scenario.rs`：文件模型与严格解析（`format` 不对就报出它看到了什么、缺身份字段的条目
+  丢弃、全空的文件拒绝而不是"应用成功"）、由引擎已有数字**组装**claims、JSON/JUnit 报告。
+
+刻意避免的重复：速率条的比对**复用 `BenchSpec::evaluate`**（抽成自由函数 `evaluate_expect`），
+断言状态**复用 `verdict::tally`**（`RuleTally::outcome` 现在也调它）。所以"什么算 unknown"
+这句话在项目里只有一份。报告渲染同样如此：`scenario_report` **重新判定**一遍证据，
+不接受调用方递进来的 claims——一份报告不能被说服成证据不支持的结论。
+
+顺带统一了两件 JUnit 细节：`<testsuites>` 下补上 `<testsuite>`（很多 reader 只认这个形状），
+并去掉自造的 `<passed/>`——JUnit 里"通过"就是一个裸 `<testcase>`。
+
+**GUI 侧**：面板改为 `invoke('scenario_verdict')` / `scenario_report`，TS 里
+`scenarioVerdict` / `overallVerdict` / `buildScenarioReportJson` / `buildScenarioReportJunit`
+**全部删除**，只留下"claim id → 本地化标签"的呈现函数。一个诚实的取舍：
+Playwright 的 invoke 双份里现在要返回 claims——但那是**夹具**，规则本身在 Rust 侧被测。
+
+### 一个只检查退出码的门，放过了"根本没收到报文"
+
+`scripts/scenario-gate.sh` 第一版里，publish 辅助函数漏写了 `pub` 动词：
+
+```
+"$CLI" --host ... --topic ... --payload ...     → unknown command "--host"，exit 2
+```
+
+于是**没有任何流量发出去**，而 verify 依然返回 **4**——因为"没有 bar / 没测到"本来就是 4。
+门是绿的，跑的是个空实验。修法是让门禁检查**码背后的理由**，不只是码：
+
+```bash
+expect_says 'pass     assertions' "the assertion claim itself reads pass"
+```
+
+这一条立刻变红，问题才现形。跟 §4.71 那条"永远通过的断言"是同一类错误，
+只是这次更隐蔽：**退出码正确，而它正确的理由是假的。**
+
+### 一处我主动改变的行为（并改了 spec）
+
+未加载任何场景时，旧实现报 `notRun`（"尚未运行"）；现在报 `noBarSet`（"未设定标准"）。
+"没人跑"和"根本没设标准"不是一回事，后者才是不确定性的真实来源。
+`scenario.spec.ts` 的断言随之更新，测试名"an unset bar reads unknown, never met"依旧成立。
+
+### 现在的边界（写进 usage，不藏着）
+
+`verify --scenario` **还不能生成 bench 流量**，所以它判不了速率条：
+场景跑完最好结果是 4（未证明），违规才是 1。usage 里明说
+"never a green it did not earn"。下一步就是把压测发生搬进 CLI，让 0 成为可达状态。
+responder / watchdog 规则同样只列进 `notes()` 说明"没装"，不静默跳过。
+
+**门禁**：Rust harness 293 → **325**（+15 verdict、+17 scenario），单元 **149**
+（TS 侧删掉 9 条重复规则的测试，新增 6 条呈现层与 1 条"无后端不崩"），
+`tsc` 干净，ESLint **0 error / 10 warning**，`cargo clippy --all-targets -- -D warnings` **通过**，
+两条真机门禁（cli-gate 36 项 + scenario-gate 18 项）全绿，CI 的 `cli` 作业已同时跑两条。
+
+
+---
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

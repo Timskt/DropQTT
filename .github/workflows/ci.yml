@@ -157,3 +157,10 @@ jobs:
         env:
           GATE_DENY_TOPIC: secret/never-granted
         run: bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 1883
+
+      - name: Run the scenario gate
+        # Same broker, same ACL: the rig's topic has to live under the one prefix the
+        # anonymous test user is granted.
+        env:
+          SCENARIO_TOPIC: cli-gate/scenario/telemetry
+        run: bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 1883

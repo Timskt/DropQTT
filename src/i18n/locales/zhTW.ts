@@ -753,6 +753,7 @@ export const zhTW: Translations = {
     scenarioPass: '達標',
     scenarioFail: '未達標',
     scenarioUnknown: '無法判定',
+    scenarioReportFailed: '後端未能產生驗收結論檔案',
     scenarioCaveat: '沒有設定標準時這裡顯示「無法判定」，不是「通過」。結論只涵蓋本次工作階段實測到的資料。',
     scenarioYes: '有',
     scenarioNo: '無',

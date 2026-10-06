@@ -753,6 +753,7 @@ export const en: Translations = {
     scenarioPass: 'met',
     scenarioFail: 'not met',
     scenarioUnknown: 'unknown',
+    scenarioReportFailed: 'the verdict could not be rendered by the backend',
     scenarioCaveat: 'A bar that was never set reads "unknown", never "met". The verdict covers only what this session measured.',
     scenarioYes: 'yes',
     scenarioNo: 'no',

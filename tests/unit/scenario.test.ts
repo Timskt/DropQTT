@@ -1,19 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyPlan,
-  buildScenarioReportJson,
-  buildScenarioReportJunit,
+  claimLines,
   collectScenario,
-  overallVerdict,
-  reportFileName,
   parseScenario,
+  reportFileName,
   Scenario,
   ScenarioError,
   scenarioFileName,
-  scenarioVerdict,
   serializeScenario,
+  VerdictLine,
 } from '../../src/utils/scenario';
-import type { BenchProgress, SilenceRule } from '../../src/types';
+import type { Claim } from '../../src/utils/scenario';
+import { en } from '../../src/i18n/locales/en';
+import type { SilenceRule } from '../../src/types';
 
 const silence = (id: string): SilenceRule => ({
   id,
@@ -29,11 +29,6 @@ const words = {
   v3Responders: (n: number) => `${n} responder rules need MQTT5`,
   strippedWebhooks: (n: number) => `${n} watchdogs lost their endpoint`,
   noBar: (name: string) => `${name} sets no acceptance bar`,
-};
-
-const verdictWords = {
-  rate: 'rate', p99: 'p99', lost: 'lost', violations: 'violations',
-  refused: 'refused subs', notRun: 'not run', noBar: 'no bar set',
 };
 
 const base = {
@@ -125,52 +120,57 @@ describe('applyPlan', () => {
   });
 });
 
-describe('scenarioVerdict', () => {
-  const progress = (over: Partial<BenchProgress> = {}): BenchProgress => ({
-    id: 'b1', topics: ['devices/a'], rate: 42, size: 32, qos: 1, retain: false,
-    sent: 100, acked: 100, nacked: 0, noSubscribers: 0, observed: 98, elapsedMs: 2_000,
-    status: 'finished', latency: { samples: 100, dropped: 0, p50Ms: 4, p95Ms: 9, p99Ms: 12, maxMs: 20, meanMs: 5 },
-    mirror: true, ...over,
+/**
+ * The judgement itself is `scenario.rs`'s, and it is tested there -- what is left in
+ * TypeScript is the phrasing, so that is what these pin. A claim id the app does not
+ * know must not borrow another claim's label: a verdict wearing the wrong words is
+ * still a verdict nobody can act on.
+ */
+describe('claim presentation', () => {
+  const line = (claim: Claim): VerdictLine => claimLines([claim], en)[0];
+
+  it('keeps the numbers the backend sent and phrases the bars it set', () => {
+    expect(line({ id: 'minRate', state: 'pass', actual: 42, limit: 40 })).toMatchObject({
+      claim: en.scenarioClaimRate, actual: '42 / 40', state: 'pass',
+    });
+    expect(line({ id: 'maxP99Ms', state: 'fail', actual: 900, limit: 25 }).actual).toBe('900 ms / 25 ms');
+    expect(line({ id: 'maxLost', state: 'pass', actual: 2, limit: 5 }).actual).toBe('2 / 5');
+    expect(line({ id: 'assertions', state: 'fail', counts: [10, 1, 2] }).actual)
+      .toBe('1 violated, 2 unevaluable of 10 matched');
+    expect(line({ id: 'refusedSubscriptions', state: 'fail', actual: 2, limit: 0 }).actual).toBe('2');
   });
 
-  it('grades each bar that was set, and never invents one that was not', () => {
-    const lines = scenarioVerdict(
-      { progress: progress(), expect: { minRate: 40, maxP99Ms: 25, maxLost: 5 }, assertionStats: { matched: 10, passed: 10, violated: 0, unevaluable: 0 }, rejectedSubs: 0 },
-      verdictWords,
+  it('distinguishes a bar that was never set from one nobody measured', () => {
+    expect(line({ id: 'noBarSet', state: 'unknown' }).actual).toBe(en.scenarioNoBar);
+    expect(line({ id: 'notRun', state: 'unknown' }).actual).toBe(en.scenarioNotRun);
+  });
+
+  it('says there was no sample rather than inventing a zero for a missing one', () => {
+    expect(line({ id: 'maxP99Ms', state: 'fail', limit: 25 }).actual).toContain('no measurement');
+  });
+
+  it('keeps the claim id as the list key, so two rate claims cannot collide', () => {
+    const lines = claimLines(
+      [{ id: 'noBarSet', state: 'unknown' }, { id: 'notRun', state: 'unknown' }],
+      en,
     );
-    expect(lines.map((l) => [l.claim, l.actual, l.state])).toEqual([
-      ['rate', '42 / 40', 'pass'],
-      ['p99', '12 ms / 25 ms', 'pass'],
-      ['lost', '2 / 5', 'pass'],
-      ['violations', '0 violated, 0 unevaluable of 10 matched', 'pass'],
-    ]);
+    expect(lines.map((l) => l.id)).toEqual(['noBarSet', 'notRun']);
+    expect(new Set(lines.map((l) => l.claim)).size).toBe(1);
   });
 
-  it('reports a missed bar as fail, not as a rounded pass', () => {
-    const lines = scenarioVerdict({ progress: progress({ rate: 12, latency: { ...progress().latency, p99Ms: 900 } }), expect: { minRate: 40, maxP99Ms: 25 } }, verdictWords);
-    expect(lines.find((l) => l.claim === 'rate')?.state).toBe('fail');
-    expect(lines.find((l) => l.claim === 'p99')?.state).toBe('fail');
+  it('falls back to the raw id rather than borrowing a label it does not have', () => {
+    expect(line({ id: 'someFutureClaim', state: 'unknown' }).claim).toBe('someFutureClaim');
   });
+});
 
-  it('an unset bar is unknown, and so is a run that never happened', () => {
-    expect(scenarioVerdict({ progress: progress() }, verdictWords)[0]).toMatchObject({ state: 'unknown', actual: 'no bar set' });
-    expect(scenarioVerdict({}, verdictWords)[0]).toMatchObject({ state: 'unknown', actual: 'not run' });
-  });
-
-  it('rules that could not be evaluated are not a pass', () => {
-    const of = (stats: { matched: number; passed: number; violated: number; unevaluable: number }) =>
-      scenarioVerdict({ assertionStats: stats }, verdictWords).find((l) => l.claim === 'violations');
-    expect(of({ matched: 4, passed: 2, violated: 0, unevaluable: 2 })?.state).toBe('unknown');
-    expect(of({ matched: 4, passed: 1, violated: 1, unevaluable: 0 })?.state).toBe('fail');
-    expect(of({ matched: 4, passed: 4, violated: 0, unevaluable: 0 })?.state).toBe('pass');
-    // Nothing matched means no rule ever ran against a message: absence of evidence,
-    // not a clean sheet.
-    expect(of({ matched: 0, passed: 0, violated: 0, unevaluable: 0 })?.state).toBe('unknown');
-  });
-
-  it('a refused subscription fails the scenario even when the traffic looks fine', () => {
-    const lines = scenarioVerdict({ progress: progress(), expect: { minRate: 1 }, rejectedSubs: 2 }, verdictWords);
-    expect(lines.at(-1)).toMatchObject({ claim: 'refused subs', actual: '2', state: 'fail' });
+describe('the backend call the panel depends on', () => {
+  it('reads a host without a backend as "no verdict", not as a crash', async () => {
+    vi.doMock('@tauri-apps/api/core', () => ({
+      invoke: () => Promise.reject(new Error('not a tauri host')),
+    }));
+    const { judgeScenario: judge } = await import('../../src/utils/scenario');
+    expect(await judge({ assertions: { matched: 1, passed: 1, violated: 0, unevaluable: 0 } })).toBeNull();
+    vi.doUnmock('@tauri-apps/api/core');
   });
 });
 
@@ -181,53 +181,13 @@ describe('scenario file naming', () => {
   });
 });
 
-describe('verdict reports', () => {
-  const lines = [
-    { claim: 'rate', actual: '42 / 40', state: 'pass' as const },
-    { claim: 'p99', actual: '900 ms / 25 ms', state: 'fail' as const },
-    { claim: 'lost', actual: 'no bar set', state: 'unknown' as const },
-  ];
-  const input = {
-    scenarioName: 'Gate & "Retry"',
-    lines,
-    generatedAt: '2026-10-04T00:00:00.000Z',
-    words: { pass: 'met', fail: 'not met', unknown: 'unknown' },
-  };
-
-  it('rolls up honestly: one fail fails it, one unknown withholds the pass', () => {
-    expect(overallVerdict(lines)).toBe('fail');
-    expect(overallVerdict(lines.slice(0, 1))).toBe('pass');
-    expect(overallVerdict([lines[0], lines[2]])).toBe('unknown');
-    expect(overallVerdict([])).toBe('unknown');
-  });
-
-  it('writes JSON that names the overall state and every claim', () => {
-    const doc = JSON.parse(buildScenarioReportJson(input));
-    expect(doc.format).toBe('dropqtt-scenario-report/1');
-    expect(doc.overall).toBe('fail');
-    expect(doc.claims).toHaveLength(3);
-    expect(doc.scenario.name).toBe('Gate & "Retry"');
-  });
-
-  it('maps unknown to skipped, never to a passing testcase', () => {
-    const xml = buildScenarioReportJunit(input);
-    expect(xml).toContain('failures="1" skipped="1"');
-    expect(xml).toMatch(/<testcase classname="dropqtt.scenario" name="rate"\/>/);
-    expect(xml).toContain('<failure message="not met" type="verdict">p99: 900 ms / 25 ms</failure>');
-    expect(xml).toContain('<skipped message="unknown: no bar set"/>');
-  });
-
-  it('escapes what a user typed into a name or a claim', () => {
-    const xml = buildScenarioReportJunit({
-      ...input,
-      lines: [{ claim: 'a<b', actual: 'x & y', state: 'fail' }],
-    });
-    expect(xml).toContain('name="a&lt;b"');
-    expect(xml).toContain('a&lt;b: x &amp; y');
-    expect(xml).not.toContain('name="a<b"');
-  });
-
-  it('names a report file after the scenario', () => {
+describe('report file naming', () => {
+  // The report *content* is rendered by `scenario.rs` now, and tested there: one
+  // writer means the file the app leaves behind and the file the CLI prints cannot
+  // drift apart. What stays here is the name the save dialog suggests.
+  it('names a report after the scenario, for both formats', () => {
     expect(reportFileName('Gate A', 'xml')).toBe('dropqtt-verdict-gate-a.xml');
+    expect(reportFileName('Gate A', 'json')).toBe('dropqtt-verdict-gate-a.json');
+    expect(reportFileName('***', 'json')).toBe('dropqtt-verdict-untitled.json');
   });
 });

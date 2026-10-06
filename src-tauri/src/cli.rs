@@ -20,6 +20,7 @@ use serde::Serialize;
 
 use crate::protocol::{BrokerConfig, MqttGenericMessage, SubOptions};
 use crate::transport::NormalizedPublish;
+use crate::verdict::{junit, overall, tally, Case, Outcome, Suite};
 
 /// The verdict held.
 pub const EXIT_PASS: i32 = 0;
@@ -128,6 +129,9 @@ pub struct VerifyCmd {
     /// is the desktop app's — `assertions::parse_rule` owns it, so a rule that is
     /// accepted here means the same thing in both places.
     pub asserts: Vec<(String, String, String)>,
+    /// A `.dqscn` file whose subscriptions get armed and whose assertion rules join
+    /// the ones passed on the command line. See `scenario`.
+    pub scenario: Option<String>,
     pub count: Option<u64>,
     pub duration_ms: Option<u64>,
     pub json: bool,
@@ -170,8 +174,8 @@ pub fn usage() -> String {
         "                      [--correlation-hex <hex>] [--user-property <k=v>]... [--wait 5s]",
         "  dropqtt-cli rpc     [broker options] --topic <t> [--payload <text> | --payload-file <path>]",
         "                      [--response-topic <t>] [--correlation-hex <hex>] [--timeout 5s]",
-        "  dropqtt-cli verify  [broker options] --topic <filter>... --assert '<expr>'...",
-        "                      [--count N | --for 10s] [--json] [--junit]",
+        "  dropqtt-cli verify  [broker options] (--topic <filter>... --assert '<expr>'...",
+        "                      | --scenario <file.dqscn>) [--count N | --for 10s] [--json] [--junit]",
         "",
         "BROKER OPTIONS:",
         "  --host <h> --port <n> [--tls] [--ws] [--client-id <id>] [--username <u> | --username-env <VAR>]",
@@ -186,6 +190,14 @@ pub fn usage() -> String {
         "    'qos >= 1'              a packet-level field",
         "    '$.fw present'          existence",
         "  A rule that never matched any message is reported as unknown, not as a pass.",
+        "",
+        "SCENARIOS (verify --scenario):",
+        "  A .dqscn written by the desktop app arms its subscriptions and assertion",
+        "  rules, and the verdict is the app's own: same bars, same three states.",
+        "  What verify does not do yet is generate the bench traffic a performance",
+        "  bar measures, so the traffic claim stays not proven and the best result",
+        "  from a scenario run is exit 4 -- never a green it did not earn. Watchdog",
+        "  and responder rules are listed as not armed; they need the window's timers.",
         "",
         "EXIT CODES:",
         "  0 pass   1 refused or violated   2 bad command line   3 broker unreachable   4 not proven",
@@ -279,7 +291,10 @@ fn flag_takes_value(verb: Verb, name: &str) -> Option<bool> {
                 ],
                 &[][..],
             ),
-            Verb::Verify => (&["topic", "assert", "qos", "count", "for"], &["json", "junit"][..]),
+            Verb::Verify => (
+                &["topic", "assert", "qos", "count", "for", "scenario"],
+                &["json", "junit"][..],
+            ),
         },
     };
     if value_flags.contains(&name) {
@@ -465,14 +480,22 @@ pub fn parse_args(argv: &[String]) -> Result<Command, UsageError> {
         Verb::Verify => {
             let filters = repeated(&flags, "topic");
             let predicates = repeated(&flags, "assert");
-            if filters.is_empty() {
-                return Err(UsageError("--topic is required".into()));
-            }
-            if predicates.is_empty() {
-                return Err(UsageError(
-                    "verify needs at least one --assert; otherwise there is nothing to prove"
-                        .into(),
-                ));
+            let scenario = flags
+                .values
+                .get("scenario")
+                .and_then(|v| v.last().cloned());
+            if scenario.is_none() {
+                if filters.is_empty() {
+                    return Err(UsageError(
+                        "--topic is required (or point --scenario at a .dqscn file)".into(),
+                    ));
+                }
+                if predicates.is_empty() {
+                    return Err(UsageError(
+                        "verify needs at least one --assert; otherwise there is nothing to prove"
+                            .into(),
+                    ));
+                }
             }
             // Ids are positional: `--assert a --assert b` becomes rule-1, rule-2. A CI
             // report has to name the rule that failed, and the only handle available is
@@ -499,6 +522,7 @@ pub fn parse_args(argv: &[String]) -> Result<Command, UsageError> {
                 filters,
                 qos: qos()?,
                 asserts,
+                scenario,
                 count: parse_count(&flags)?,
                 duration_ms: bound_wait(parse_count(&flags)?, take_duration(&flags, "for")?)?,
                 json: flags.switches.contains("json"),
@@ -719,32 +743,6 @@ pub fn message_of(publish: &NormalizedPublish, id: &str) -> MqttGenericMessage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Outcome {
-    Pass,
-    Fail,
-    Unknown,
-}
-
-impl Outcome {
-    pub fn word(self) -> &'static str {
-        match self {
-            Outcome::Pass => "pass",
-            Outcome::Fail => "fail",
-            Outcome::Unknown => "unknown",
-        }
-    }
-
-    pub fn exit_code(self) -> i32 {
-        match self {
-            Outcome::Pass => EXIT_PASS,
-            Outcome::Fail => EXIT_FAIL,
-            Outcome::Unknown => EXIT_UNKNOWN,
-        }
-    }
-}
-
 /// One assertion rule's tally.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -761,17 +759,11 @@ pub struct RuleTally {
 }
 
 impl RuleTally {
-    /// The same three-state rule the scenario panel uses: nothing matched, or nothing
+    /// The shared three-state rule (see `verdict::tally`): nothing matched, or nothing
     /// could be judged, is `unknown`. Reporting either as a pass is how a CI gate goes
     /// green on a broker nobody was talking to.
     pub fn outcome(&self) -> Outcome {
-        if self.violated > 0 {
-            Outcome::Fail
-        } else if self.matched == 0 || self.unevaluable > 0 {
-            Outcome::Unknown
-        } else {
-            Outcome::Pass
-        }
+        tally(self.matched, self.violated, self.unevaluable)
     }
 }
 
@@ -786,13 +778,7 @@ pub struct VerifyReport {
 
 impl VerifyReport {
     pub fn outcome(&self) -> Outcome {
-        if self.rules.iter().any(|r| r.outcome() == Outcome::Fail) {
-            Outcome::Fail
-        } else if self.rules.iter().any(|r| r.outcome() == Outcome::Unknown) {
-            Outcome::Unknown
-        } else {
-            Outcome::Pass
-        }
+        overall(&self.rules.iter().map(RuleTally::outcome).collect::<Vec<_>>())
     }
 
     pub fn to_json(&self) -> String {
@@ -812,47 +798,35 @@ impl VerifyReport {
 
     /// JUnit so any CI can ingest it without knowing this tool exists.
     pub fn to_junit(&self) -> String {
-        let failures = self.rules.iter().filter(|r| r.outcome() == Outcome::Fail).count();
-        let skipped = self.rules.iter().filter(|r| r.outcome() == Outcome::Unknown).count();
-        let mut out = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"dropqtt-cli verify\" tests=\"{}\" failures=\"{failures}\" skipped=\"{skipped}\">\n",
-            self.rules.len()
-        );
-        for rule in &self.rules {
-            out.push_str(&format!(
-                "  <testcase classname=\"dropqtt.verify\" name=\"{}\" time=\"0\">\n",
-                escape_xml(&format!("{} :: {}", rule.id, rule.expr))
-            ));
-            match rule.outcome() {
-                Outcome::Pass => out.push_str("    <passed/>\n"),
-                Outcome::Fail => out.push_str(&format!(
-                    "    <failure message=\"{}\">{} of {} matched message(s) violated the rule</failure>\n",
-                    escape_xml(&format!("{} violated", rule.violated)),
-                    rule.violated,
-                    rule.matched
-                )),
-                Outcome::Unknown => out.push_str(&format!(
-                    "    <skipped message=\"{}\"/>\n",
-                    escape_xml(&if rule.matched == 0 {
+        let cases = self
+            .rules
+            .iter()
+            .map(|rule| Case {
+                classname: "dropqtt.verify".into(),
+                name: format!("{} :: {}", rule.id, rule.expr),
+                outcome: rule.outcome(),
+                message: match rule.outcome() {
+                    Outcome::Fail => Some(format!("{} violated", rule.violated)),
+                    Outcome::Unknown => Some(if rule.matched == 0 {
                         "no message matched this filter".to_string()
                     } else {
-                        format!("{} of {} matched message(s) could not be judged", rule.unevaluable, rule.matched)
-                    })
-                )),
-            }
-            out.push_str("  </testcase>\n");
-        }
-        out.push_str("</testsuites>\n");
-        out
+                        format!(
+                            "{} of {} matched message(s) could not be judged",
+                            rule.unevaluable, rule.matched
+                        )
+                    }),
+                    Outcome::Pass => None,
+                },
+                body: (rule.outcome() == Outcome::Fail).then(|| {
+                    format!(
+                        "{} of {} matched message(s) violated the rule",
+                        rule.violated, rule.matched
+                    )
+                }),
+            })
+            .collect::<Vec<_>>();
+        junit(&Suite { name: "dropqtt-cli verify", cases: &cases, timestamp: None })
     }
-}
-
-fn escape_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 /// The line the CLI prints per received message. Kept as a pure function so its
@@ -1061,6 +1035,34 @@ mod tests {
         assert!(err.0.contains("at least one --assert"), "{err}");
         let err = parse_args(&args(&["verify", "--assert", "qos >= 1"])).unwrap_err();
         assert!(err.0.contains("--topic"), "{err}");
+        // The refusal says what would have been accepted, because the alternative is
+        // someone reading the usage block for a flag that does exist.
+        assert!(err.0.contains("--scenario"), "{err}");
+    }
+
+    #[test]
+    fn a_scenario_file_supplies_the_filters_and_rules_that_verify_needs() {
+        let Command::Verify(v) = parse_args(&args(&[
+            "verify", "--scenario", "rig.dqscn", "--for", "5s",
+        ]))
+        .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(v.scenario.as_deref(), Some("rig.dqscn"));
+        assert!(v.asserts.is_empty());
+        assert_eq!(v.duration_ms, Some(5_000));
+
+        // Both at once is not a contradiction: the file's rig plus one more claim.
+        let Command::Verify(mixed) = parse_args(&args(&[
+            "verify", "--scenario", "rig.dqscn", "--topic", "extra/#", "--assert", "qos >= 1",
+        ]))
+        .unwrap()
+        else {
+            panic!()
+        };
+        assert!(mixed.scenario.is_some());
+        assert_eq!(mixed.asserts.len(), 1);
     }
 
     #[test]
@@ -1253,8 +1255,8 @@ mod tests {
         assert!(xml.contains("tests=\"3\""), "{xml}");
         assert!(xml.contains("failures=\"1\""), "{xml}");
         assert!(xml.contains("skipped=\"1\""), "{xml}");
-        assert!(xml.contains("<passed/>"));
-        assert!(xml.contains("<failure message=\"1 violated\">"));
+        assert!(xml.contains("time=\"0\"/>\n"), "{xml}");
+        assert!(xml.contains("<failure message=\"1 violated\" type=\"verdict\">"));
         assert!(xml.contains("no message matched this filter"));
     }
 
