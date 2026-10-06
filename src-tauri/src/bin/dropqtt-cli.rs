@@ -38,6 +38,10 @@ async fn main() -> std::process::ExitCode {
             println!("{}", cli::usage());
             EXIT_PASS
         }
+        Ok(Command::Version) => {
+            println!("dropqtt-cli {}", env!("CARGO_PKG_VERSION"));
+            EXIT_PASS
+        }
         Ok(command) => dispatch(command).await,
     };
     std::process::ExitCode::from(code as u8)
@@ -45,7 +49,7 @@ async fn main() -> std::process::ExitCode {
 
 async fn dispatch(command: Command) -> i32 {
     match command {
-        Command::Help => EXIT_PASS,
+        Command::Help | Command::Version => EXIT_PASS,
         Command::Connect(cmd) => {
             let mut session = match Session::open(&cmd.broker, cmd.timeout_ms).await {
                 Ok(s) => s,

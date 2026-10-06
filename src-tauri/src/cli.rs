@@ -137,6 +137,7 @@ pub struct VerifyCmd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
+    Version,
     Connect(ConnectCmd),
     Sub(SubCmd),
     Pub(PubCmd),
@@ -159,6 +160,7 @@ pub fn usage() -> String {
     [
         "dropqtt-cli — the DropQTT protocol engine without the window",
         "",
+        "  dropqtt-cli --version",
         "USAGE:",
         "  dropqtt-cli connect [broker options] [--timeout 5s]",
         "  dropqtt-cli sub     [broker options] --topic <filter>... [--qos N] [--no-local]",
@@ -299,6 +301,10 @@ pub fn parse_args(argv: &[String]) -> Result<Command, UsageError> {
     let first = argv[0].as_str();
     if first == "help" || first == "--help" || first == "-h" {
         return Ok(Command::Help);
+    }
+    // `--version` rather than `-V`, which already means protocol version here.
+    if first == "version" || first == "--version" {
+        return Ok(Command::Version);
     }
     let verb = match first {
         "connect" => Verb::Connect,
@@ -1098,6 +1104,12 @@ mod tests {
         assert_eq!(c.broker.keep_alive_secs, crate::transport::clamp_keep_alive(99999));
         let err = parse_args(&args(&["connect", "--keepalive", "abc"])).unwrap_err();
         assert!(err.0.contains("--keepalive"), "{err}");
+    }
+
+    #[test]
+    fn version_is_a_command_of_its_own() {
+        assert_eq!(parse_args(&args(&["--version"])).unwrap(), Command::Version);
+        assert_eq!(parse_args(&args(&["version"])).unwrap(), Command::Version);
     }
 
     #[test]

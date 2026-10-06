@@ -1,0 +1,3 @@
+# Publish and subscribe are limited to the gate's own topic tree. Anything else is a
+# broker refusal the CLI has to report as exit 1 rather than as success.
+pattern cli-gate/#

@@ -116,6 +116,19 @@ exact failure this project spends its time removing.
 A password is never read from the command line (arguments land in the process list
 and shell history): point `--password-env VAR` at an environment variable instead.
 
+The contract above is enforced by `scripts/cli-gate.sh`, which runs the real binary
+against a live broker and asserts every exit code — including the ones that must
+**not** be zero. CI does it on every push:
+
+```bash
+# locally, against any broker you already have running
+bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 18831
+
+# and against a broker with an ACL, to assert a genuine refusal (0x87 -> exit 1)
+GATE_DENY_TOPIC=secret/never-granted bash scripts/cli-gate.sh \
+  ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 18831
+```
+
 ---
 
 ## 🚀 Automated Cross-Platform Release (GitHub Actions)

@@ -100,8 +100,58 @@ jobs:
 
       - name: Clippy (warnings are errors)
         working-directory: src-tauri
-        run: cargo clippy -- -D warnings
+        # --all-targets, because the headless CLI is a second binary and its warnings
+        # would otherwise be linted by nobody.
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Tests
         working-directory: src-tauri
         run: cargo test
+
+  cli:
+    name: Headless CLI (exit-code contract against a real broker)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y             libwebkit2gtk-4.1-dev             build-essential             libssl-dev             libxdo-dev             libayatana-appindicator3-dev             librsvg2-dev             mosquitto             mosquitto-clients
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Build the CLI
+        working-directory: src-tauri
+        run: cargo build --bin dropqtt-cli
+
+      # A broker installed here rather than a `services:` container: services start
+      # before the first step, so a bind mount of a repository file would see an empty
+      # directory and mosquitto would refuse to start.
+      - name: Start mosquitto with an ACL
+        run: |
+          cat > /tmp/mosquitto-gate.conf <<EOF
+          listener 1883 127.0.0.1
+          allow_anonymous true
+          persistence false
+          acl_file $GITHUB_WORKSPACE/.github/ci/mosquitto.acl
+          EOF
+          /usr/sbin/mosquitto -c /tmp/mosquitto-gate.conf -d
+          for i in $(seq 1 30); do
+            if mosquitto_sub -h 127.0.0.1 -p 1883 -t 'gate/probe' -C 1 -W 1 >/dev/null 2>&1 ||                timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/1883' 2>/dev/null; then
+              echo "broker is listening"; exit 0
+            fi
+            sleep 1
+          done
+          echo "broker never came up"; exit 1
+
+      - name: Run the gate
+        # The ACL in the repo denies everything outside cli-gate/#, so the gate can
+        # assert a genuine broker refusal (0x87) rather than a simulated one.
+        env:
+          GATE_DENY_TOPIC: secret/never-granted
+        run: bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 1883
