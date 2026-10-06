@@ -87,6 +87,37 @@ pnpm tauri build
 
 ---
 
+## 🤖 Headless CLI (`dropqtt-cli`)
+
+The same Rust protocol engine as the desktop app, without a window, so a broker
+contract can be asserted in CI. It links `transport` / `assertions` / `topic`
+directly rather than speaking MQTT through a second client library — a CLI that
+disagrees with its own GUI is worse than no CLI.
+
+```bash
+cargo build --bin dropqtt-cli          # in src-tauri/
+dropqtt-cli connect --host 127.0.0.1 --port 1883
+dropqtt-cli sub --topic 'devices/#' --count 20 --payload
+dropqtt-cli pub --topic devices/gw1/cmd --payload '{"mode":"ota"}' --qos 1 --retain
+dropqtt-cli rpc --topic devices/gw1/get --payload '{}' --response-topic cli/reply --timeout 5s
+dropqtt-cli verify --topic 'devices/#' --assert '$.tempC < 80' --for 30s --junit > report.xml
+```
+
+`verify` takes the desktop app's own assertion grammar (`$.field <op> <value>`,
+`qos >= 1`, `$.fw present`) and the same SUBACK/PUBACK verdicts, so a rule that
+passes here means the same thing when it is armed in the console.
+
+**Exit codes are a contract** — `0` pass, `1` refused or violated, `2` bad command
+line, `3` broker unreachable, `4` *not proven*. The last one exists because "no
+message matched this filter" and "the rule held" look identical to a pipeline that
+was not told otherwise, and a green gate on a broker nobody was talking to is the
+exact failure this project spends its time removing.
+
+A password is never read from the command line (arguments land in the process list
+and shell history): point `--password-env VAR` at an environment variable instead.
+
+---
+
 ## 🚀 Automated Cross-Platform Release (GitHub Actions)
 
 DropQTT packages installers for **macOS (Apple Silicon & Intel)**, **Ubuntu Linux**, and **Windows** via GitHub Actions.

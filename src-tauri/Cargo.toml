@@ -5,6 +5,10 @@ description = "MQTT workbench: resilient file transfer, pub/sub console, data br
 authors = ["Timskt"]
 edition = "2021"
 
+# The GUI is the default binary; `dropqtt-cli` is the second one.
+# Without this, `cargo run` and the bundler face two candidates.
+default-run = "dropqtt"
+
 [lib]
 name = "dropqtt_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

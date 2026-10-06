@@ -2401,6 +2401,76 @@ README 的 tagline 与开头段（功能清单其实一直是全的，只有定�
 （连带 Release 与其产物），而自动更新端点读的是 `releases/latest`，新版本自然覆盖旧版本，
 旧发布留着当历史没有任何害处。**能不动已经发出去的东西，就不动。**
 
+### 4.70 无头 CLI：把验收搬进 CI（评审 §3.2，第十七轮 2026-10-05）
+
+这条一直在"需要你拍板"的清单里，理由是它会改变交付物形态。拍板之后先做了一件事：
+**量耦合，而不是猜架构**。
+
+```
+只有 3 个模块碰 tauri：lib.rs(命令层 82 处)、bridge.rs(1)、mqtt_manager.rs(1)
+transport.rs 1464 行 / assertions.rs 1045 行 / topic / acks / rpc / metrics … 全部 tauri-free
+```
+
+所以 CLI 不需要拆 crate，直接 `use dropqtt_lib::{transport, assertions, topic}`——
+**它和 GUI 说的是同一套协议方言**，这正是评审点名的 MQTTX 痛点（CLI 与 GUI 能力不同步）。
+我本来准备为"链接 tauri 的第二个进程起不来"做拆分方案，因为记忆里 `cargo test --lib`
+在本机就是 `STATUS_ENTRYPOINT_NOT_FOUND`；花 2 分钟建了个探针 bin 一跑：**普通二进制正常启动**，
+失败的是测试进程。又一次"量赢猜"。
+
+结构选择：**纯决策进 `src/cli.rs`（挂进 lib，harness 能测），IO 进 `src/bin/dropqtt-cli.rs`**。
+29 条纯测试覆盖参数解析、退出码契约、报告渲染。
+
+### 退出码是契约，不是习惯
+
+`0` 通过 / `1` 被拒或违反 / `2` 命令行错误 / `3` broker 连不上 / **`4` 未证明**。
+
+`4` 是这条设计的核心：**"没有一条消息匹配这个过滤器"和"规则全部成立"在流水线里长得一模一样**。
+一个空转的绿灯比红灯坏得多，所以 unproven 必须自己占一个码。同理 `pub` 收到 `0x10`
+（broker 收了但没人订阅）也是 `4` 而不是 `0`。
+
+### 真机跑出来的（一次性 mosquitto `18831`，全程没碰本机 `1883`）
+
+| 场景 | 输出 | 退出码 |
+| --- | --- | --- |
+| `connect` | mosquitto 真实能力表：max QoS 2 / receive-max 20 / alias 10 | 0 |
+| `sub` + 另开 `pub` | `cli/watch qos1 \| {"tempC":21}` | 0 |
+| `verify` 规则成立 | `pass $.tempC < 80 matched 1 · passed 1` | **0** |
+| `verify` 规则违反（tempC 95） | `fail ... violated 1` | **1** |
+| `verify` 无人发布 | `"outcome": "unknown"`, matched 0 | **4** |
+| `pub` 命中 ACL 拒绝 | `the broker refused the publish (0x87)` | **1** |
+| `pub` 无订阅者 | `accepted, but no subscriber matched — 0x10` | **4** |
+| `rpc` 无人应答 | `is a responder subscribed to the request topic?` | **4** |
+
+`0x87` 那条是**临时给 lab broker 加 `acl_file` 真造出来的拒绝**，不是模拟：
+`pattern cli/#` 之外的主题被 broker 自己拒了（用完已把配置改回去、broker 已停）。
+
+### 过程中修掉的两个真问题
+
+1. **`--count 5` 不带 `--for` 会永久挂住**。第一次真机跑 `sub --count 1` 直接超时被杀。
+   CI 步骤卡死比失败更糟，所以现在 `--count` 必然带一个默认 30 s 截止（显式 `--for` 优先），
+   并加了 `--count 0` 的拒绝（永远不可能满足的条件）。
+2. **报告里显示的是规范化形式** `Json("$.tempC") Lt 80`，而不是用户写的 `$.tempC < 80`。
+   `AssertionRule.text` 这个字段存在的理由就写在它的注释里（"编辑器该显示用户打的字"），
+   我在 CI 报告里犯了它想避免的同一个错。改成优先用 `text`。
+
+### 安全上的一条硬规则
+
+**密码永远不从命令行取**：只接受 `--password-env VAR`，值从环境变量读，且解析后不进入任何
+打印路径（`describe()` 只输出 host:port/传输/协议版本，测试专门钉了"变量名也不能出现"）。
+命令行参数会进进程表和 shell 历史，这不是假设性风险。
+`--password-env` 指向空变量时**直接报错**，而不是退化成匿名连接——静默匿名会让人把
+"密码错了"调成"broker 配置错了"查一下午。
+
+### 没做的部分（如实）
+
+- CLI **没进 CI 流水线**（`.github/workflows/ci.yml` 目前不跑它）。要接的话需要一个服务 broker
+  或用 `probe-broker.mjs`，属独立一步。
+- **不消费 `.dqscn` 场景文件**：场景的装置聚合与判据目前在前端 TS 里（`utils/scenario.ts`），
+  CLI 只复用了断言语法与协议应答这一层。要让 `verify --scenario` 成立，得先把场景语义下沉到
+  Rust（和 §1.10 的拆分是同一件事），否则就是两份真相源——那正是这个项目在消灭的东西。
+- 二进制体积：因为链了 tauri，debug 下 403 MB（release 约 45 MB 量级）。真要瘦身就是
+  把 tauri-free 模块拆成 `dropqtt-core`，与 §1.10 同源，需你拍板。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

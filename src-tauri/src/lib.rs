@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod bench;
 pub mod acks;
+pub mod cli;
 pub mod assertions;
 pub mod diagnostics;
 pub mod faults;
