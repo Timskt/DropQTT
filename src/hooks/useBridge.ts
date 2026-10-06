@@ -12,6 +12,7 @@ import {
   emptyBridgeOutboxState,
 } from '../types';
 import { usePersistentState } from './usePersistentState';
+import { withoutStoredSecrets } from '../utils/secrets';
 
 // The panel quotes this number in its own truncation notice, so it is
 // exported rather than duplicated: a changed cap must not leave a message
@@ -47,7 +48,7 @@ export function useBridge(visible: boolean) {
   const [outbox, setOutbox] = useState<BridgeOutboxState>(emptyBridgeOutboxState);
 
   // Last endpoints per role + autostart switch (survives restarts) 
-  const [remember, setRemember] = usePersistentState<BridgeRemember>('dropqtt_bridge_remember', {});
+  const [remember, setRemember] = usePersistentState<BridgeRemember>('dropqtt_bridge_remember', {}, withoutStoredSecrets);
   const [autoReconnect, setAutoReconnect] = usePersistentState<boolean>('dropqtt_bridge_auto', false);
   const bootRef = useRef(false);
 

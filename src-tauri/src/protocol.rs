@@ -33,6 +33,11 @@ pub struct BrokerConfig {
     pub client_id: String,
     pub username: Option<String>,
     pub password: Option<String>,
+    /// Reference into the OS credential store (see `secrets`). When set and no
+    /// `password` was supplied, the connect path reads the secret here rather than
+    /// ever receiving it from the UI. `None` keeps the legacy plaintext field.
+    #[serde(default)]
+    pub secret_ref: Option<String>,
     pub keep_alive_secs: u64,
     pub default_qos: u8,
     pub base_topic: Option<String>,
@@ -103,6 +108,7 @@ impl Default for BrokerConfig {
             client_id: format!("DropQTT_{}", rand_suffix),
             username: None,
             password: None,
+            secret_ref: None,
             keep_alive_secs: 60,
             default_qos: 1,
             base_topic: Some("dropqtt".to_string()),

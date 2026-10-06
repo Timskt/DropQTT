@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { BrokerConfig, BROKER_PRESETS, BrokerProfile } from '../types';
+import { BrokerConfig, BROKER_PRESETS, BrokerProfile, SecretStatus } from '../types';
 import { Language, Translations, fill } from '../i18n';
 import { Theme } from '../themes';
 import {
   X, Server, Shield, Key, Sliders, CheckCircle2, Globe, Palette,
-  RefreshCw, Zap, BookmarkPlus, Trash2, Check, AlertCircle, Hash, Activity,
+  RefreshCw, Zap, BookmarkPlus, Trash2, Check, AlertCircle, Hash, Activity, ShieldCheck,
 } from 'lucide-react';
+import {
+  dropSecret, hasSecret, newSecretRef, readSecretStatus, takeBootReport, writeSecret,
+  MigrationReport,
+} from '../utils/secrets';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -93,6 +97,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [newProfileName, setNewProfileName] = useState<string>('');
   const [testing, setTesting] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  /** The password being typed now. It is never part of `form`, so nothing can save it. */
+  const [passwordDraft, setPasswordDraft] = useState('');
+  const [secretStatus, setSecretStatus] = useState<SecretStatus | null>(null);
+  const [storedPresent, setStoredPresent] = useState<boolean | null>(null);
+  const [secretError, setSecretError] = useState<string | null>(null);
+  const [bootReport, setBootReport] = useState<MigrationReport | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -102,8 +112,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (isOpen) {
       setForm(config);
       setTestResult(null);
+      setPasswordDraft('');
+      const report = takeBootReport();
+      setSecretError(report?.failed[0] ?? null);
+      setBootReport(report);
     }
   }, [isOpen, config]);
+
+  // Where passwords can go on this machine, asked once per dialog rather than cached
+  // for the session: a locked keychain unlocks, and a stale "unavailable" would keep
+  // writing plaintext long after the store came back.
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    void readSecretStatus().then((next) => {
+      if (alive) setSecretStatus(next);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [isOpen]);
+
+  // "Is this reference actually still in the store" is asked rather than assumed,
+  // because a reference whose password was deleted looks identical to a working one.
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    const reference = form.secretRef;
+    const probe = secretStatus?.available === true && reference ? hasSecret(reference) : Promise.resolve(null);
+    void probe.then((found) => {
+      if (alive) setStoredPresent(found);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [isOpen, form.secretRef, secretStatus]);
 
   // Escape closes the dialog, Tab stays inside it, and focus returns on close.
   useEffect(() => {
@@ -149,6 +192,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
+  /** Where the password is going, said plainly, because the field's meaning changed. */
+  const secretNote = !secretStatus
+    ? t.secretStoreChecking
+    : secretStatus.available
+      ? t.secretStoredSecurely
+      : secretStatus.supported
+        ? fill(t.secretStoreLocked, { reason: secretStatus.reason ?? '' })
+        : t.secretStoreUnsupported;
+  // Order matters: a reference with nothing behind it is the one thing the user has to
+  // act on, so it outranks the informational "N moved" notice, which outranks the
+  // standing statement about where passwords live.
+  const movedNote = bootReport && bootReport.moved > 0
+    ? fill(t.secretMovedCount, { count: String(bootReport.moved) })
+    : null;
+  const staleReference = storedPresent === false && !!form.secretRef;
+  const credentialNote = (staleReference ? t.secretReferenceStale : null) ?? movedNote ?? secretNote;
+  const credentialProblem = secretError ?? null;
+
   const handleApplyPreset = (preset: { name: string; host: string; port: number; useTls: boolean; baseTopic?: string }) => {
     setSelectedPreset(preset.name);
     setForm((prev) => ({ ...prev, host: preset.host, port: preset.port, useTls: preset.useTls, baseTopic: preset.baseTopic || 'dropqtt' }));
@@ -158,14 +219,75 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleApplyProfile = (profile: BrokerProfile) => {
     setSelectedPreset(profile.name);
     setForm({ ...profile.config });
+    setPasswordDraft('');
     setTestResult(null);
+  };
+
+  /**
+   * Move a typed password into the credential store and return the config that points
+   * at it. `null` means the store refused: the caller must then stop, because the
+   * alternative is connecting with a password that was never saved anywhere and
+   * telling the user about it only when the broker refuses the next one.
+   *
+   * With no store on this machine the draft travels in the config as it always did.
+   * That is the one case where plaintext is still written, and the banner under the
+   * password field says so rather than letting it look secure.
+   */
+  const commitDraft = async (): Promise<BrokerConfig | null> => {
+    const next: BrokerConfig = { ...form };
+    // Either the password being typed now, or one an older build left sitting in the
+    // config. Both go to the store on save, so "Save" is also the moment a profile
+    // that predates the credential store stops carrying its password.
+    const candidate = passwordDraft || next.password || '';
+    if (!candidate) return next;
+    if (!secretStatus?.available) {
+      next.password = candidate;
+      delete next.secretRef;
+      setPasswordDraft('');
+      return next;
+    }
+    const reference = next.secretRef || newSecretRef();
+    const error = await writeSecret(reference, candidate);
+    if (error) {
+      setSecretError(error);
+      return null;
+    }
+    next.secretRef = reference;
+    delete next.password;
+    setPasswordDraft('');
+    setStoredPresent(true);
+    return next;
+  };
+
+  /** What the backend should be handed for a test: the form plus whatever is being typed. */
+  const configForProbe = (): BrokerConfig =>
+    passwordDraft ? { ...form, password: passwordDraft } : form;
+
+  const handleClearStoredPassword = async () => {
+    const reference = form.secretRef;
+    if (reference) {
+      const error = await dropSecret(reference);
+      if (error) {
+        setSecretError(error);
+        return;
+      }
+    }
+    setForm((prev) => {
+      const next = { ...prev };
+      delete next.secretRef;
+      delete next.password;
+      return next;
+    });
+    setPasswordDraft('');
+    setStoredPresent(null);
+    setSecretError(null);
   };
 
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
     try {
-      const latency = await invoke<number>('test_broker_connection', { config: form });
+      const latency = await invoke<number>('test_broker_connection', { config: configForProbe() });
       setTestResult({ success: true, message: fill(t.connectionSuccess, { ms: latency.toString() }) });
     } catch (err) {
       setTestResult({ success: false, message: `${t.connectionFailed}: ${String(err)}` });
@@ -174,16 +296,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleSaveCurrentAsProfile = (e: React.FormEvent) => {
+  const handleSaveCurrentAsProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    const name = newProfileName.trim() || `${form.host}:${form.port}`;
-    onSaveProfile(name, form);
+    const committed = await commitDraft();
+    if (!committed) return;
+    const name = newProfileName.trim() || `${committed.host}:${committed.port}`;
+    onSaveProfile(name, committed);
     setNewProfileName('');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveAndConnect(form);
+    const committed = await commitDraft();
+    if (!committed) return;
+    onSaveAndConnect(committed);
     onClose();
   };
 
@@ -503,7 +629,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className={LABEL} style={LABEL_COLOR}>
                 <span className="flex items-center gap-1.5"><Key className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} /><span>{t.password}</span></span>
               </label>
-              <input type="password" value={form.password || ''} onChange={(e) => { setForm({ ...form, password: e.target.value || undefined }); setTestResult(null); }} className="field-input w-full" placeholder="••••••••" aria-label={t.password} />
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="password"
+                  value={passwordDraft}
+                  onChange={(e) => { setPasswordDraft(e.target.value); setTestResult(null); setSecretError(null); }}
+                  className="field-input w-full"
+                  placeholder={form.secretRef && storedPresent === true ? t.passwordKeptInKeyring : '••••••••'}
+                  autoComplete="off"
+                  aria-label={t.password}
+                />
+                {form.secretRef && (
+                  <button
+                    type="button"
+                    onClick={() => void handleClearStoredPassword()}
+                    className="btn-ghost !px-2 !py-1 text-[11px] shrink-0"
+                    style={{ color: 'var(--bad)' }}
+                    title={t.clearStoredPassword}
+                    aria-label={t.clearStoredPassword}
+                  >
+                    {t.clear}
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] mt-1 flex items-start gap-1.5" style={{ color: credentialProblem || staleReference ? 'var(--bad)' : 'var(--text-muted)' }}>
+                {credentialProblem || staleReference
+                  ? <AlertCircle className="w-3 h-3 mt-px shrink-0" />
+                  : <ShieldCheck className="w-3 h-3 mt-px shrink-0" />}
+                <span>{credentialProblem ?? credentialNote}</span>
+              </p>
             </div>
           </div>
 

@@ -7,6 +7,13 @@ export interface BrokerConfig {
   clientId: string;
   username?: string;
   password?: string;
+  /**
+   * Pointer to the password inside the OS credential store. Once this is set the
+   * password is not persisted: the backend resolves the reference when it opens the
+   * socket, so the plaintext never comes back to JavaScript. `password` on its own is
+   * still honoured, which is how the CLI and a machine without a keyring connect.
+   */
+  secretRef?: string;
   keepAliveSecs: number;
   defaultQos: number;
   baseTopic?: string;
@@ -786,6 +793,17 @@ export interface MetricsStatus {
   port: number;
   /** Quoted from the backend so the port box cannot accept a value `configure` rejects. */
   minPort: number;
+}
+
+/**
+ * Whether broker passwords can be kept in the OS credential store on this machine.
+ * `supported` is about the build, `available` about right now (a locked keychain is
+ * supported but unavailable), and `reason` is written to be shown to the user.
+ */
+export interface SecretStatus {
+  available: boolean;
+  supported: boolean;
+  reason?: string;
 }
 
 /** Batched console-feed emission from the backend (100 ms cadence) */

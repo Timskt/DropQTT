@@ -20,6 +20,9 @@ const sections = (over: Partial<BundleSections> = {}): BundleSections => ({
         clientId: 'DropQTT_lab',
         username: 'svc',
         password: 'hunter2',
+        // The keyring pointer is as useless -- and as machine-local -- as the password
+        // it stands in for, so it must not leave either.
+        secretRef: 'a1b2c3d4',
         keepAliveSecs: 60,
         defaultQos: 1,
         caCert: 'C:/secrets/ca.pem',
@@ -49,6 +52,8 @@ describe('buildEnvironmentBundle', () => {
     expect(text).not.toContain('ca.pem');
     expect(text).not.toContain('BEGIN KEY');
     expect(text).not.toContain('password');
+    expect(text).not.toContain('secretRef');
+    expect(text).not.toContain('a1b2c3d4');
     expect(text).not.toContain('caCert');
     // The behaviour-defining fields stay, so the profile is still usable.
     expect(text).toContain('127.0.0.1');

@@ -37,3 +37,23 @@ base64 = "0.22"
 dirs = "5.0"
 chrono = "0.4"
 rusqlite = { version = "0.31", features = ["bundled"] }
+# Broker passwords live in the OS credential store (see src/secrets.rs). The per-target
+# feature sets are load-bearing: with no backend feature keyring-rs quietly compiles an
+# in-process mock that answers every call and keeps nothing. `supported()` in
+# secrets.rs mirrors this table one for one.
+keyring = { version = "3.6", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))'.dependencies]
+# The persistent variant is the one that survives a logout, and crypto-rust keeps the
+# build off OpenSSL.
+keyring = {
+    version = "3.6",
+    default-features = false,
+    features = ["linux-native-sync-persistent", "crypto-rust"],
+}

@@ -2543,6 +2543,80 @@ CI 的 broker **带 ACL**（`.github/ci/mosquitto.acl` 只放行 `pattern cli-ga
 退出码取的是后台 job 的状态，于是**那条断言永远通过**。一个永远通过的断言比没有断言更危险，
 因为它让人以为那里被守住了。
 
+### 4.72 Broker 密码进系统钥匙串：一个差点骗过我的 mock（评审 §3.3 / 审计 P1-2，2026-10-07）
+
+评审里这一条被标成"安全项里唯一还没有任何缓解的"。事实确实如此：`dropqtt_active_broker`、
+`dropqtt_broker_profiles`、`dropqtt_bridge_remember` 三个 localStorage 键里，`password` 是**明文 JSON**，
+在 Windows 上就是 WebView2 用户数据目录里谁（同账户的任何进程）都能读的文件。
+
+落地的形状是三块，缺一不可：
+
+1. **`src-tauri/src/secrets.rs`**：OS 凭据库（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service）。
+   命名空间固定 `DropQTT`，账户 `broker:<ref>`；`ref` 是随机不透明 id，被前端手写时也过 `[A-Za-z0-9_-]{1,64}` 校验。
+2. **配置里只留引用**：`BrokerConfig.secretRef`（Rust `secret_ref`）。**没有读取命令**——
+   UI 一旦能把明文读回来，它就有可能再被写回存储；所以只有 `put / exists / delete / status`。
+   解析发生在 `transport::build_connection()` 里，也就是**所有连接唯一的出口**：控制台、桥接、
+   `test_broker_connection`、CLI 都走它，没有哪个调用点能"忘了查"。
+3. **写入侧强制**：`usePersistentState` 多了 `sanitize`，规则精确到一句话——
+   **有引用就不落密码，没引用就照旧落**。后者不是妥协：没有凭据库的机器上把密码删掉等于丢掉它。
+
+**启动迁移**必须在 React 挂载之前 `await`：先读到明文的 hook，会在自己状态变化时把明文**忠实地写回去**。
+迁移本身可注入（`store` / `read` / `write` 三个参数），17 条单元测试全部不碰浏览器也不碰 OS。
+
+### 差点被 mock 骗过去
+
+`keyring = "3"` 的**默认 feature 里不含任何后端**，此时它编译进一个进程内 map，`set` 完 `get` 一定成功。
+我先写了个独立探针跑这个默认配置，输出：
+
+```
+set: ok / read: Ok("s3cret") / delete: Ok(())
+```
+
+**看起来完全正常**。真正揭穿它的是 `cmdkey /list`——凭据管理器里一条都没有。加上 `windows-native`
+之后，同一个探针的值才在**另一个进程**里读得回来。
+
+同一个模块里还有第二个自己造的错：`supported()` 我写成 `cfg!(feature = "windows-native")`，
+但那是 **keyring 的 feature，不是本 crate 的**，在 `dropqtt` 里永远是 `false`——真跑起来就是
+"每台机器都报告没有凭据库"。改成 Cargo.toml 按 target 分别给 feature，代码只判 `target_os`，
+两边一一对应，注释互相指认。
+
+教训值得记：**"调用成功"不是"存对了地方"的证据**；写存储的东西，验收必须去存储那一侧看。
+
+### 线上证据（一次性 mosquitto `18831` + `allow_anonymous false`，没碰本机 `1883`）
+
+| 步骤 | 证据 |
+| --- | --- |
+| 种入旧格式（明文密码）后重启 | 两个键都变成 `secretRef`，`grep -c password` = **0** |
+| 凭据是否真在系统里 | `cmdkey /list` 出现 `LegacyGeneric:target=broker:206d…` / `broker:7d81…` 两条 |
+| 用**只有引用**的配置连接 | broker 日志 `New client connected … u'labuser'` + `CONNACK (0, 0)` |
+| 输入一个错密码并保存 | `CONNACK (0, 5)`——证明新值真的从钥匙串走到了线上 |
+| 删掉钥匙串条目后再连接 | UI 报 `no password is stored for this broker (reference 206d…); re-enter it in Settings`，**broker 日志一行都没涨（184→184）**：拒绝发生在建 socket 之前，而不是拿空密码去撞 |
+| 设置面板 | 密码框 `value=""`（旧版会把明文回显在 `type=password` 里），占位"已存入系统钥匙串"，说明行"密码保存在系统凭据库中，不再写入应用本地设置"；引用悬空时说明行变红并提示重新输入 |
+
+### 错误字符串也要防泄漏
+
+`keyring::Error` 的 `Display` 会把 `BadEncoding` 的**原始字节**打印出来，`PlatformFailure` 会把后端
+消息原样带出来。所以 `describe()` 逐个变体手写，只回传自己写的句子和数字上限。
+这条不是洁癖：单元测试 `an_error_string_never_contains_the_secret` 一写出来就抓到了
+`PlatformFailure` 那条透传，第一次运行就是红的。
+
+### 顺带处理与刻意不做
+
+- **删预设要连带删凭据**，但"另存为预设"会复制同一个引用，所以只有当活动配置和其它预设都不再指向它时才删——
+  否则删一个预设会让另一个连不上。
+- **CI**：Linux 侧新增 `libdbus-1-dev` + `pkg-config`（Secret Service 走 DBus），`ci.yml` 两个 apt 块和
+  `release.yml` 的 ubuntu 块都补了。
+- **没做**：webhook header 里的 Bearer token（同一类问题，下一批，`secrets.rs` 的 `broker:` 前缀就是为它留的）；
+  mTLS 私钥口令（现在只存路径，没有口令可存）；通用 schema 迁移框架（只落了 `dropqtt_schema_version` 这一个
+  版本戳 + 本次迁移，改存储格式会连带打断环境包读取器，收益不划算）。
+
+**门禁**：Rust harness 278 → **293**（+15），单元 135 → **152**（+17），`tsc` 干净，
+`eslint` 仍是 **10** 条告警（新加的一条被重构掉，没扩预算），`clippy --all-targets` **0** 告警，
+Playwright 全绿。
+
+
+---
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

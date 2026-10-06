@@ -571,6 +571,13 @@ fn will_properties(
 
 /// Build a fresh client + eventloop pair for the given broker config.
 pub fn build_connection(config: &BrokerConfig) -> Result<(MqttClient, MqttEventLoop), String> {
+    // A config that points at the credential store is completed here, at the one place
+    // every connection is built, so no caller can forget the lookup and the plaintext
+    // exists only in this local copy -- never in the config the manager keeps around
+    // for reconnects, and never in one that gets written back to storage.
+    let mut resolved = config.clone();
+    crate::secrets::resolve(&mut resolved)?;
+    let config = &resolved;
     let transport = build_transport(config)?;
     if config.is_v5() {
         let mut opts = rumqttc::v5::MqttOptions::new(&config.client_id, &config.host, config.port);

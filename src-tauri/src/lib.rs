@@ -13,6 +13,7 @@ pub mod protocol;
 pub mod rpc;
 pub mod responder;
 pub mod scheduler;
+pub mod secrets;
 pub mod silence;
 pub mod transport;
 pub mod topic;
@@ -141,6 +142,34 @@ async fn set_metrics_endpoint(
         .metrics
         .configure(enabled, port, state.mqtt.clone(), state.bridge.clone())
         .await
+}
+
+// ---- Broker credentials -------------------------------------------------------------
+//
+// Write, ask whether it is there, remove. There is deliberately no read command: the
+// UI never needs the plaintext back once it is stored, and a command that returned it
+// would put the secret back on the path that persists it.
+
+/// Whether this machine has a usable credential store, as far as one read of an
+/// unused key can tell.
+#[tauri::command]
+async fn secret_status() -> Result<secrets::SecretStatus, String> {
+    Ok(secrets::status())
+}
+
+#[tauri::command]
+async fn secret_put(reference: String, value: String) -> Result<(), String> {
+    secrets::put(&reference, &value)
+}
+
+#[tauri::command]
+async fn secret_exists(reference: String) -> Result<bool, String> {
+    secrets::exists(&reference)
+}
+
+#[tauri::command]
+async fn secret_delete(reference: String) -> Result<(), String> {
+    secrets::delete(&reference)
 }
 
 #[tauri::command]
@@ -802,6 +831,10 @@ pub fn run() {
             get_diagnostics_snapshot,
             get_metrics_status,
             set_metrics_endpoint,
+            secret_status,
+            secret_put,
+            secret_exists,
+            secret_delete,
             start_send_file,
             pause_transfer,
             resume_transfer,

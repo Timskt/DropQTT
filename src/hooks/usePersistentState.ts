@@ -1,7 +1,18 @@
 import { useState, useEffect } from 'react';
 
-/** useState persisted to localStorage (JSON serialized) */
-export function usePersistentState<T>(key: string, initial: T | (() => T)): [T, (value: T | ((prev: T) => T)) => void] {
+/**
+ * useState persisted to localStorage (JSON serialized).
+ *
+ * `sanitize` runs on the way out, never on the way in: it is how a value that must not
+ * reach disk is filtered without asking every setter to remember to filter it first.
+ * The broker config uses it for the connect password, which belongs to the OS
+ * credential store -- see `utils/secrets.ts`.
+ */
+export function usePersistentState<T>(
+  key: string,
+  initial: T | (() => T),
+  sanitize?: (value: T) => T,
+): [T, (value: T | ((prev: T) => T)) => void] {
   const [value, setValue] = useState<T>(() => {
     try {
       const saved = localStorage.getItem(key);
@@ -14,11 +25,12 @@ export function usePersistentState<T>(key: string, initial: T | (() => T)): [T, 
 
   useEffect(() => {
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      const stored = sanitize ? sanitize(value) : value;
+      localStorage.setItem(key, JSON.stringify(stored));
     } catch (e) {
       console.warn(`Failed to persist ${key}:`, e);
     }
-  }, [key, value]);
+  }, [key, value, sanitize]);
 
   return [value, setValue];
 }

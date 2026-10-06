@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { BrokerConfig, BrokerProfile, ConnectionStatus, DEFAULT_BROKER_CONFIG, SubOptions } from '../types';
 import { usePersistentState } from './usePersistentState';
+import { dropSecret, withoutStoredSecrets } from '../utils/secrets';
 import { toast } from '../utils/toast';
 import { currentTranslations, fill } from '../i18n';
 
@@ -29,8 +30,8 @@ interface UseBrokerOptions {
  * latency probe, and live status from backend events.
  */
 export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
-  const [config, setConfig] = usePersistentState<BrokerConfig>('dropqtt_active_broker', DEFAULT_BROKER_CONFIG);
-  const [profiles, setProfiles] = usePersistentState<BrokerProfile[]>('dropqtt_broker_profiles', DEFAULT_PROFILES);
+  const [config, setConfig] = usePersistentState<BrokerConfig>('dropqtt_active_broker', DEFAULT_BROKER_CONFIG, withoutStoredSecrets);
+  const [profiles, setProfiles] = usePersistentState<BrokerProfile[]>('dropqtt_broker_profiles', DEFAULT_PROFILES, withoutStoredSecrets);
 
   const [status, setStatus] = useState<ConnectionStatus>({
     connected: false,
@@ -164,9 +165,22 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
 
   const deleteProfile = useCallback(
     (id: string) => {
+      const victim = profiles.find((p) => p.id === id);
       setProfiles((prev) => prev.filter((p) => p.id !== id));
+      const reference = victim?.config.secretRef;
+      if (!reference) return;
+      // "Save current as profile" copies the reference along with everything else, so
+      // two profiles and the live config can share one stored password. Deleting a
+      // profile must not quietly blindside the ones still pointing at it.
+      const stillReferenced =
+        config.secretRef === reference ||
+        profiles.some((p) => p.id !== id && p.config.secretRef === reference);
+      if (stillReferenced) return;
+      void dropSecret(reference).then((error) => {
+        if (error) console.warn(`credential left behind for ${reference}: ${error}`);
+      });
     },
-    [setProfiles],
+    [profiles, config, setProfiles],
   );
 
   /** Re-register one topic filter live (subscription list changed) */

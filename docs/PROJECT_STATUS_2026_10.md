@@ -15,19 +15,19 @@
 
 | 指标 | 实测值 |
 | --- | --- |
-| Rust 源码 | 18,059 行 / 21 个模块 |
-| TS + TSX 源码 | 22,705 行 / 88 个文件 |
-| Tauri 命令 | 73 个 `#[tauri::command]` |
-| i18n 键 | 953 × 4 语言（脚本双向核对，零漂移） |
-| 依赖 | npm 31（运行时 13）/ cargo 28 |
-| 测试文件 | 17 个 unit + 32 个 Playwright spec |
+| Rust 源码 | 20,670 行 / 24 个模块（含 `bin/dropqtt-cli.rs`） |
+| TS + TSX 源码 | 23,256 行 / 89 个文件 |
+| Tauri 命令 | 77 个 `#[tauri::command]` |
+| i18n 键 | 961 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
+| 依赖 | npm 31（运行时 13）/ cargo 20 个直接依赖 |
+| 测试文件 | 18 个 unit + 32 个 Playwright spec |
 
-**门禁全绿（2026-10-05 本轮末次运行）**：
+**门禁全绿（2026-10-07 本轮末次运行）**：
 
-- Rust 逻辑 **248 通过**（`~/dropqtt-rustcheck` harness，gnu 工具链）
-- 前端单测 **135 通过**（`npm test` = `vitest run tests/unit`）
-- 真 DOM UI **221 通过**（`npx playwright test`，12.9 分钟）
-- `tsc --noEmit` 干净；`cargo clippy --lib --tests` **0 告警**
+- Rust 逻辑 **293 通过**（`~/dropqtt-rustcheck` harness，gnu 工具链）
+- 前端单测 **152 通过**（`npm test` = `vitest run tests/unit`）
+- 真 DOM UI **221 通过**（`npx playwright test`，6.4 分钟）
+- `tsc --noEmit` 干净；`cargo clippy --all-targets` **0 告警**
 - ESLint **0 error / 10 warning**（预算锁在 10，本轮未涨）
 
 ## 3. 能力清单（按工作区）
@@ -92,8 +92,8 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 | 项 | 状态 |
 | --- | --- |
 | §3.5 多连接工作区 | **未做**。实测改造面：73 个命令全部隐含"只有一个连接"、`App.tsx` 单 `broker.isConnected` 就 23 处、事件名要按连接分道、32 个 spec 的 mock 随之全改；且需先定"现有 4.8 万行历史如何归属"。属架构决策，不适合顺手做。 |
-| §3.2 无头 CLI 进 CI | **未做**。会改变交付物形态，需你拍板。 |
-| §3.3 broker 凭据入 keyring | **未做**。明文仍在 localStorage，是安全项里唯一还没有任何缓解的一条。 |
+| §3.2 无头 CLI 进 CI | **已完成**（2026-10-07）。`ci.yml` 新增 `cli` 作业：一次性 mosquitto + ACL，跑 `scripts/cli-gate.sh` 的 36 项退出码断言。 |
+| §3.3 broker 凭据入 keyring | **已完成**（2026-10-07，见 §4.72）。密码进 OS 凭据库，本地设置只留随机引用；启动前迁移旧明文；引用悬空时连接明确报错而不是匿名重试。webhook header 里的 token 是同一类问题，**下一批**。 |
 | §1.6 桥接每消息克隆 rules/conns 表 | **未做**。评审称是最大可优化项，但按本项目规矩要先 A/B 量出收益；此前两次"看起来该优化"的地方量下来都不是瓶颈。 |
 | §1.7 `BEGIN IMMEDIATE` 失败少报计数 | **已完成**（本轮复核发现评审该条已过期，代码里已是"计入 lost_rows 并跳过本批"）。 |
 | §8.4 双栏对比 | 依赖多连接的半边未做；"改动前 vs 改动后报文对比"半边**已有**（`utils/diff.ts` + 详情面板）。 |

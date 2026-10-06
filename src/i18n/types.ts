@@ -140,6 +140,17 @@ export interface Translations {
   clientId: string;
   username: string;
   password: string;
+  /** Placeholder while a stored credential stands in for the value */
+  passwordKeptInKeyring: string;
+  clearStoredPassword: string;
+  /** Where the connect password is kept, said by the field that used to hold it */
+  secretStoreChecking: string;
+  secretStoreUnsupported: string;
+  /** Interpolates the platform's own reason, which is why it is a template */
+  secretStoreLocked: string;
+  secretStoredSecurely: string;
+  secretReferenceStale: string;
+  secretMovedCount: string;
   defaultQos: string;
   keepAlive: string;
   sendTab: string;
