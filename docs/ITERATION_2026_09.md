@@ -2468,7 +2468,7 @@ transport.rs 1464 行 / assertions.rs 1045 行 / topic / acks / rpc / metrics �
 - **不消费 `.dqscn` 场景文件**：场景的装置聚合与判据目前在前端 TS 里（`utils/scenario.ts`），
   CLI 只复用了断言语法与协议应答这一层。要让 `verify --scenario` 成立，得先把场景语义下沉到
   Rust（和 §1.10 的拆分是同一件事），否则就是两份真相源——那正是这个项目在消灭的东西。
-- 二进制体积：因为链了 tauri，debug 下 403 MB（release 约 45 MB 量级）。真要瘦身就是
+- 二进制体积：因为链了 tauri，debug 下 403 MB；release 体积**未实测**（按 GUI 的 release 产物 45 MB 类推，只作量级参考）。真要瘦身就是
   把 tauri-free 模块拆成 `dropqtt-core`，与 §1.10 同源，需你拍板。
 
 ## 6. 下一轮候选
