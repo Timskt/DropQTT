@@ -17,6 +17,16 @@ CLI="${1:-./target/debug/dropqtt-cli}"
 HOST="${2:-127.0.0.1}"
 PORT="${3:-1883}"
 B=(--host "$HOST" --port "$PORT")
+# A broker that requires a named user is the only one that can really refuse a publish:
+# mosquitto's `pattern` ACL lines do not apply to anonymous clients, so against an
+# anonymous broker the "denied topic" case comes back accepted. The password is taken
+# from a variable name, never from the command line, like every other DropQTT credential.
+if [ -n "${GATE_USER:-}" ]; then
+  B+=(--username "$GATE_USER")
+  if [ -n "${GATE_PASSWORD_ENV:-}" ]; then
+    B+=(--password-env "$GATE_PASSWORD_ENV")
+  fi
+fi
 # Unique per run so another client on a shared broker cannot move the counters.
 T="cli-gate/$$"
 WORK="$(mktemp -d)"

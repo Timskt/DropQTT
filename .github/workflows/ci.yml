@@ -136,15 +136,22 @@ jobs:
       # directory and mosquitto would refuse to start.
       - name: Start mosquitto with an ACL
         run: |
+          PASS=$(openssl rand -hex 12)
+          mosquitto_passwd -c -b /tmp/mosquitto-gate.pass gateuser "$PASS"
+          # Hand the password to the gate steps through the job environment: it is a
+          # throwaway for a loopback broker that dies with this job, and the CLI takes
+          # passwords only from a variable, never from the command line.
+          echo "MQTT_GATE_PASS=$PASS" >> "$GITHUB_ENV"
           cat > /tmp/mosquitto-gate.conf <<EOF
           listener 1883 127.0.0.1
-          allow_anonymous true
+          allow_anonymous false
           persistence false
+          password_file /tmp/mosquitto-gate.pass
           acl_file $GITHUB_WORKSPACE/.github/ci/mosquitto.acl
           EOF
           /usr/sbin/mosquitto -c /tmp/mosquitto-gate.conf -d
           for i in $(seq 1 30); do
-            if mosquitto_sub -h 127.0.0.1 -p 1883 -t 'gate/probe' -C 1 -W 1 >/dev/null 2>&1 ||                timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/1883' 2>/dev/null; then
+            if timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/1883' 2>/dev/null; then
               echo "broker is listening"; exit 0
             fi
             sleep 1
@@ -152,15 +159,19 @@ jobs:
           echo "broker never came up"; exit 1
 
       - name: Run the gate
-        # The ACL in the repo denies everything outside cli-gate/#, so the gate can
-        # assert a genuine broker refusal (0x87) rather than a simulated one.
+        # The ACL grants only cli-gate/# to gateuser, so the gate can assert a genuine
+        # broker refusal (0x87) rather than a simulated one.
         env:
           GATE_DENY_TOPIC: secret/never-granted
+          GATE_USER: gateuser
+          GATE_PASSWORD_ENV: MQTT_GATE_PASS
         run: bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 1883
 
       - name: Run the scenario gate
-        # Same broker, same ACL: the rig's topic has to live under the one prefix the
-        # anonymous test user is granted.
+        # Same broker, same user: the rig's topic has to live under the one tree the
+        # ACL grants, so it is pointed at cli-gate/… rather than the local default.
         env:
           SCENARIO_TOPIC: cli-gate/scenario/telemetry
+          GATE_USER: gateuser
+          GATE_PASSWORD_ENV: MQTT_GATE_PASS
         run: bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 1883

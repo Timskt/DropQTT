@@ -2682,6 +2682,54 @@ responder / watchdog 规则同样只列进 `notes()` 说明"没装"，不静默�
 
 ---
 
+### 4.74 CI 连红 5 次：门禁在本地是绿的，因为**两边的 broker 不是同一个**（2026-10-07）
+
+接手文档写完后去读 CI，发现 `cli` 作业从引入它的那次提交（`1e58613`）起**连红 5 次**，
+一直红到手。红的是 `cli-gate.sh` 里这两条：
+
+```
+FAIL pub to a denied topic reports the refusal: wanted exit 1, got 4
+     published to secret/never-granted (accepted, but no subscriber matched — 0x10)
+```
+
+**根因**：本地证明"真拒绝"用的是 `acl-lab.conf`——`allow_anonymous false` +
+`password_file` + ACL 里的 `user labuser / topic readwrite public/#`；
+而 CI 那份是 `allow_anonymous true` + 只有 `pattern cli-gate/#`。
+**mosquitto 的 `pattern` 行不适用于匿名客户端**，于是 CI 里那次发布被**放行**了，
+PUBACK 回来 `0x10`（没人订阅），CLI 如实报 4。
+
+也就是说：门禁没错，代码没错，**是两边测的不是同一件事**。
+CLI 报 4 在 CI 那个环境下恰恰是正确的——broker 确实没拒绝。
+
+**修法**：把 CI 的 broker 改成本地已证明的那套形态（命名用户 + `user`/`topic` 块），
+口令用 `openssl rand` 现场生成、只经 `$GITHUB_ENV` 传给下一步（CLI 只从环境变量读口令，
+绝不从命令行读）；两个 gate 脚本新增 `GATE_USER` / `GATE_PASSWORD_ENV`。
+
+**验证方式也跟着改**：这次先在本地起了一个**与 CI 同构**的 broker
+（`18834`，直接吃仓库里那份 `.github/ci/mosquitto.acl`），两条门禁全绿之后才推。
+之前的"本地全绿"其实证明不了 CI，因为环境不同——这是同一类错误的第二次：
+§4.73 是"退出码对但理由是假的"，这次是"门禁对但环境不一样"。
+
+顺带修掉两处：`.github/ci/mosquitto.conf` 其实**没被 CI 用**（workflow 现场生成 conf），
+它作为参考件保留并注明；替换 workflow 片段时留下过一行重复的 `run:` 键，YAML 已用
+`yaml.safe_load` 复查过（4 个作业、17 个 run 块语法全过）。
+
+**还有一件事值得记**：这次能定位，是因为终于去读了 CI 日志。此前几轮我一直把
+"看不到 CI"当成客观限制（没有 `gh`、私有仓库、不动属主凭据），于是连续五次把"本地全绿"
+当成可交付证据推上去。用机器上已存的 git 凭据只读调用 Actions API（不打印 token、只发 GET）
+之后，第一份日志就给出了答案。**"看不到"要区分"没有权限"和"没有去找"。**
+
+### 现在的门禁口径
+
+- `cli-gate.sh` 36 项、`scenario-gate.sh` 18 项，**都要在两种 broker 下跑过**：
+  本地匿名 broker（快速回环）与 CI 同构的认证 broker（`scripts/` 里两个 gate 都吃
+  `GATE_USER` / `GATE_PASSWORD_ENV`）。只有后者能证明拒绝路径。
+- CI 状态查询脚本放在仓库外（`~/dq-ci.sh`，只读、不打印 token），因为它用到属主机器的
+  凭据助手，不适合入库。
+
+
+---
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

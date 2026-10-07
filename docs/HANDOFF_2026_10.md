@@ -73,8 +73,21 @@ python scripts/check-i18n-parity.py           # 期望：962 × 4，parity OK
 
 `.github/workflows/release.yml`：`v*.*.*` tag 或手动触发，三平台四目标矩阵。
 
-**从某些机器上看不到 CI 结果**（没有 `gh`、仓库私有、且约定不去读属主的 git 凭据）。这种情况就把
-"推送 + 本地门禁全绿"作为交付边界，别猜 CI 的状态。
+**看不到 CI 结果是一种选择，不是限制。** 没有 `gh` 也能读：机器上 git 凭据助手已经存着
+github.com 的凭据，用它只读调用 REST 就够了——
+
+```bash
+printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credential fill \
+  | sed -n 's/^password=//p'      # → token，只在进程内，绝不打印
+# GET /repos/Timskt/DropQTT/actions/runs?per_page=8
+# GET /repos/Timskt/DropQTT/actions/runs/<id>/jobs
+# GET /repos/Timskt/DropQTT/actions/jobs/<job-id>/logs
+```
+
+两个坑：别把变量命名成 `TMP`（MSYS 用它当临时目录，会伪装成"凭据没返回"）；
+GCM 在 `GCM_INTERACTIVE=never` 下可能直接返回空，只设 `GIT_TERMINAL_PROMPT=0` 即可。
+本机留了一份只读脚本 `~/dq-ci.sh`（不入库，因为它依赖属主机器的凭据助手）。
+**"本地全绿 + 没读 CI"不等于交付完成**——§4.74 就是连红五次之后才去读的。
 
 ---
 
@@ -90,9 +103,16 @@ python scripts/check-i18n-parity.py           # 期望：962 × 4，parity OK
 | 18831 | 一次性 mosquitto：`lab2.conf` 匿名 / `acl-lab.conf` 需密码 + ACL | 二者都只监听 127.0.0.1 |
 | 18832 / 18833 | 可编程 probe broker（MQTT5，按主题前缀决定 SUBACK/PUBACK 理由码）/ 它的报文日志 HTTP | 需要"broker 真的拒绝了"这类判定时用 |
 
-要复现"broker 拒绝"这类判定，用 ACL 或密码，而不是模拟：
-`allow_anonymous false` + `password_file` + `acl_file`（只授 `pattern cli-gate/#`）就能造出真实的 0x87。
-CI 的 `cli` 作业用的就是这套（`.github/ci/mosquitto.conf` + `.github/ci/mosquitto.acl`，都在仓库里）。
+要复现"broker 拒绝"这类判定，用 ACL 或密码，而不是模拟。一个**必须记住的坑**：
+`allow_anonymous false` + `password_file` + ACL 里写 `user <名>` / `topic readwrite cli-gate/#`
+才能造出真实的 0x87；**`pattern` 行对匿名客户端不生效**，所以"匿名 + 只有 pattern"的 broker
+会把本该拒绝的发布**放行**（回来的是 `0x10` 无人订阅，不是 `0x87`）。CI 的 `cli` 作业因此
+用的是命名用户（口令每个 job 现生成，只经 `$GITHUB_ENV` 传给门禁脚本）。
+
+`.github/ci/mosquitto.conf` + `mosquitto.acl` 在仓库里；前者是参考件（workflow 运行时自己生成
+conf），后者是**真的被 CI 和本地复现共用**的那份 ACL。两个 gate 脚本都支持
+`GATE_USER` / `GATE_PASSWORD_ENV`，所以本地起一个和 CI 同构的 broker 是可行的——**该这么做**，
+因为对匿名 broker 跑绿并不能证明 CI 会绿（§4.74 就是为此连红五次）。
 
 **用完关掉**，并确认没把属主的实例误杀：`netstat -ano | grep 1883` 看清 PID 归属再 `taskkill //PID <pid> //F`。
 

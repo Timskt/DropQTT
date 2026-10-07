@@ -1,3 +1,9 @@
-# Publish and subscribe are limited to the gate's own topic tree. Anything else is a
-# broker refusal the CLI has to report as exit 1 rather than as success.
-pattern cli-gate/#
+# Broker for the CI headless-CLI gate.
+#
+# A named user, not anonymous: mosquitto's `pattern` lines do not apply to anonymous
+# clients, so an anonymous connection was *accepting* the publish the gate expects to
+# see refused -- the assertion came back 0x10 ("no subscriber") instead of 0x87, which
+# is the difference between a gate that proves a refusal and one that only looks like it.
+# The password itself is generated per job and never stored here.
+user gateuser
+topic readwrite cli-gate/#
