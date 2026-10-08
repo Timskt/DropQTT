@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { QosDowngradeEvent, SubRejection, SubscriptionAckState } from '../types';
 import { currentTranslations, fill } from '../i18n';
 import { describeAck } from '../utils/ackReason';
-import { isNewVerdict, pruneVerdicts } from '../utils/toastGuards';
+import { isNewKey, isNewVerdict, pruneVerdicts } from '../utils/toastGuards';
 import { toast } from '../utils/toast';
 
 /**
@@ -55,6 +55,8 @@ export function useSubscriptionStats(active: boolean) {
   // automatic reconnect. One toast per distinct verdict, not one per reconnect cycle.
   const subSeen = useRef(new Set<string>());
   const unsubSeen = useRef(new Set<string>());
+  // A capped grant repeats on every reconnect too, so it gets the same treatment.
+  const capSeen = useRef(new Set<string>());
   // Refused publishes arrive as a stream; one toast per burst, not one per packet.
   const nackRef = useRef<{ count: number; code: number; timer: number | null }>({
     count: 0,
@@ -113,9 +115,11 @@ export function useSubscriptionStats(active: boolean) {
         const t = currentTranslations();
         const d = e.payload;
         setAck((prev) => ({ ...prev, capped: { ...prev.capped, [d.filter]: d.granted } }));
-        toast.info(
-          fill(t.subDowngradedToast, { topic: d.filter, qos: String(d.granted) }),
-        );
+        if (isNewKey(capSeen.current, `${d.filter}\u0000qos:${d.granted}`)) {
+          toast.info(
+            fill(t.subDowngradedToast, { topic: d.filter, qos: String(d.granted) }),
+          );
+        }
       }),
       listen<{ code: number }>('publish-rejected', (e) => {
         if (disposed) return;
@@ -146,6 +150,7 @@ export function useSubscriptionStats(active: boolean) {
       // including one it repeats.
       subSeen.current.clear();
       unsubSeen.current.clear();
+      capSeen.current.clear();
       return;
     }
     let disposed = false;
@@ -171,6 +176,7 @@ export function useSubscriptionStats(active: boolean) {
           // so its remembered verdict goes away with the verdict.
           pruneVerdicts(subSeen.current, (state.rejected ?? []).map((r) => r.filter));
           pruneVerdicts(unsubSeen.current, (state.refusedUnsubscribes ?? []).map((r) => r.filter));
+          pruneVerdicts(capSeen.current, (state.capped ?? []).map((c) => c.filter));
         }
       } catch {
         // A failed poll keeps the last verdicts rather than clearing them, because

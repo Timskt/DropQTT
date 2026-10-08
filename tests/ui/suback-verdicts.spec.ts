@@ -186,6 +186,29 @@ test('one refusal keeps one toast, however many reconnects repeat it', async ({ 
   await expect(toast).toHaveCount(2, { timeout: 20000 });
 });
 
+// Same repeating-verdict class as a refusal: a capped grant is re-announced on every
+// reconnect, so it gets one toast per distinct grant rather than one per cycle.
+test('a repeated downgrade does not stack toasts', async ({ page }) => {
+  await boot(page);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__listening('subscription-downgraded')))
+    .toBe(true);
+  const fire = (granted: number) =>
+    page.evaluate(
+      (g) => (window as any).__fire('subscription-downgraded', { filter: 'edge/alive', asked: 2, granted: g }),
+      granted,
+    );
+  await fire(0);
+  const toast = page.getByText(/Broker capped edge\/alive at QoS/);
+  await expect(toast).toBeVisible({ timeout: 20000 });
+  await fire(0);
+  await page.waitForTimeout(300);
+  await expect(toast).toHaveCount(1);
+  // A different grant is different news.
+  await fire(1);
+  await expect(toast).toHaveCount(2, { timeout: 20000 });
+});
+
 test('a qos the broker capped is shown as capped', async ({ page }) => {
   await boot(page, {
     rejected: [],

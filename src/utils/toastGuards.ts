@@ -18,7 +18,11 @@ export const verdictKey = (r: SubRejection): string => `${r.filter}\u0000${r.cod
  * announce everything again (an explicit reconnect after the user changed something).
  */
 export function isNewVerdict(seen: Set<string>, r: SubRejection): boolean {
-  const key = verdictKey(r);
+  return isNewKey(seen, verdictKey(r));
+}
+
+/** The general form: any broker verdict that can arrive again on every reconnect. */
+export function isNewKey(seen: Set<string>, key: string): boolean {
   if (seen.has(key)) return false;
   seen.add(key);
   return true;
