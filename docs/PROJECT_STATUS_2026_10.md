@@ -15,18 +15,18 @@
 
 | 指标 | 实测值 |
 | --- | --- |
-| Rust 源码 | 22,723 行 / 26 个模块（含 `bin/dropqtt-cli.rs`） |
+| Rust 源码 | 23,282 行 / 27 个模块（含 `bin/dropqtt-cli.rs` 与 `tls_report.rs`） |
 | TS + TSX 源码 | 25,173 行 / 98 个文件 |
 | Tauri 命令 | 79 个 `#[tauri::command]` |
-| i18n 键 | 1010 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
-| 依赖 | npm 31（运行时 13）/ cargo 20 个直接依赖 |
-| 测试文件 | 22 个 unit + 36 个 Playwright spec + 1 个 Rust 集成测试 |
+| i18n 键 | 1032 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
+| 依赖 | npm 31（运行时 14 + 开发 17）/ cargo 22 个直接依赖（本轮新增 `x509-parser`，11 个传递依赖） |
+| 测试文件 | 22 个 unit + 37 个 Playwright spec + 1 个 Rust 集成测试 |
 
 **门禁全绿（2026-10-08 本轮末次运行）**：
 
-- Rust **364 lib + 1 集成通过**（macOS 本机 `cargo test`）
+- Rust **381 lib + 1 集成通过**（macOS 本机 `cargo test`）
 - 前端单测 **225 通过**（`npm test` = `vitest run tests/unit`）
-- 真 DOM UI **249 通过**（`npx playwright test`）
+- 真 DOM UI **254 通过**（`npx playwright test`）
 - 真机 CLI 门禁 **cli-gate 37 项 + scenario-gate 26 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76；cli-gate 多出的那一项是 broker 身份自检，§4.78）
 - `tsc --noEmit` 干净；`cargo clippy --all-targets -- -D warnings` **通过**
 - ESLint **0 error / 10 warning**（预算锁在 10，本轮未涨）
@@ -54,6 +54,7 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 活动时间轴视图（按 correlation 跨主题配对 RPC）、捕获文件导出。
 
 **运维诊断**：12 项主动健康检查、自身耗时仪表（flush / 滞后 / 历史写）、
+**TLS 材料取证**（证书有效期判定 / 主体与颁发者 / SAN / CA 与叶子槽位错配 / 只有 CN 对得上这个 rustls 会忽略的陷阱，§4.82）、
 静默看门狗（带恢复感知，设备复报会清自己的计时器）、故障注入（丢/延/重/篡改/错关联，
 且明确声明"缺消息可能是我们干的"）、脚本化应答器、断言规则、
 **Prometheus 指标端点**。

@@ -42,6 +42,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # in-process mock that answers every call and keeps nothing. `supported()` in
 # secrets.rs mirrors this table one for one.
 keyring = { version = "3.6", default-features = false }
+x509-parser = "0.18.1"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }

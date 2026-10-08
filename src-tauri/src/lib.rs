@@ -2,6 +2,7 @@ pub mod bridge;
 pub mod bench;
 pub mod acks;
 pub mod cli;
+pub mod tls_report;
 pub mod assertions;
 pub mod diagnostics;
 pub mod faults;
@@ -61,6 +62,48 @@ async fn file_size(path: String) -> Result<u64, String> {
         return Err("path is not a regular file".to_string());
     }
     Ok(md.len())
+}
+
+/// Read the configured TLS material and report what the files actually contain.
+///
+/// The point is to answer "why can I not connect" before the handshake has to fail: an
+/// expired server cert, a leaf parked in the CA slot, or a hostname that only matches the CN
+/// (which rustls ignores once SANs exist) are all invisible today until the connection drops.
+/// Paths come from the user's own file picker, same as `read_capture_file`, but the read is
+/// size-capped because a certificate is small and a mistyped path should not slurp a volume.
+#[tauri::command]
+async fn inspect_tls_material(
+    ca_path: Option<String>,
+    client_cert_path: Option<String>,
+    client_key_path: Option<String>,
+    hostname: Option<String>,
+) -> Result<Vec<tls_report::SlotReport>, String> {
+    let host = hostname.as_deref().map(str::trim).filter(|h| !h.is_empty());
+    let now = tls_report::now_secs();
+    let mut out: Vec<tls_report::SlotReport> = Vec::new();
+
+    let read = |p: &Option<String>| -> Option<Vec<u8>> {
+        let path = p.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+        let md = std::fs::metadata(path).ok()?;
+        if !md.is_file() || md.len() > 1_000_000 {
+            return None;
+        }
+        std::fs::read(path).ok()
+    };
+
+    for (path, expect_ca) in [(&ca_path, true), (&client_cert_path, false)] {
+        let Some(trimmed) = path.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        out.push(tls_report::inspect_file(trimmed, read(path).as_deref(), expect_ca, host, now));
+    }
+
+    let key_path = client_key_path.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(kp) = key_path {
+        out.push(tls_report::inspect_key(kp, read(&client_key_path).as_deref()));
+    }
+
+    Ok(out)
 }
 
 /// Largest capture file the replay screen will read.
@@ -847,6 +890,7 @@ pub fn run() {
             get_default_download_dir,
             set_download_dir,
             file_size,
+            inspect_tls_material,
             read_capture_file,
             connect_broker,
             disconnect_broker,

@@ -270,11 +270,14 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
    还差一次真 OS 钥匙串上的 GUI 端到端（按 `keyring-live.mjs` 步骤）。
 2. ~~**CLI 侧生成 bench 流量**~~ ✅ 2026-10-08 完成（§4.76，`--bench-rate/--bench-size/--bench-qos`）。
    遗留：GUI 收尾不等迟到的 ack，CLI 会等，`maxLost` 在边界上两边可能不一致。
-3. 桌面集成：系统托盘、开机自启、全局快捷键（审计列为系统类缺口）。
-4. 把 `dropqtt-cli` 二进制挂进 release 产物（现在只有 GUI 安装包）。
-5. ~~主题树浏览器 / 在线设备清单~~ ✅ 已在仓库里（`utils/topicTree.ts` +
+3. TLS 与连接生命周期预检：**证书侧已做**（§4.82，`inspect_tls_material` + 设置里的面板）。
+   仍未做的是 keepalive/PINGREQ 可见性与断开原因时间线——注意 `PING` 现在测的是 CONNECT
+   握手 RTT（`mqtt_manager.rs`），不是心跳延迟，这条是真坑不是待办装饰。
+4. 桌面集成：系统托盘、开机自启、全局快捷键（审计列为系统类缺口）。
+5. 把 `dropqtt-cli` 二进制挂进 release 产物（现在只有 GUI 安装包）。
+6. ~~主题树浏览器 / 在线设备清单~~ ✅ 已在仓库里（`utils/topicTree.ts` +
    `TopicTreePanel.tsx` + `DevicePanel.tsx`），此项是从 HANDOFF 未同步过来。
-6. §1.6 桥接每消息克隆 rules/conns：**先 A/B 量**再动手（本项目已有两次"看着该优化"量下来不是瓶颈）。
+7. §1.6 桥接每消息克隆 rules/conns：**先 A/B 量**再动手（本项目已有两次"看着该优化"量下来不是瓶颈）。
 
 ### 需要属主拍板，别自作主张
 

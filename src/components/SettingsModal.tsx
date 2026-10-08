@@ -72,6 +72,8 @@ const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; onVar
 );
 
 /** Read-only PEM path row with Browse / Clear */
+import { TlsMaterialPanel } from './TlsMaterialPanel';
+
 const CertRow: React.FC<{
   label: string; path?: string; onPick: () => void; onClear: () => void; browse: string; clear: string;
 }> = ({ label, path, onPick, onClear, browse, clear }) => (
@@ -598,6 +600,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <CertRow label={t.tlsCaCert} path={form.tlsCaPath} onPick={() => pickFile((p) => setForm({ ...form, tlsCaPath: p }))} onClear={() => setForm({ ...form, tlsCaPath: undefined })} browse={t.browse} clear={t.clear} />
                 <CertRow label={t.clientCert} path={form.tlsClientCertPath} onPick={() => pickFile((p) => setForm({ ...form, tlsClientCertPath: p }))} onClear={() => setForm({ ...form, tlsClientCertPath: undefined })} browse={t.browse} clear={t.clear} />
                 <CertRow label={t.clientKey} path={form.tlsClientKeyPath} onPick={() => pickFile((p) => setForm({ ...form, tlsClientKeyPath: p }))} onClear={() => setForm({ ...form, tlsClientKeyPath: undefined })} browse={t.browse} clear={t.clear} />
+                <TlsMaterialPanel enabled={form.useTls} caPath={form.tlsCaPath} clientCertPath={form.tlsClientCertPath}
+                  clientKeyPath={form.tlsClientKeyPath} hostname={form.host} t={t} />
               </div>
             )}
           </div>
