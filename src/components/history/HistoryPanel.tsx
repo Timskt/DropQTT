@@ -14,6 +14,7 @@ import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, 
 import { buildTraceHtml } from '../../utils/traceHtml';
 import { buildCapture, CAPTURE_EXTENSION } from '../../utils/capture';
 import { TimelineCard } from './TimelineCard';
+import { MessageDiffCard } from './MessageDiffCard';
 import { exportMessages, ExportFormat, saveTextFile } from '../../utils/exportMessages';
 
 interface HistoryPanelProps {
@@ -167,6 +168,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Two picked rows, oldest first. A third pick drops the oldest, so comparing against a
+  // third message is two clicks rather than a clear-then-select ritual.
+  const [compareIds, setCompareIds] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -235,6 +239,17 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
       setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1400);
     }
   };
+
+  const toggleCompare = (id: string): void => {
+    setCompareIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev.slice(-1), id]));
+  };
+
+  // Rows can disappear under a refresh or a retention prune, so the pair is resolved
+  // against what is actually on screen rather than trusting the stored ids.
+  const compareRows = useMemo(
+    () => compareIds.map((id) => rows.find((r) => r.id === id)).filter((r): r is HistoryRow => !!r),
+    [compareIds, rows],
+  );
 
   const handleResend = async (r: HistoryRow) => {
     if (!connected || !canReplayHistory(r)) return;
@@ -708,6 +723,15 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
           </span>
           {loading && <span className="flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /> {t.refresh}</span>}
         </div>
+        {compareRows.length === 2 ? (
+          <div className="px-3 pt-2">
+            <MessageDiffCard a={compareRows[0]} b={compareRows[1]} t={t} onClear={() => setCompareIds([])} />
+          </div>
+        ) : compareRows.length === 1 ? (
+          <div className="px-3 pt-2 text-[10px]" style={{ color: 'var(--text-muted)' }} data-testid="compare-waiting">
+            {t.historyCompareHint}
+          </div>
+        ) : null}
         <div className="max-h-[52vh] overflow-y-auto" data-testid="history-results">
           {rows.length === 0 && !loading ? (
             <div className="p-10 text-center flex flex-col items-center gap-2">
@@ -718,6 +742,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
           ) : (
             rows.map((r, idx) => {
               const expanded = expandedId === r.id;
+              const slot = compareIds.indexOf(r.id);
               return (
                 <div key={r.id} style={idx > 0 ? { borderTop: '1px solid var(--border-inset)' } : undefined}>
                   <button
@@ -734,6 +759,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                     <span className="font-mono shrink-0 max-w-[34%] truncate" style={{ color: 'var(--text-primary)' }} title={r.topic}>{r.topic}</span>
                     <span className="font-mono truncate flex-1" style={{ color: 'var(--text-muted)' }}>{previewOf(r, t)}</span>
                     {r.retain && <span className="chip chip-warn shrink-0">R</span>}
+                    {slot >= 0 && (
+                      <span className="chip chip-info shrink-0" data-testid="compare-slot">{slot === 1 ? t.historyCompareSlotB : t.historyCompareSlotA}</span>
+                    )}
                     <span className="chip chip-neutral shrink-0">Q{r.qos}</span>
                     <span className="font-mono shrink-0 hidden md:inline" style={{ color: 'var(--text-muted)' }}>{fmtBytes(r.payloadLen)}</span>
                     <span className="font-mono shrink-0" style={{ color: 'var(--text-secondary)' }}>{fmtTime(r.ts)}</span>
@@ -753,6 +781,16 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                           </button>
                           <button onClick={() => onSubscribe(r.topic)} className="btn-ghost !px-2 !py-1 flex items-center gap-1 text-[10px]" title={t.historySubscribeTopic} style={{ color: 'var(--ok)' }}>
                             <Rss className="w-3 h-3" /> {t.historySubscribeTopic}
+                          </button>
+                          <button
+                            onClick={() => toggleCompare(r.id)}
+                            data-testid="history-compare-btn"
+                            className="btn-ghost !px-2 !py-1 flex items-center gap-1 text-[10px]"
+                            title={t.historyCompare}
+                            style={slot >= 0 ? { color: 'var(--accent)' } : undefined}
+                          >
+                            <GitCompareArrows className="w-3 h-3" />
+                            {slot < 0 ? t.historyCompare : slot === 1 ? t.historyCompareSlotB : t.historyCompareSlotA}
                           </button>
                           <button onClick={() => handleResend(r)} disabled={!connected || !canReplayHistory(r)} className="btn-accent !px-2 !py-1 flex items-center gap-1 text-[10px] disabled:opacity-40" title={canReplayHistory(r) ? t.historyResend : t.replayTruncated}>
                             <Send className="w-3 h-3" /> {t.historyResend}

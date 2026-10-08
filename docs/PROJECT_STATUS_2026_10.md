@@ -25,8 +25,8 @@
 **门禁全绿（2026-10-08 本轮末次运行）**：
 
 - Rust **364 lib + 1 集成通过**（macOS 本机 `cargo test`）
-- 前端单测 **181 通过**（`npm test` = `vitest run tests/unit`）
-- 真 DOM UI **230 通过**（`npx playwright test`）
+- 前端单测 **195 通过**（`npm test` = `vitest run tests/unit`）
+- 真 DOM UI **236 通过**（`npx playwright test`）
 - 真机 CLI 门禁 **cli-gate 37 项 + scenario-gate 26 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76；cli-gate 多出的那一项是 broker 身份自检，§4.78）
 - `tsc --noEmit` 干净；`cargo clippy --all-targets -- -D warnings` **通过**
 - ESLint **0 error / 10 warning**（预算锁在 10，本轮未涨）
@@ -48,6 +48,7 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 限速、**磁盘 outbox（1s→300s 退避 + 死信）**、多 sink fan-out、转发日志、规则导入导出（脱敏）。
 
 **消息历史**：SQLite（WAL + JSON1）追加式迁移、按主题聚合、按天/按条保留策略、
+**两条报文对比**（JSON 逐字段 / 文本逐行 / 二进制整体，附传输字段差异与截断感知，§4.80）、
 活动时间轴视图（按 correlation 跨主题配对 RPC）、捕获文件导出。
 
 **运维诊断**：12 项主动健康检查、自身耗时仪表（flush / 滞后 / 历史写）、
