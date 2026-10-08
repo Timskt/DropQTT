@@ -13,6 +13,8 @@
 //! ~100 ms (kills accidental `while(true)`), and zero host APIs exposed to the
 //! script — it is a pure data function sandbox.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -46,11 +48,29 @@ pub fn apply_transform(
 
     let rt = Runtime::new().map_err(|e| format!("js runtime: {}", e))?;
     rt.set_memory_limit(MEMORY_LIMIT);
-    // Each runtime owns its deadline: another bridge or a dry-run must never
-    // extend a runaway script's budget. Instant also ignores wall-clock changes.
-    let deadline = Instant::now() + TIME_BUDGET;
-    rt.set_interrupt_handler(Some(Box::new(move || {
-        Instant::now() >= deadline
+    // The budget measures the script, not the sandbox: the deadline is taken on
+    // the *first interrupt poll*, which only happens once the script is running
+    // (QuickJS polls every 10k ops). Taking it before `Context::full()` charged
+    // ~1 ms of our own construction to the user's script. Each runtime owns its
+    // deadline — another bridge or a dry-run must never extend a runaway
+    // script's budget — and Instant ignores wall-clock changes.
+    //
+    // The flag exists because QuickJS reports a killed script and a script that
+    // threw with the same opaque `Error::Exception`, so the display string
+    // cannot tell the bridge author which of the two they have to fix.
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&timed_out);
+    rt.set_interrupt_handler(Some(Box::new({
+        let mut deadline = None;
+        move || {
+            let now = Instant::now();
+            let at = *deadline.get_or_insert_with(|| now + TIME_BUDGET);
+            if now >= at {
+                flag.store(true, Ordering::Relaxed);
+                return true;
+            }
+            false
+        }
     })));
 
     let ctx = Context::full(&rt).map_err(|e| format!("js context: {}", e))?;
@@ -70,7 +90,16 @@ pub fn apply_transform(
         );
         let result: Value = ctx
             .eval(source.as_str())
-            .map_err(|e| format!("script error: {}", e))?;
+            .map_err(|e| {
+                if timed_out.load(Ordering::Relaxed) {
+                    format!(
+                        "transform killed: exceeded the {} ms budget",
+                        TIME_BUDGET.as_millis()
+                    )
+                } else {
+                    format!("script error: {}", e)
+                }
+            })?;
         let _ = result;
 
         let out: Value = globals.get("__result").map_err(|e| e.to_string())?;
@@ -162,16 +191,31 @@ mod tests {
     }
 
     #[test]
+    fn a_throwing_script_is_not_blamed_on_the_time_budget() {
+        // The whole point of naming the cause: QuickJS gives both a throw and a
+        // killed script the same opaque exception, so a classification that
+        // reported every failure as a budget kill would send the bridge author
+        // to the wrong fix.
+        let err = run("function transform(t, p) { throw new Error('nope'); }", b"x").unwrap_err();
+        assert!(err.contains("script error"), "{}", err);
+        assert!(!err.contains("budget"), "{}", err);
+    }
+
+    #[test]
     fn missing_transform_function_errors() {
         let err = run("const x = 1;", b"x").unwrap_err();
         assert!(err.contains("script error"), "{}", err);
     }
 
     #[test]
-    fn infinite_loop_is_killed_by_deadline() {
-        // The interrupt handler must abort a runaway loop rather than hang.
-        let err = run("function transform() { while (true) {} }", b"x");
-        assert!(err.is_err(), "expected timeout/termination error");
+    fn infinite_loop_is_killed_and_named_as_a_kill() {
+        // Not just "some error": a permanently-passing `is_err()` cannot tell a
+        // deadline kill from a compile error from a throw, which is exactly the
+        // ambiguity that left a release leg red with an undiagnosable message.
+        let err = run("function transform() { while (true) {} }", b"x")
+            .expect_err("a runaway loop must not return Ok");
+        assert!(err.contains("budget"), "{err}");
+        assert!(err.contains("100"), "{err}");
     }
 
     #[test]
@@ -179,9 +223,6 @@ mod tests {
         // Regression: the deadline used to live in a shared static, so every new
         // transform pushed the runaway script's budget further out and it never
         // stopped. Each runtime must own its own deadline.
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::sync::Arc;
-
         let stop = Arc::new(AtomicBool::new(false));
         let chatter = stop.clone();
         std::thread::spawn(move || {
@@ -192,10 +233,11 @@ mod tests {
         });
 
         let started = Instant::now();
-        let err = run("function transform() { while (true) {} }", b"x");
+        let err = run("function transform() { while (true) {} }", b"x")
+            .expect_err("runaway script must be terminated");
         stop.store(true, Ordering::SeqCst);
 
-        assert!(err.is_err(), "runaway script must be terminated");
+        assert!(err.contains("budget"), "{err}");
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "runaway script outlived its budget: {:?}",
