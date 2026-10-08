@@ -28,6 +28,26 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Set up Python
+        # check-release-ready.py parses Cargo.toml with tomllib, which is 3.11+. Pinning it
+        # means "the gate could not run" is never a silent pass on an older interpreter.
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Workflow run blocks are valid shell
+        # Stdlib-only since it was discovered that this could not run at all without
+        # PyYAML -- a check that cannot execute reports nothing, which reads like a pass.
+        run: python scripts/check-ci-shell.py
+
+      - name: Release readiness
+        # The thing that only the release job used to catch (a strict-TOML rejection cargo
+        # tolerates, and the four-way version agreement). See ITERATION 4.83.
+        run: python scripts/check-release-ready.py
+
+      - name: i18n keys agree across the four languages
+        run: python scripts/check-i18n-parity.py
+
       - name: Typecheck
         run: pnpm exec tsc --noEmit
 

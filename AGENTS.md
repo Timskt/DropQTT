@@ -31,6 +31,8 @@ bash scripts/gate-rig.sh                                   # 起 CI 同构 broke
 bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli <host> <port>
 bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli <host> <port>
 python scripts/check-i18n-parity.py  # 四语言 + Translations 接口三方核对
+python3 scripts/check-ci-shell.py             # 工作流 run 块语法（纯标准库，无需 PyYAML）
+python3 scripts/check-release-ready.py        # 只有发版才会暴露的那批问题，本地先跑
 ```
 
 CI（`.github/workflows/ci.yml`）有四个作业：`frontend` / `ui` / `backend` / `cli`，push 即跑。

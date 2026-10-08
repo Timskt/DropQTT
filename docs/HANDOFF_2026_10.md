@@ -294,6 +294,7 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
 | 症状 | 真因 | 解法 |
 | --- | --- | --- |
 | `linking with 'link.exe' failed` + `link: extra operand` | 没装 Windows SDK，rustc 找不到工具集，退回到 Git 的 `link`（硬链接工具） | Rust 全走 `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu` |
+| `scripts/check-ci-shell.py` 崩在 `import yaml` | 那台机器恰好装了 PyYAML，换机器就没有 | 已改纯标准库并接进 CI（§4.84）；同类坑：跑不起来的检查＝静默通过 |
 | `cargo --version` 是 1.55.0 | 一个残留工具链排在 rustup shim 前面 | 永远显式指定工具链，别用裸 `cargo` |
 | `pnpm` → `spawnSync ... @pnpm+win-x64\11.1.2\bin\pnpm ENOENT` | `packageManager` 版本切换 shim 损坏 | `npx pnpm ...` |
 | Playwright 报 `Process from config.webServer was not able to start` | config 里 webServer 用 `pnpm dev`，而 pnpm 坏 | 先手起 vite（§1 第 4 步），`reuseExistingServer` 会复用 |
