@@ -391,6 +391,41 @@ impl AckTracker {
     }
 }
 
+/// Whether the automatic `$SYS/#` health probe should still be attempted.
+///
+/// A refused SUBACK is a statement about the account's ACL, and rumqttc drops the session
+/// over it -- so re-subscribing on the next automatic reconnect gets refused again, one
+/// toast per second, forever. Retrying only makes sense when a human acts (an explicit
+/// connect, after they changed the credentials or the broker's ACL), which is what `reset`
+/// is for. The refusal itself stays visible: the subscription chip keeps its red verdict.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SysProbe {
+    declined: bool,
+}
+
+impl SysProbe {
+    /// The filter this probe subscribes to, named once so the refusal can be attributed.
+    pub const FILTER: &'static str = "$SYS/#";
+
+    pub fn should_attempt(&self) -> bool {
+        !self.declined
+    }
+
+    /// Record the broker's refusal. Only `$SYS/#` itself counts: a refusal for one of the
+    /// user's own filters must not switch off broker metrics.
+    pub fn note_rejection(&mut self, filter: &str) {
+        if filter == Self::FILTER {
+            self.declined = true;
+        }
+    }
+
+    /// A deliberate connect starts over: whatever changed since the last refusal (account,
+    /// ACL, broker) is exactly what the user is retrying for.
+    pub fn reset(&mut self) {
+        self.declined = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,5 +640,21 @@ mod tests {
         assert!(!is_plain_success(0x10));
         assert!(is_plain_success(0x00));
         assert_eq!(describe_pub(0x10), "no matching subscribers");
+    }
+}
+#[cfg(test)]
+mod probe_tests {
+    use super::SysProbe;
+
+    #[test]
+    fn a_declined_sys_probe_stops_being_retried_until_an_explicit_connect() {
+        let mut p = SysProbe::default();
+        assert!(p.should_attempt(), "a fresh session has to try, or metrics never appear");
+        p.note_rejection("devices/#");
+        assert!(p.should_attempt(), "a refusal for someone else's filter is not our no");
+        p.note_rejection(SysProbe::FILTER);
+        assert!(!p.should_attempt(), "refused means refused: retrying every second is a toast storm");
+        p.reset();
+        assert!(p.should_attempt(), "an explicit connect is the user asking again");
     }
 }

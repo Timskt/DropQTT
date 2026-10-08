@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { QosDowngradeEvent, SubRejection, SubscriptionAckState } from '../types';
 import { currentTranslations, fill } from '../i18n';
 import { describeAck } from '../utils/ackReason';
+import { isNewVerdict, pruneVerdicts } from '../utils/toastGuards';
 import { toast } from '../utils/toast';
 
 /**
@@ -50,6 +51,10 @@ export function useSubscriptionStats(active: boolean) {
   const [ack, setAck] = useState<SubscriptionAck>(emptyAck);
   /** filter -> Subscription Identifier we asked the broker to label it with */
   const [ids, setIds] = useState<Record<string, number>>({});
+  // A refused SUBACK drops the session, so the same refusal arrives again on every
+  // automatic reconnect. One toast per distinct verdict, not one per reconnect cycle.
+  const subSeen = useRef(new Set<string>());
+  const unsubSeen = useRef(new Set<string>());
   // Refused publishes arrive as a stream; one toast per burst, not one per packet.
   const nackRef = useRef<{ count: number; code: number; timer: number | null }>({
     count: 0,
@@ -83,9 +88,11 @@ export function useSubscriptionStats(active: boolean) {
         const t = currentTranslations();
         const r = e.payload;
         setAck((prev) => ({ ...prev, rejected: { ...prev.rejected, [r.filter]: r } }));
-        toast.error(
-          fill(t.subRejectedToast, { topic: r.filter, reason: describeAck(r.code, 'sub', t) }),
-        );
+        if (isNewVerdict(subSeen.current, r)) {
+          toast.error(
+            fill(t.subRejectedToast, { topic: r.filter, reason: describeAck(r.code, 'sub', t) }),
+          );
+        }
       }),
       listen<SubRejection>('unsubscribe-rejected', (e) => {
         if (disposed) return;
@@ -95,9 +102,11 @@ export function useSubscriptionStats(active: boolean) {
           ...prev,
           refusedUnsubscribes: [...prev.refusedUnsubscribes.filter((x) => x.filter !== r.filter), r],
         }));
-        toast.error(
-          fill(t.unsubRejectedToast, { topic: r.filter, reason: describeAck(r.code, 'unsub', t) }),
-        );
+        if (isNewVerdict(unsubSeen.current, r)) {
+          toast.error(
+            fill(t.unsubRejectedToast, { topic: r.filter, reason: describeAck(r.code, 'unsub', t) }),
+          );
+        }
       }),
       listen<QosDowngradeEvent>('subscription-downgraded', (e) => {
         if (disposed) return;
@@ -133,6 +142,10 @@ export function useSubscriptionStats(active: boolean) {
       setStats({});
       setIds({});
       setAck(emptyAck);
+      // The next deliberate connect should be able to tell us about a refusal again,
+      // including one it repeats.
+      subSeen.current.clear();
+      unsubSeen.current.clear();
       return;
     }
     let disposed = false;
@@ -152,7 +165,13 @@ export function useSubscriptionStats(active: boolean) {
       }
       try {
         const state = await invoke<SubscriptionAckState>('get_subscription_ack_state');
-        if (!disposed) setAck(fromState(state));
+        if (!disposed) {
+          setAck(fromState(state));
+          // A filter that stopped being refused must be able to announce a later refusal,
+          // so its remembered verdict goes away with the verdict.
+          pruneVerdicts(subSeen.current, (state.rejected ?? []).map((r) => r.filter));
+          pruneVerdicts(unsubSeen.current, (state.refusedUnsubscribes ?? []).map((r) => r.filter));
+        }
       } catch {
         // A failed poll keeps the last verdicts rather than clearing them, because
         // "no longer refused" is a claim a timeout cannot support.

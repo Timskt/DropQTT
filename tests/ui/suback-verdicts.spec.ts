@@ -156,6 +156,36 @@ test('the rejection event paints the chip before the next poll', async ({ page }
   await expect(page.getByText(/Broker refused secret\/telemetry/)).toBeVisible({ timeout: 20000 });
 });
 
+// A refused SUBACK drops the session in rumqttc, so an under-privileged account
+// reconnects and is refused again -- once per second, forever.
+test('one refusal keeps one toast, however many reconnects repeat it', async ({ page }) => {
+  await boot(page);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__listening('subscription-rejected')))
+    .toBe(true);
+  const fire = (code: number, meaning: string) =>
+    page.evaluate(
+      ([c, m]) => {
+        (window as any).__fire('subscription-rejected', {
+          filter: '$SYS/#', code: c, meaning: m, atMs: Date.now(),
+        });
+      },
+      [code, meaning] as const,
+    );
+  await fire(0x87, 'not authorized (ACL)');
+  const toast = page.getByText(/Broker refused/);
+  await expect(toast).toBeVisible({ timeout: 20000 });
+  // The same verdict arriving again -- which is what every auto-reconnect produces --
+  // must not interrupt a second time. The red chip stays on screen either way.
+  await fire(0x87, 'not authorized (ACL)');
+  await fire(0x87, 'not authorized (ACL)');
+  await page.waitForTimeout(400);
+  await expect(toast).toHaveCount(1);
+  // A different reason is a different verdict, and must still be announced.
+  await fire(0x9e, 'shared subscriptions not supported');
+  await expect(toast).toHaveCount(2, { timeout: 20000 });
+});
+
 test('a qos the broker capped is shown as capped', async ({ page }) => {
   await boot(page, {
     rejected: [],
