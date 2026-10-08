@@ -112,10 +112,18 @@ describe('diffMessages / text and binary', () => {
     const b = row({ payload: '', payloadBase64: 'aaQD', payloadLen: 4 });
     const d = diffMessages(a, b);
     expect(d.kind).toBe('binary');
-    expect(d.fields).toEqual([{ path: '(bytes)', type: 'changed', before: 'binary:3', after: 'binary:4' }]);
+    expect(d.fields).toEqual([{ path: '(bytes)', type: 'changed', before: '3', after: '4' }]);
     const same = diffMessages(a, row({ payload: '', payloadBase64: 'aaEC', payloadLen: 3 }));
     expect(same.identical).toBe(true);
     expect(same.fields).toEqual([]);
+  });
+
+  it('catches a field that changed type but not digits', () => {
+    // 1 and "1" print identically under a naive renderer, and "the value did not change"
+    // is the one wrong answer this panel can give.
+    const d = diffMessages(json({ seq: 1 }), json({ seq: '1' }));
+    expect(d.identical).toBe(false);
+    expect(d.fields).toEqual([{ path: 'seq', type: 'changed', before: '1', after: '"1"' }]);
   });
 
   it('marks the result unreliable when either row was stored truncated', () => {

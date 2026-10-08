@@ -15,6 +15,8 @@ import { buildTraceHtml } from '../../utils/traceHtml';
 import { buildCapture, CAPTURE_EXTENSION } from '../../utils/capture';
 import { TimelineCard } from './TimelineCard';
 import { MessageDiffCard } from './MessageDiffCard';
+import { FieldProbeCard } from './FieldProbeCard';
+import { diffMessages } from '../../utils/messageDiff';
 import { exportMessages, ExportFormat, saveTextFile } from '../../utils/exportMessages';
 
 interface HistoryPanelProps {
@@ -249,6 +251,13 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   const compareRows = useMemo(
     () => compareIds.map((id) => rows.find((r) => r.id === id)).filter((r): r is HistoryRow => !!r),
     [compareIds, rows],
+  );
+
+  // The paths the comparison found are the ones worth following up over time, so the field
+  // probe offers them rather than making the user retype `temp.c`.
+  const comparedPaths = useMemo(
+    () => (compareRows.length === 2 ? Array.from(new Set(diffMessages(compareRows[0], compareRows[1]).fields.map((f) => f.path))) : []),
+    [compareRows],
   );
 
   const handleResend = async (r: HistoryRow) => {
@@ -732,6 +741,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
             {t.historyCompareHint}
           </div>
         ) : null}
+        <div className="px-3 pt-2">
+          <FieldProbeCard rows={rows} t={t} suggested={comparedPaths} />
+        </div>
         <div className="max-h-[52vh] overflow-y-auto" data-testid="history-results">
           {rows.length === 0 && !loading ? (
             <div className="p-10 text-center flex flex-col items-center gap-2">

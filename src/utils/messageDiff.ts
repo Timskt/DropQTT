@@ -55,11 +55,14 @@ const MAX_CHANGES = 200;
 const MAX_LINE_PRODUCT = 200_000;
 const MAX_VALUE_LEN = 160;
 
+/**
+ * Type-honest rendering: a number 1 and a string "1" must not print identically, or a
+ * payload whose field changed type reads as unchanged. Strings keep their quotes.
+ */
 const show = (v: unknown): string => {
   if (v === undefined) return '';
-  if (typeof v === 'string') return v.length > MAX_VALUE_LEN ? `${v.slice(0, MAX_VALUE_LEN)}…` : v;
-  const s = JSON.stringify(v);
-  return s !== undefined && s.length > MAX_VALUE_LEN ? `${s.slice(0, MAX_VALUE_LEN)}…` : s ?? String(v);
+  const s = typeof v === 'string' ? JSON.stringify(v) : (JSON.stringify(v) ?? String(v));
+  return s.length > MAX_VALUE_LEN ? `${s.slice(0, MAX_VALUE_LEN)}…` : s;
 };
 
 type Shape = 'array' | 'object' | 'scalar';
@@ -220,7 +223,7 @@ export function diffMessages(a: DiffableRow, b: DiffableRow): MessageDiff {
   const sink = new ChangeSink();
 
   if (aBinary || bBinary) {
-    if (!identical) sink.push('(bytes)', 'changed', `binary:${a.payloadLen}`, `binary:${b.payloadLen}`);
+    if (!identical) sink.push('(bytes)', 'changed', a.payloadLen, b.payloadLen);
     return finish('binary', identical, sink, [], unreliable);
   }
 
