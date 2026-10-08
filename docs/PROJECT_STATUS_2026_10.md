@@ -24,7 +24,7 @@
 
 **门禁全绿（2026-10-08 本轮末次运行）**：
 
-- Rust **382 lib + 1 集成通过**（macOS 本机 `cargo test`）
+- Rust **383 lib + 1 集成通过**（macOS 本机 `cargo test`）
 - 前端单测 **231 通过**（`npm test` = `vitest run tests/unit`）
 - 真 DOM UI **254 通过**（`npx playwright test`）
 - 真机 CLI 门禁 **cli-gate 37 项 + scenario-gate 26 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76；cli-gate 多出的那一项是 broker 身份自检，§4.78）

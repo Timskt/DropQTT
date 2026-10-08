@@ -234,9 +234,6 @@ pub struct MqttManager {
     incoming_transfers: Mutex<HashMap<String, IncomingTransfer>>,
     outgoing_transfers: Mutex<HashMap<String, ActiveOutgoing>>,
     is_connected: AtomicBool,
-    /// Set when the broker refuses the `$SYS/#` probe, cleared by an explicit connect:
-    /// a refusal is about the account, so retrying it every second only makes toasts.
-    sys_probe: Mutex<crate::acks::SysProbe>,
     /// Sends whose peer never confirmed, cumulative for this session
     confirm_timeouts: std::sync::atomic::AtomicU64,
     /// Publishes refused outright by the broker (PUBACK/PUBREC/PUBCOMP >= 0x80)
@@ -336,7 +333,6 @@ impl MqttManager {
             incoming_transfers: Mutex::new(HashMap::new()),
             outgoing_transfers: Mutex::new(HashMap::new()),
             is_connected: AtomicBool::new(false),
-            sys_probe: Mutex::new(crate::acks::SysProbe::default()),
             broker_caps: RwLock::new(crate::transport::ConnCapabilities::default()),
             sub_ids: Mutex::new(SubIds::default()),
             confirm_timeouts: std::sync::atomic::AtomicU64::new(0),
@@ -523,8 +519,9 @@ impl MqttManager {
     pub async fn connect(self: &Arc<Self>, app: AppHandle, config: BrokerConfig) -> Result<(), String> {
         self.disconnect().await;
         // A deliberate connect is the user asking again -- after changing a password, an
-        // ACL, or a broker -- so the probe gets another try.
-        self.sys_probe.lock().await.reset();
+        // ACL, or a broker -- so the health probe gets one more attempt. An automatic
+        // reconnect must not do this, or a refusal loops once per second.
+        self.sub_acks.lock().await.lift_quarantine(crate::acks::SYS_PROBE_FILTER);
 
         let (client, mut eventloop) = build_connection(&config)?;
 
@@ -588,19 +585,22 @@ impl MqttManager {
                                 for (topic, _) in &subs {
                                     tracker.expect_sub(topic);
                                 }
-                                tracker.expect_sub(crate::acks::SysProbe::FILTER);
+                                if !tracker.is_quarantined(crate::acks::SYS_PROBE_FILTER) {
+                                    tracker.expect_sub(crate::acks::SYS_PROBE_FILTER);
+                                }
                             }
                             for (topic, opts) in subs {
                                 let _ = client.subscribe(&topic, &opts).await;
                             }
                             // Broker health metrics — subscribed out-of-band so
                             // $SYS never pollutes the console feed or traffic stats.
-                            // Skipped once declined: the refusal drops the session, so
-                            // re-subscribing on each auto-reconnect is a toast per second.
-                            if this.sys_probe.lock().await.should_attempt() {
+                            // Quarantined like any refused filter: rumqttc treats the
+                            // refusal as fatal, so replaying it drops the session again
+                            // on every reconnect and re-toast once per second forever.
+                            if !this.sub_acks.lock().await.is_quarantined(crate::acks::SYS_PROBE_FILTER) {
                                 let _ = client
                                     .subscribe(
-                                        crate::acks::SysProbe::FILTER,
+                                        crate::acks::SYS_PROBE_FILTER,
                                         &crate::protocol::SubOptions { qos: 0, ..Default::default() },
                                     )
                                     .await;
@@ -903,7 +903,7 @@ impl MqttManager {
                 crate::acks::Outcome::Rejected(r) => {
                     // The chip goes red and the reason is named; the counter and
                     // the list are additionally visible in the ops panel.
-                    self.sys_probe.lock().await.note_rejection(&r.filter);
+                    self.sub_acks.lock().await.quarantine(&r);
                     let _ = app.emit(
                         if is_sub {
                             "subscription-rejected"
@@ -959,7 +959,6 @@ impl MqttManager {
                     .await
                     .refuse_oldest_pending_sub(code, text, now_ms);
                 if let Some(r) = rejection {
-                    self.sys_probe.lock().await.note_rejection(&r.filter);
                     let _ = app.emit("subscription-rejected", &r);
                 }
             }

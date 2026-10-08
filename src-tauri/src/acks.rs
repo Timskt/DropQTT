@@ -21,6 +21,11 @@ use serde::Serialize;
 
 /// MQTT 5 §3.2.2.2.0: everything from 0x80 up is a refusal. v3.1.1 only ever
 /// uses 0x00-0x02 and 0x80, so the same test covers both.
+/// The broker-health subscription the console opens by itself. It is not part of the
+/// user's registry, so the quarantine has to be consulted by name: rumqttc treats a
+/// refusal as fatal, so replaying it on each reconnect is one refusal per second forever.
+pub const SYS_PROBE_FILTER: &str = "$SYS/#";
+
 pub fn is_error(code: u8) -> bool {
     code >= 0x80
 }
@@ -213,6 +218,13 @@ impl AckTracker {
             .insert(rejection.filter.clone(), rejection.clone());
     }
 
+    /// Retry a quarantined filter from the next attempt. An explicit connect is the user
+    /// saying "try again" after changing an ACL, a password or a broker; an automatic
+    /// reconnect must never be treated as one, or a refusal loops once per second.
+    pub fn lift_quarantine(&mut self, filter: &str) {
+        self.quarantined.remove(filter);
+    }
+
     pub fn is_quarantined(&self, filter: &str) -> bool {
         self.quarantined.contains_key(filter)
     }
@@ -388,41 +400,6 @@ impl AckTracker {
         self.rejected_unsubs.clear();
         self.quarantined.clear();
         self.downgraded.clear();
-    }
-}
-
-/// Whether the automatic `$SYS/#` health probe should still be attempted.
-///
-/// A refused SUBACK is a statement about the account's ACL, and rumqttc drops the session
-/// over it -- so re-subscribing on the next automatic reconnect gets refused again, one
-/// toast per second, forever. Retrying only makes sense when a human acts (an explicit
-/// connect, after they changed the credentials or the broker's ACL), which is what `reset`
-/// is for. The refusal itself stays visible: the subscription chip keeps its red verdict.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct SysProbe {
-    declined: bool,
-}
-
-impl SysProbe {
-    /// The filter this probe subscribes to, named once so the refusal can be attributed.
-    pub const FILTER: &'static str = "$SYS/#";
-
-    pub fn should_attempt(&self) -> bool {
-        !self.declined
-    }
-
-    /// Record the broker's refusal. Only `$SYS/#` itself counts: a refusal for one of the
-    /// user's own filters must not switch off broker metrics.
-    pub fn note_rejection(&mut self, filter: &str) {
-        if filter == Self::FILTER {
-            self.declined = true;
-        }
-    }
-
-    /// A deliberate connect starts over: whatever changed since the last refusal (account,
-    /// ACL, broker) is exactly what the user is retrying for.
-    pub fn reset(&mut self) {
-        self.declined = false;
     }
 }
 
@@ -642,19 +619,34 @@ mod tests {
         assert_eq!(describe_pub(0x10), "no matching subscribers");
     }
 }
+
 #[cfg(test)]
-mod probe_tests {
-    use super::SysProbe;
+mod quarantine_tests {
+    use super::{AckTracker, SYS_PROBE_FILTER};
 
     #[test]
-    fn a_declined_sys_probe_stops_being_retried_until_an_explicit_connect() {
-        let mut p = SysProbe::default();
-        assert!(p.should_attempt(), "a fresh session has to try, or metrics never appear");
-        p.note_rejection("devices/#");
-        assert!(p.should_attempt(), "a refusal for someone else's filter is not our no");
-        p.note_rejection(SysProbe::FILTER);
-        assert!(!p.should_attempt(), "refused means refused: retrying every second is a toast storm");
-        p.reset();
-        assert!(p.should_attempt(), "an explicit connect is the user asking again");
+    fn a_refused_filter_stops_being_replayed_until_a_human_asks_again() {
+        let mut t = AckTracker::default();
+        t.expect_sub(SYS_PROBE_FILTER);
+        let r = t.refuse_oldest_pending_sub(0x87, "not authorized", 1).expect("attributed");
+        assert_eq!(r.filter, SYS_PROBE_FILTER);
+        assert!(
+            t.is_quarantined(SYS_PROBE_FILTER),
+            "each replay is another fatal refusal and another toast"
+        );
+        // Asking again is the only way back: that is a user action, not a reconnect.
+        t.expect_sub(SYS_PROBE_FILTER);
+        assert!(!t.is_quarantined(SYS_PROBE_FILTER));
+    }
+
+    #[test]
+    fn lifting_one_quarantine_leaves_the_others_in_place() {
+        let mut t = AckTracker::default();
+        t.expect_sub("secret/telemetry");
+        t.expect_sub(SYS_PROBE_FILTER);
+        t.refuse_oldest_pending_sub(0x87, "not authorized", 2);
+        t.lift_quarantine(SYS_PROBE_FILTER);
+        assert!(t.is_quarantined("secret/telemetry"), "one filter's retry must not un-block another");
+        assert!(!t.is_quarantined(SYS_PROBE_FILTER));
     }
 }
