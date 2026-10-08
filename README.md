@@ -1,6 +1,8 @@
 # DropQTT 🚀
 > **The MQTT workbench — file transfer, console, bridge, history and ops diagnostics**
 
+[中文 README](README.zh-CN.md) · **English**
+
 [![Release Tauri App](https://github.com/Timskt/DropQTT/actions/workflows/release.yml/badge.svg)](https://github.com/Timskt/DropQTT/actions/workflows/release.yml)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-blue?logo=tauri)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange?logo=rust)](https://www.rust-lang.org)
@@ -31,6 +33,7 @@
 - 🚪 **Room / Channel Isolation**: Share files simply by agreeing on a channel code (e.g. `#my-secure-room`).
 - 🔥 **Live Topic Traffic & Bench Lab**: Per-actual-topic traffic ranking (msgs/sec, byte volume, peak rate, last-active) with second-accurate counters that stay exact under load, a hot-topic flame highlight, and a built-in publish stress lab (up to 20k msg/sec) that loops back through your own subscriptions to verify stat accuracy and UI responsiveness.
 - 🚦 **Overload-Proof Console Feed**: The backend batches the message feed at ~10 Hz (200 msgs/emit) with counted overflow drops — thousands of msgs/sec never flood the webview, and the UI shows a red notice when display rows were dropped while stats remain precise.
+- 🔍 **Message Compare / Diff**: pick any two stored rows and get the field that actually moved — JSON is walked to paths like `temp.c` or `v[2]`, text is diffed line-by-line (LCS after trimming agreed head and tail), binary payloads are compared as whole bytes; carrier deltas (topic, direction, QoS, retain, length, time gap) are listed separately. What it cannot do is admitted rather than hidden: depth and change-count caps, a diff too large to compute line-by-line, and — the important one — a row stored *truncated* never gets to claim the two messages matched, because only their stored prefixes do.
 - 🗂️ **Searchable Message History**: Every console-feed row is mirrored to SQLite (bounded at 100k rows) so traffic stays inspectable after the live feed scrolls away. Free-text search over topic *and* payload, direction filter, 5m/15m/1h/24h/**All time** windows, and a trend chart whose buckets use exactly the same predicates as the result list. Filtered results export to JSON/CSV, payloads inspect as Text/JSON/Hex/Base64/CBOR, and MQTT5 properties (response topic, correlation data, user properties) survive the round-trip to replay. Rows whose stored bytes are incomplete — including captures written by older versions — are detected and blocked from replay rather than silently re-published truncated.
 - 🩺 **Operations Diagnostics Center**: A dedicated Ops workspace reports runtime/platform metadata, broker connection state, transfer activity, feed pressure, SQLite history status and bridge health. Active checks cover download-directory writability, history availability, TLS posture, subscriptions and overload indicators; the sanitized report can be copied or exported without passwords, usernames or certificate paths.
 - 🔐 **Broker Credentials in the OS Keyring**: The connect password goes to Windows Credential Manager / macOS Keychain / Secret Service and local settings keep only a random reference — so the app's storage folder, a support report and an exported environment bundle all stay free of it. There is no path that reads a stored password back into the UI: the reference is resolved where the socket is opened. A reference with nothing behind it fails the connect with an explicit "re-enter it" instead of quietly going anonymous, and a machine with no usable credential store says so on the settings field rather than pretending.
@@ -133,9 +136,16 @@ and shell history): point `--password-env VAR` at an environment variable instea
 
 The contract above is enforced by `scripts/cli-gate.sh`, which runs the real binary
 against a live broker and asserts every exit code — including the ones that must
-**not** be zero. CI does it on every push:
+**not** be zero. CI does it on every push. Before its first assertion the gate runs a
+**broker-identity check** (an anonymous publish must be rejected and the denied topic
+must come back `0x87`): "something answers on this port" is not the same as "this is the
+broker the job configured", and confusing the two once sent the whole gate green against
+a broker nobody had set up.
 
 ```bash
+# one command: throwaway broker with CI's exact shape, then both gates
+bash scripts/gate-rig.sh
+
 # locally, against any broker you already have running
 bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 18831
 

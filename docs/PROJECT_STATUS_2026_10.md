@@ -16,11 +16,11 @@
 | 指标 | 实测值 |
 | --- | --- |
 | Rust 源码 | 22,723 行 / 26 个模块（含 `bin/dropqtt-cli.rs`） |
-| TS + TSX 源码 | 23,633 行 / 92 个文件 |
+| TS + TSX 源码 | 24,160 行 / 94 个文件 |
 | Tauri 命令 | 79 个 `#[tauri::command]` |
-| i18n 键 | 965 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
+| i18n 键 | 982 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
 | 依赖 | npm 31（运行时 13）/ cargo 20 个直接依赖 |
-| 测试文件 | 19 个 unit + 33 个 Playwright spec + 1 个 Rust 集成测试 |
+| 测试文件 | 20 个 unit + 34 个 Playwright spec + 1 个 Rust 集成测试 |
 
 **门禁全绿（2026-10-08 本轮末次运行）**：
 
