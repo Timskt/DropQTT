@@ -17,6 +17,16 @@ CLI="${1:-./target/debug/dropqtt-cli}"
 HOST="${2:-127.0.0.1}"
 PORT="${3:-1883}"
 B=(--host "$HOST" --port "$PORT")
+# A broker that requires a named user is the only one that can really refuse a publish:
+# mosquitto's `pattern` ACL lines do not apply to anonymous clients, so against an
+# anonymous broker the "denied topic" case comes back accepted. The password is taken
+# from a variable name, never from the command line, like every other DropQTT credential.
+if [ -n "${GATE_USER:-}" ]; then
+  B+=(--username "$GATE_USER")
+  if [ -n "${GATE_PASSWORD_ENV:-}" ]; then
+    B+=(--password-env "$GATE_PASSWORD_ENV")
+  fi
+fi
 # Unique per run so another client on a shared broker cannot move the counters.
 T="cli-gate/$$"
 WORK="$(mktemp -d)"
@@ -31,6 +41,16 @@ assert_code() {
   else
     note "  FAIL $2: wanted exit $1, got $3"
     fails=$((fails + 1))
+  fi
+}
+
+assert_rejected() {
+  # assert_rejected <what> <got> -- exit 0 and 4 both mean the broker took the publish.
+  if [ "$2" = 0 ] || [ "$2" = 4 ]; then
+    note "  FAIL $1 was accepted (exit $2)"
+    fails=$((fails + 1))
+  else
+    note "  ok   $1 rejected (exit $2)"
   fi
 }
 
@@ -52,6 +72,29 @@ code_of() {
 }
 
 note "dropqtt-cli gate against $HOST:$PORT"
+
+# "Something answers on this port" is not the same as "this is the broker the job
+# configured". `mosquitto -d` returns 0 even when its listener never bound, so a job can
+# spend its whole gate against somebody else's broker -- which is what happened on CI: the
+# answering broker ignored credentials and had no ACL, so the publish that was supposed to
+# come back refused came back 0x10, and the gate failed for reporting that honestly. When
+# the caller says this broker enforces an ACL, prove it before spending 90 seconds
+# asserting against the wrong one.
+if [ -n "${GATE_DENY_TOPIC:-}" ]; then
+  note "broker identity"
+  rig_before=$fails
+  assert_rejected "anonymous publish to a granted topic" \
+    "$(code_of "$CLI" pub --host "$HOST" --port "$PORT" --topic "$T/identity" --payload x --qos 1)"
+  assert_code 1 "pub to a denied topic reports the refusal" \
+    "$(code_of "$CLI" pub "${B[@]}" --topic "$GATE_DENY_TOPIC" --payload nope --qos 1)"
+  assert_has "0x87" "the refusal names the broker's reason byte" "$WORK/out"
+  if [ "$fails" != "$rig_before" ]; then
+    rm -rf "$WORK"
+    note "gate: $HOST:$PORT is not the enforcing broker this gate was written for"
+    note "      (a refusal this gate cannot see is a lie it would otherwise tell)"
+    exit 1
+  fi
+fi
 
 note "usage contract (no broker needed)"
 assert_code 2 "unknown command"            "$(code_of "$CLI" definitely-not-a-command)"
@@ -130,16 +173,6 @@ note "QoS 0 has no acknowledgement to wait for"
 assert_code 0 "pub --qos 0 returns at once" \
   "$(code_of "$CLI" pub "${B[@]}" --topic "$T/q0" --payload fast --qos 0)"
 assert_has "acknowledges nothing" "and says so rather than implying delivery" "$WORK/out"
-
-# Only checked when the broker is known to enforce an ACL (CI mounts one; a plain local
-# broker does not). A refusal is the single most important thing this gate can catch:
-# a publish the broker rejected but the tool called "sent" is a lie in a pipeline.
-if [ -n "${GATE_DENY_TOPIC:-}" ]; then
-  note "a real broker refusal"
-  assert_code 1 "pub to a denied topic reports the refusal" \
-    "$(code_of "$CLI" pub "${B[@]}" --topic "$GATE_DENY_TOPIC" --payload nope --qos 1)"
-  assert_has "0x87" "and names the reason byte it got" "$WORK/out"
-fi
 
 rm -rf "$WORK"
 if [ "$fails" = 0 ]; then

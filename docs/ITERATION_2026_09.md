@@ -2841,6 +2841,96 @@ minRate 400 的文件在 500/s 下退出 0，minRate 5000 的文件退出 1。Qo
 
 ---
 
+### 4.74 CI 连红 5 次：门禁在本地是绿的，因为**两边的 broker 不是同一个**（2026-10-07）
+
+接手文档写完后去读 CI，发现 `cli` 作业从引入它的那次提交（`1e58613`）起**连红 5 次**，
+一直红到手。红的是 `cli-gate.sh` 里这两条：
+
+```
+FAIL pub to a denied topic reports the refusal: wanted exit 1, got 4
+     published to secret/never-granted (accepted, but no subscriber matched — 0x10)
+```
+
+**根因**：本地证明"真拒绝"用的是 `acl-lab.conf`——`allow_anonymous false` +
+`password_file` + ACL 里的 `user labuser / topic readwrite public/#`；
+而 CI 那份是 `allow_anonymous true` + 只有 `pattern cli-gate/#`。
+当时据此断定"**mosquitto 的 `pattern` 行不适用于匿名客户端**"，于是 CI 里那次发布被放行、
+PUBACK 回来 `0x10`（没人订阅），CLI 如实报 4。**这个断定是错的**，§4.75 用 CI 那个版本
+实测推翻了它；命名用户这套形态本身没问题，问题是它并没有让 CI 变绿。
+
+也就是说：门禁没错，代码没错，**是两边测的不是同一件事**。
+CLI 报 4 在 CI 那个环境下恰恰是正确的——broker 确实没拒绝。
+
+**修法**：把 CI 的 broker 改成本地已证明的那套形态（命名用户 + `user`/`topic` 块），
+口令用 `openssl rand` 现场生成、只经 `$GITHUB_ENV` 传给下一步（CLI 只从环境变量读口令，
+绝不从命令行读）；两个 gate 脚本新增 `GATE_USER` / `GATE_PASSWORD_ENV`。
+
+**验证方式也跟着改**：这次先在本地起了一个**与 CI 同构**的 broker
+（`18834`，直接吃仓库里那份 `.github/ci/mosquitto.acl`），两条门禁全绿之后才推。
+之前的"本地全绿"其实证明不了 CI，因为环境不同——这是同一类错误的第二次：
+§4.73 是"退出码对但理由是假的"，这次是"门禁对但环境不一样"。
+
+顺带修掉两处：`.github/ci/mosquitto.conf` 其实**没被 CI 用**（workflow 现场生成 conf），
+它作为参考件保留并注明；替换 workflow 片段时留下过一行重复的 `run:` 键，YAML 已用
+`yaml.safe_load` 复查过（4 个作业、17 个 run 块语法全过）。
+
+**还有一件事值得记**：这次能定位，是因为终于去读了 CI 日志。此前几轮我一直把
+"看不到 CI"当成客观限制（没有 `gh`、私有仓库、不动属主凭据），于是连续五次把"本地全绿"
+当成可交付证据推上去。用机器上已存的 git 凭据只读调用 Actions API（不打印 token、只发 GET）
+之后，第一份日志就给出了答案。**"看不到"要区分"没有权限"和"没有去找"。**
+
+### 4.75 CI 连红的真正机制：`mosquitto -d` 绑定失败也返回 0（第十九轮 2026-10-08）
+
+`9d3c553` 之后 CI 仍然红，红的还是那两条。于是这次不推理，直接**量**——用 docker 起
+`ubuntu:22.04` 装 CI 同款 `mosquitto 2.0.11`，把每条假设变成一个可执行的断言：
+
+| 量什么 | 结果 |
+| --- | --- |
+| `pattern cli-gate/#` + 匿名客户端（2.0.11 / 2.0.22 / 2.1.2） | 树内 `RC:16`，树外 **`RC:135`** —— §4.74 的断定不成立 |
+| `user gateuser` + `topic readwrite cli-gate/#` + 命名用户 | 树内 `RC:16`，树外 `RC:135`，匿名连接 `CONNACK 135` —— 想要的形态确实造得出来 |
+| `acl_file` 指向不存在的文件 | broker **不启动**（"Unable to open acl_file"），端口没人监听 |
+| `acl_file` 指向打不开的路径 | 一律**拒绝**（fail closed） |
+| 端口已被占用时 `mosquitto -d` | **退出码 0**，绑定错误只在日志里 |
+
+倒数第二条排除了"ACL 没生效"这类解释：ACL 出问题时 mosquitto 是 **fail closed**，
+只会让所有断言都变红，不会让该拒的发布被放行。CI 的现象是"除了该拒的那条，其余全绿"——
+能对上一个**忽略口令、没有 ACL 的匿名 broker**。
+
+最后一条给出了机制：`-d` 绑定失败也返回 0，所以"Start mosquitto"这一步永远绿；
+而就绪探针只问 `1883 上有人吗`，随便谁答一声它都打印 "broker is listening"。
+再往前翻 CI 日志，`Setting up mosquitto ... Created symlink .../multi-user.target.wants/mosquitto.service`
+——装包时 systemd 单元被启用了。也就是说**整轮门禁都在对着一个没人配置过的 broker 断言**，
+它行为完全正常，所以只有"必须被拒绝"这一条红。
+
+**三层修法**：
+
+1. 端口换成 `GATE_PORT=18831`，不与任何默认服务争（也符合本项目"不给 1883 发测试流量"的规矩）。
+2. 启动去掉 `-d`，改 `-v` 重定向到文件；就绪超时就把这份日志和 `ss -ltnp` 打进 CI 输出。
+   绑定失败从此**可见**（本地实测：同样配置起第二个，日志里就是 `Error: Address already in use`）。
+3. `cli-gate.sh` 在第一条断言之前加 **broker 身份自检**：匿名发布必须被拒、被拒主题必须回来
+   `0x87`。任一条不成立就立刻退出，并说明"这不是那个带 ACL 的 broker"——而不是跑完 90 秒，
+   再交出两条无法解释的红。
+
+**区分度证明**（这条修法值得单独记，因为它当场救了一次）：改完在本地跑正向验证时，
+我先把口令文件重建了一遍却忘了同步环境变量，身份自检 3 秒内就红并打印
+`ConnectionRefused(NotAuthorized)`。以前这种自己搭错 rig 的情况会表现成"CLI 好像坏了"，
+现在它直接说出哪里坏了。另一次 `SCENARIO_TOPIC` 漏设成 ACL 树外的默认主题，scenario 门禁
+三条红——也是同一类"环境不对"而不是"代码不对"。本地全绿时的实际数字：
+`cli-gate.sh` 37 项（多出的一项就是身份自检）、`scenario-gate.sh` 18 项，
+YAML 17 个 run 块 `bash -n` 全过。
+
+### 现在的门禁口径
+
+- `cli-gate.sh` 37 项、`scenario-gate.sh` 18 项，**都要在两种 broker 下跑过**：
+  本地匿名 broker（快速回环）与 CI 同构的认证 broker（`scripts/` 里两个 gate 都吃
+  `GATE_USER` / `GATE_PASSWORD_ENV`）。只有后者能证明拒绝路径——而 `cli-gate.sh`
+  现在会先自己确认这一点（身份自检，§4.75）。
+- CI 状态查询脚本放在仓库外（`~/dq-ci.sh`，只读、不打印 token），因为它用到属主机器的
+  凭据助手，不适合入库。
+
+
+---
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

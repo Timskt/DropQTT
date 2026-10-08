@@ -15,12 +15,20 @@ HOST="${2:-127.0.0.1}"
 PORT="${3:-18831}"
 TOPIC="${SCENARIO_TOPIC:-dq-scenario/gate/telemetry}"
 B=(--host "$HOST" --port "$PORT" --client-id "dqscngate$$")
+# Same rule as cli-gate.sh: only a named user is subject to mosquitto's ACL file, so an
+# authenticated broker is the one that can genuinely refuse.
+if [ -n "${GATE_USER:-}" ]; then
+  B+=(--username "$GATE_USER")
+  if [ -n "${GATE_PASSWORD_ENV:-}" ]; then
+    B+=(--password-env "$GATE_PASSWORD_ENV")
+  fi
+fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 fails=0
 
 publish() {
-  "$CLI" pub --host "$HOST" --port "$PORT" --client-id "dqscnpub$RANDOM" \
+  "$CLI" pub "${B[@]}" --client-id "dqscnpub$RANDOM" \
     --topic "$TOPIC" --payload "$1" >/dev/null 2>&1
 }
 
