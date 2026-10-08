@@ -53,8 +53,4 @@ keyring = { version = "3.6", default-features = false, features = ["apple-native
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))'.dependencies]
 # The persistent variant is the one that survives a logout, and crypto-rust keeps the
 # build off OpenSSL.
-keyring = {
-    version = "3.6",
-    default-features = false,
-    features = ["linux-native-sync-persistent", "crypto-rust"],
-}
+keyring = { version = "3.6", default-features = false, features = ["linux-native-sync-persistent", "crypto-rust"] }
