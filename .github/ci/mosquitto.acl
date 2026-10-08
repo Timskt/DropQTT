@@ -1,9 +1,10 @@
-# Broker for the CI headless-CLI gate.
+# Broker for the CI headless-CLI gate: one topic tree granted, everything else refused.
 #
-# A named user, not anonymous: mosquitto's `pattern` lines do not apply to anonymous
-# clients, so an anonymous connection was *accepting* the publish the gate expects to
-# see refused -- the assertion came back 0x10 ("no subscriber") instead of 0x87, which
-# is the difference between a gate that proves a refusal and one that only looks like it.
+# A named user rather than anonymous, because a named user is what the gate's own
+# identity check uses -- an anonymous connection here has to be rejected, and a broker
+# that answers anyway is not this one. (`pattern` lines were once blamed for the gate
+# seeing 0x10 instead of 0x87; measured on 2.0.11, 2.0.22 and 2.1.2 they do deny an
+# anonymous client, so they were never the cause. See ITERATION 4.75.)
 # The password itself is generated per job and never stored here.
 user gateuser
 topic readwrite cli-gate/#

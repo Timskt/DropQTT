@@ -113,6 +113,10 @@ jobs:
   cli:
     name: Headless CLI (exit-code contract against a real broker)
     runs-on: ubuntu-22.04
+    env:
+      # Not 1883: installing the mosquitto package enables a systemd unit that binds the
+      # default port, and a gate cannot tell that broker from the one it configured.
+      GATE_PORT: 18831
     steps:
       - uses: actions/checkout@v4
 
@@ -134,7 +138,7 @@ jobs:
       # A broker installed here rather than a `services:` container: services start
       # before the first step, so a bind mount of a repository file would see an empty
       # directory and mosquitto would refuse to start.
-      - name: Start mosquitto with an ACL
+      - name: Start the gate broker
         run: |
           PASS=$(openssl rand -hex 12)
           mosquitto_passwd -c -b /tmp/mosquitto-gate.pass gateuser "$PASS"
@@ -143,29 +147,38 @@ jobs:
           # passwords only from a variable, never from the command line.
           echo "MQTT_GATE_PASS=$PASS" >> "$GITHUB_ENV"
           cat > /tmp/mosquitto-gate.conf <<EOF
-          listener 1883 127.0.0.1
+          listener $GATE_PORT 127.0.0.1
           allow_anonymous false
           persistence false
           password_file /tmp/mosquitto-gate.pass
           acl_file $GITHUB_WORKSPACE/.github/ci/mosquitto.acl
           EOF
-          /usr/sbin/mosquitto -c /tmp/mosquitto-gate.conf -d
+          # No `-d`: it returns 0 even when the listener never bound, so a failed bind is
+          # invisible to the step and the gate then runs against whatever else holds the
+          # port. Without that flag the config and bind errors stay in the log below.
+          /usr/sbin/mosquitto -c /tmp/mosquitto-gate.conf -v > /tmp/mosquitto-gate.log 2>&1 &
           for i in $(seq 1 30); do
-            if timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/1883' 2>/dev/null; then
-              echo "broker is listening"; exit 0
+            if timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$GATE_PORT" 2>/dev/null; then
+              echo "gate broker is listening on $GATE_PORT"
+              exit 0
             fi
             sleep 1
           done
-          echo "broker never came up"; exit 1
+          echo "gate broker never came up on $GATE_PORT"
+          cat /tmp/mosquitto-gate.log
+          ss -ltnp || true
+          exit 1
 
       - name: Run the gate
         # The ACL grants only cli-gate/# to gateuser, so the gate can assert a genuine
-        # broker refusal (0x87) rather than a simulated one.
+        # broker refusal (0x87) rather than a simulated one. The gate proves that before
+        # anything else: an anonymous publish has to be rejected, or the broker answering
+        # is not this one and every assertion below would be measuring the wrong rig.
         env:
           GATE_DENY_TOPIC: secret/never-granted
           GATE_USER: gateuser
           GATE_PASSWORD_ENV: MQTT_GATE_PASS
-        run: bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 1883
+        run: bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 "$GATE_PORT"
 
       - name: Run the scenario gate
         # Same broker, same user: the rig's topic has to live under the one tree the
@@ -174,4 +187,4 @@ jobs:
           SCENARIO_TOPIC: cli-gate/scenario/telemetry
           GATE_USER: gateuser
           GATE_PASSWORD_ENV: MQTT_GATE_PASS
-        run: bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 1883
+        run: bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 "$GATE_PORT"

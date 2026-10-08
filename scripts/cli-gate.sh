@@ -44,6 +44,16 @@ assert_code() {
   fi
 }
 
+assert_rejected() {
+  # assert_rejected <what> <got> -- exit 0 and 4 both mean the broker took the publish.
+  if [ "$2" = 0 ] || [ "$2" = 4 ]; then
+    note "  FAIL $1 was accepted (exit $2)"
+    fails=$((fails + 1))
+  else
+    note "  ok   $1 rejected (exit $2)"
+  fi
+}
+
 assert_has() {
   # assert_has <needle> <what> <file>
   if grep -qF -- "$1" "$3"; then
@@ -62,6 +72,29 @@ code_of() {
 }
 
 note "dropqtt-cli gate against $HOST:$PORT"
+
+# "Something answers on this port" is not the same as "this is the broker the job
+# configured". `mosquitto -d` returns 0 even when its listener never bound, so a job can
+# spend its whole gate against somebody else's broker -- which is what happened on CI: the
+# answering broker ignored credentials and had no ACL, so the publish that was supposed to
+# come back refused came back 0x10, and the gate failed for reporting that honestly. When
+# the caller says this broker enforces an ACL, prove it before spending 90 seconds
+# asserting against the wrong one.
+if [ -n "${GATE_DENY_TOPIC:-}" ]; then
+  note "broker identity"
+  rig_before=$fails
+  assert_rejected "anonymous publish to a granted topic" \
+    "$(code_of "$CLI" pub --host "$HOST" --port "$PORT" --topic "$T/identity" --payload x --qos 1)"
+  assert_code 1 "pub to a denied topic reports the refusal" \
+    "$(code_of "$CLI" pub "${B[@]}" --topic "$GATE_DENY_TOPIC" --payload nope --qos 1)"
+  assert_has "0x87" "the refusal names the broker's reason byte" "$WORK/out"
+  if [ "$fails" != "$rig_before" ]; then
+    rm -rf "$WORK"
+    note "gate: $HOST:$PORT is not the enforcing broker this gate was written for"
+    note "      (a refusal this gate cannot see is a lie it would otherwise tell)"
+    exit 1
+  fi
+fi
 
 note "usage contract (no broker needed)"
 assert_code 2 "unknown command"            "$(code_of "$CLI" definitely-not-a-command)"
@@ -140,16 +173,6 @@ note "QoS 0 has no acknowledgement to wait for"
 assert_code 0 "pub --qos 0 returns at once" \
   "$(code_of "$CLI" pub "${B[@]}" --topic "$T/q0" --payload fast --qos 0)"
 assert_has "acknowledges nothing" "and says so rather than implying delivery" "$WORK/out"
-
-# Only checked when the broker is known to enforce an ACL (CI mounts one; a plain local
-# broker does not). A refusal is the single most important thing this gate can catch:
-# a publish the broker rejected but the tool called "sent" is a lie in a pipeline.
-if [ -n "${GATE_DENY_TOPIC:-}" ]; then
-  note "a real broker refusal"
-  assert_code 1 "pub to a denied topic reports the refusal" \
-    "$(code_of "$CLI" pub "${B[@]}" --topic "$GATE_DENY_TOPIC" --payload nope --qos 1)"
-  assert_has "0x87" "and names the reason byte it got" "$WORK/out"
-fi
 
 rm -rf "$WORK"
 if [ "$fails" = 0 ]; then
