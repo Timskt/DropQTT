@@ -272,7 +272,8 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
    遗留：GUI 收尾不等迟到的 ack，CLI 会等，`maxLost` 在边界上两边可能不一致。
 3. 桌面集成：系统托盘、开机自启、全局快捷键（审计列为系统类缺口）。
 4. 把 `dropqtt-cli` 二进制挂进 release 产物（现在只有 GUI 安装包）。
-5. 主题树浏览器 / 在线设备清单（靠 LWT + `$SYS` + 静默看门狗三块拼图，已有素材）。
+5. ~~主题树浏览器 / 在线设备清单~~ ✅ 已在仓库里（`utils/topicTree.ts` +
+   `TopicTreePanel.tsx` + `DevicePanel.tsx`），此项是从 HANDOFF 未同步过来。
 6. §1.6 桥接每消息克隆 rules/conns：**先 A/B 量**再动手（本项目已有两次"看着该优化"量下来不是瓶颈）。
 
 ### 需要属主拍板，别自作主张

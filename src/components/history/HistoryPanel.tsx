@@ -16,6 +16,7 @@ import { buildCapture, CAPTURE_EXTENSION } from '../../utils/capture';
 import { TimelineCard } from './TimelineCard';
 import { MessageDiffCard } from './MessageDiffCard';
 import { FieldProbeCard } from './FieldProbeCard';
+import { DeliveryAuditCard } from './DeliveryAuditCard';
 import { diffMessages } from '../../utils/messageDiff';
 import { exportMessages, ExportFormat, saveTextFile } from '../../utils/exportMessages';
 
@@ -743,6 +744,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
         ) : null}
         <div className="px-3 pt-2">
           <FieldProbeCard rows={rows} t={t} suggested={comparedPaths} />
+          <DeliveryAuditCard rows={rows} t={t} />
         </div>
         <div className="max-h-[52vh] overflow-y-auto" data-testid="history-results">
           {rows.length === 0 && !loading ? (

@@ -53,11 +53,18 @@ MQTTX 是 EMQX 团队产品，有桌面版 + **Web 版** + **CLI** + 云同步 +
 | 项 | 证据 | 影响 |
 | --- | --- | --- |
 | **控制台只能一条连接** | `lib.rs:18-21` 单 client 槽 | 结构差距最大的一项；桥接那套（任意 conn id）可作范本 |
-| RPC 无自动关联 | `MessagePublisher.tsx:446-464` | 有 responseTopic 却不自动订阅应答、无配对表、无超时 |
-| 保留消息只从当前 500 行流里捞 | `MessageStream.tsx:270-274` | 无法查 broker 保留树 |
-| 无系统代理 | 全仓无匹配 | 企业网络 |
-| PING 测的是 CONNECT 握手 RTT | `mqtt_manager.rs:279-310` | 不是 keep-alive 延迟，且不周期刷新 |
-| 无消息 diff | — | 排障时"这两个时刻/两个主题差在哪"没法直接看 |
+| 保留消息只从当前 500 行流里捞 | `MessageStream.tsx:270-274` | 无法查 broker 保留树（mosquitto #1225 累计 💬64 的未满足需求） |
+| 无系统代理 | 全仓无匹配 | 企业网络。注意 §4.74 已刻意让 webhook 直连，要做就得做成**显式、按规则**的开关，不能把系统代理整体打开 |
+| PING 测的是 CONNECT 握手 RTT | `mqtt_manager.rs:279-310` | 不是 keep-alive 延迟，且不周期刷新；社区最大的一组未解 bug（#2044/#2060/#1295） |
+| 无 TLS 侧的取证 | 证书到期/链/主机名、断开原因都只能自己拿 openssl 查 | MQTTX #1933 原话"只能另找工具调试"；跨所有 MQTT GUI 的最大缺口 |
+
+**已核对并从本表移除的过时项**（2026-10-08，逐条读码确认）：
+
+- ~~RPC 无自动关联~~ —— `src-tauri/src/rpc.rs` 已有 pending 配对表、correlation 逐字节匹配、
+  超时与应答主题处理，`RpcPanel.tsx` 在其上。原先的判定只看了 `MessagePublisher.tsx` 一处。
+- ~~无消息 diff~~ —— §4.80 已实现（JSON 逐字段 / 文本逐行 / 二进制整体）。
+- ~~主题树~~ / ~~设备清单~~ —— `utils/topicTree.ts` + `TopicTreePanel.tsx` + `DevicePanel.tsx` 已在，
+  HANDOFF 待办第 5 项同属已完成。
 
 ---
 
@@ -65,6 +72,7 @@ MQTTX 是 EMQX 团队产品，有桌面版 + **Web 版** + **CLI** + 云同步 +
 
 ### 已完成（A/B/C/D 组）
 - A1 mTLS 硬失败 · A2 过载归档 · A3 历史错误可见 · B1 v5 订阅选项 · **B2 PFI / Topic Alias / Session-Expiry / v5 Will 属性** · C1 控制台编解码 · **C2 后端定时发布** · **D1 压测台（多主题/QoS/停止/分位数/确认差值）** · ErrorBoundary
+- **D2 报文对比**（§4.80）· **D3 字段级取值取证**（§4.81a，补 MQTTX #1428 要了却没做的那一半）· **D4 投递审计**（§4.81b：缺口/重复/乱序/时延分位，且明确不把它说成 broker 丢包）
 - IoT 侧另加：SenML(RFC 8428) 读数、静默看门狗（见 `ITERATION_2026_09.md` §3.4）
 
 ### 下一轮（建议顺序）
