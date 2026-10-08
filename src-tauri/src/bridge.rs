@@ -1129,9 +1129,83 @@ impl BridgeManager {
 /// Convenience alias for the managed state handle
 pub type SharedBridge = Arc<BridgeManager>;
 
+/// Every enabled HTTP rule with its stored header values loaded by `resolve`.
+/// Disabled rules keep their references: a locked keychain must not stop someone from
+/// saving a rule they have switched off, and an unresolved sink refuses to post rather
+/// than going out without its credential.
+pub fn load_credentials(
+    rules: Vec<BridgeRule>,
+    resolve: impl Fn(&WebhookConfig) -> Result<WebhookConfig, String>,
+) -> Result<Vec<BridgeRule>, String> {
+    rules
+        .into_iter()
+        .map(|rule| {
+            if !(rule.enabled && rule.target_kind == "http") {
+                return Ok(rule);
+            }
+            let named = |e: String| format!("Rule '{}': {e}", rule.name);
+            let webhook = resolve(&rule.webhook).map_err(named)?;
+            let targets = rule
+                .targets
+                .iter()
+                .map(&resolve)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(named)?;
+            Ok(BridgeRule { webhook, targets, ..rule })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stored(reference: &str) -> WebhookConfig {
+        WebhookConfig {
+            url: "http://127.0.0.1:8080/x".into(),
+            secret_headers: vec![("Authorization".into(), reference.into())],
+            ..WebhookConfig::default()
+        }
+    }
+
+    /// Stands in for the keychain: `ok` resolves, anything else is "not stored".
+    fn fake_store(sink: &WebhookConfig) -> Result<WebhookConfig, String> {
+        match sink.secret_headers.first() {
+            None => Ok(sink.clone()),
+            Some((name, r)) if r == "ok" => Ok(WebhookConfig {
+                headers: vec![(name.clone(), "Bearer t".into())],
+                secret_headers: vec![],
+                ..sink.clone()
+            }),
+            Some((name, _)) => Err(format!("no value for '{name}'")),
+        }
+    }
+
+    #[test]
+    fn credentials_are_loaded_into_every_sink_of_an_enabled_http_rule() {
+        let mut r = rule("prefix", "a", "b");
+        r.target_kind = "http".into();
+        r.webhook = stored("ok");
+        r.targets = vec![stored("ok")];
+        let out = load_credentials(vec![r], fake_store).unwrap();
+        for sink in std::iter::once(&out[0].webhook).chain(&out[0].targets) {
+            assert!(sink.secret_headers.is_empty());
+            assert_eq!(sink.headers[0].1, "Bearer t");
+        }
+    }
+
+    #[test]
+    fn a_missing_credential_names_the_rule_and_a_disabled_rule_is_not_asked() {
+        let mut r = rule("prefix", "a", "b");
+        r.target_kind = "http".into();
+        r.name = "orders".into();
+        r.targets = vec![stored("gone")];
+        let error = load_credentials(vec![r.clone()], fake_store).unwrap_err();
+        assert!(error.starts_with("Rule 'orders':"), "{error}");
+        r.enabled = false;
+        let kept = load_credentials(vec![r], fake_store).unwrap();
+        assert_eq!(kept[0].targets[0].secret_headers.len(), 1, "a disabled rule lost its reference");
+    }
 
     fn rule(mode: &str, from: &str, to: &str) -> BridgeRule {
         BridgeRule {

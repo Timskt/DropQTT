@@ -136,6 +136,19 @@ pub struct VerifyCmd {
     pub duration_ms: Option<u64>,
     pub json: bool,
     pub junit: bool,
+    /// Generate the scenario's bench traffic, so its performance bar is measured
+    /// rather than reported as not run.
+    pub bench: Option<BenchDrive>,
+}
+
+/// How hard `verify --scenario` drives the scenario's bench topics. The rate is never
+/// taken from the bar itself: driving at exactly `minRate` turns pacing jitter into a
+/// coin flip, and choosing a margin is the rig author's call, not ours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BenchDrive {
+    pub rate: u32,
+    pub size: u32,
+    pub qos: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,6 +189,7 @@ pub fn usage() -> String {
         "                      [--response-topic <t>] [--correlation-hex <hex>] [--timeout 5s]",
         "  dropqtt-cli verify  [broker options] (--topic <filter>... --assert '<expr>'...",
         "                      | --scenario <file.dqscn>) [--count N | --for 10s] [--json] [--junit]",
+        "                      [--bench-rate N [--bench-size B] [--bench-qos 0|1|2]]",
         "",
         "BROKER OPTIONS:",
         "  --host <h> --port <n> [--tls] [--ws] [--client-id <id>] [--username <u> | --username-env <VAR>]",
@@ -194,10 +208,12 @@ pub fn usage() -> String {
         "SCENARIOS (verify --scenario):",
         "  A .dqscn written by the desktop app arms its subscriptions and assertion",
         "  rules, and the verdict is the app's own: same bars, same three states.",
-        "  What verify does not do yet is generate the bench traffic a performance",
-        "  bar measures, so the traffic claim stays not proven and the best result",
-        "  from a scenario run is exit 4 -- never a green it did not earn. Watchdog",
-        "  and responder rules are listed as not armed; they need the window's timers.",
+        "  A performance bar is only measured when you drive the load: --bench-rate",
+        "  publishes timed messages to the rig's bench topics for --for, then waits",
+        "  up to 2 s for the last answers. Without it the bar is reported as not run",
+        "  (exit 4) -- never a green it did not earn. --bench-size defaults to 64 bytes",
+        "  and --bench-qos to 0, as in the desktop lab. Watchdog and responder rules",
+        "  are listed as not armed; they need the window's timers.",
         "",
         "EXIT CODES:",
         "  0 pass   1 refused or violated   2 bad command line   3 broker unreachable   4 not proven",
@@ -292,7 +308,10 @@ fn flag_takes_value(verb: Verb, name: &str) -> Option<bool> {
                 &[][..],
             ),
             Verb::Verify => (
-                &["topic", "assert", "qos", "count", "for", "scenario"],
+                &[
+                    "topic", "assert", "qos", "count", "for", "scenario", "bench-rate",
+                    "bench-size", "bench-qos",
+                ],
                 &["json", "junit"][..],
             ),
         },
@@ -527,10 +546,54 @@ pub fn parse_args(argv: &[String]) -> Result<Command, UsageError> {
                 duration_ms: bound_wait(parse_count(&flags)?, take_duration(&flags, "for")?)?,
                 json: flags.switches.contains("json"),
                 junit: flags.switches.contains("junit"),
+                bench: bench_drive(&flags)?,
             }
             .into()
         }
     })
+}
+
+fn strict_number<T: std::str::FromStr>(flags: &Flags, name: &str) -> Result<Option<T>, UsageError> {
+    match flags.values.get(name).and_then(|v| v.last().cloned()) {
+        Some(raw) => raw
+            .parse::<T>()
+            .map(Some)
+            .map_err(|_| UsageError(format!("--{name} {raw:?} is not a number"))),
+        None => Ok(None),
+    }
+}
+
+/// The bench flags only make sense as a set, and each refusal names the flag that
+/// would fix it. Ranges are checked later by `BenchSpec::validate`, the same check the
+/// desktop lab runs, once the scenario has supplied the topics.
+fn bench_drive(flags: &Flags) -> Result<Option<BenchDrive>, UsageError> {
+    let rate = strict_number::<u32>(flags, "bench-rate")?;
+    let size = strict_number::<u32>(flags, "bench-size")?;
+    let qos = strict_number::<u8>(flags, "bench-qos")?;
+    let Some(rate) = rate else {
+        if size.is_some() || qos.is_some() {
+            return Err(UsageError("--bench-size and --bench-qos only apply with --bench-rate".into()));
+        }
+        return Ok(None);
+    };
+    if !flags.values.contains_key("scenario") {
+        return Err(UsageError(
+            "--bench-rate drives a scenario's bench topics; point --scenario at a .dqscn file".into(),
+        ));
+    }
+    if !flags.values.contains_key("for") {
+        return Err(UsageError("--bench-rate needs --for: a rate is only a rate over a known time".into()));
+    }
+    if flags.values.contains_key("count") {
+        return Err(UsageError(
+            "--count would end the run before the bench does; with --bench-rate, --for sets the length".into(),
+        ));
+    }
+    if let Some(q) = qos.filter(|q| *q > 2) {
+        return Err(UsageError(format!("--bench-qos {q} is not 0, 1 or 2")));
+    }
+    // The desktop lab's defaults, so the same rig means the same load in both places.
+    Ok(Some(BenchDrive { rate, size: size.unwrap_or(64), qos: qos.unwrap_or(0) }))
 }
 
 impl From<ConnectCmd> for Command {
@@ -849,9 +912,150 @@ pub fn render_received(msg: &MqttGenericMessage, print_payload: bool) -> String 
     line
 }
 
+/// What a `verify --bench-rate` run sent and got back, counted the way the desktop lab
+/// counts: only a 0x00 ack is an ack, a refusal and "no subscribers" are their own
+/// buckets, and latency comes from our own timed copies looping back.
+#[derive(Default)]
+pub struct LoadTally {
+    pub sent: u64,
+    pub acked: u64,
+    pub nacked: u64,
+    pub no_subscribers: u64,
+    pub looped: u64,
+    latency: crate::bench::LatencySamples,
+}
+
+impl LoadTally {
+    pub fn record_ack(&mut self, code: u8) {
+        match code {
+            0x00 => self.acked += 1,
+            0x10 => self.no_subscribers += 1,
+            _ => self.nacked += 1,
+        }
+    }
+
+    /// True when `payload` is our own load on a bench topic. It is counted here and
+    /// kept away from the assertion rules: a rule about `$.tempC` judging 64 bytes of
+    /// synthetic load reads as unevaluable and would sink a rig whose devices are fine.
+    pub fn absorb(&mut self, topics: &[String], size: u32, topic: &str, payload: &[u8], now_ms: i64) -> bool {
+        if !topics.iter().any(|t| t == topic) {
+            return false;
+        }
+        if let Some((_, send_ms)) = crate::bench::parse_bench_payload(payload) {
+            self.looped += 1;
+            self.latency.record(u32::try_from((now_ms - send_ms).max(0)).unwrap_or(u32::MAX));
+            return true;
+        }
+        // Below the header size the load is untimed filler; recognised by its exact
+        // shape so a real device publishing to the same topic is still judged.
+        (size as usize) < crate::bench::HEADER_LEN
+            && payload.len() == size as usize
+            && payload.iter().all(|b| *b == b'b')
+    }
+
+    /// Every publish has had its answer: an ack for QoS 1/2, and its timed copy back
+    /// when the payload carries a timestamp. Waiting for less would report a p99 or a
+    /// loss count that the next 50 ms would have changed.
+    pub fn drained(&self, qos: u8, size: u32) -> bool {
+        let answered = self.acked + self.nacked + self.no_subscribers;
+        let acks_done = qos == 0 || answered >= self.sent;
+        let loops_done = (size as usize) < crate::bench::HEADER_LEN || self.looped >= self.sent;
+        acks_done && loops_done
+    }
+
+    /// The numbers `scenario::judge` grades, with the rate taken over the send phase
+    /// only, as the desktop lab does: time spent waiting for the last acks is not
+    /// time the sender was slow.
+    pub fn measurement(&self, send_elapsed: std::time::Duration, settled: bool) -> crate::scenario::Measurement {
+        let summary = self.latency.summary();
+        crate::scenario::Measurement {
+            sent: self.sent,
+            acked: self.acked,
+            rate: crate::bench::measured_rate(self.sent, send_elapsed.as_millis() as u64),
+            p99_ms: (summary.samples > 0).then_some(u64::from(summary.p99_ms)),
+            settled,
+        }
+    }
+
+    pub fn summary_line(&self, measured: &crate::scenario::Measurement) -> String {
+        let p99 = measured.p99_ms.map_or_else(|| "none timed".to_string(), |ms| format!("{ms} ms"));
+        format!(
+            "bench    sent {} · acked {} · refused {} · no subscribers {} · looped {} · {} msg/s · p99 {p99}",
+            self.sent, self.acked, self.nacked, self.no_subscribers, self.looped, measured.rate
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bench_flags_come_as_a_set_and_name_the_flag_that_is_missing() {
+        let ok = |list: &[&str]| match parse_args(&args(list)).unwrap() {
+            Command::Verify(v) => v.bench,
+            _ => panic!(),
+        };
+        let fails = |list: &[&str]| parse_args(&args(list)).unwrap_err().0;
+        let base = ["verify", "--scenario", "rig.dqscn", "--for", "3s"];
+
+        assert_eq!(ok(&base), None, "no --bench-rate, no load");
+        let drive = ok(&[&base[..], &["--bench-rate", "500"]].concat()).unwrap();
+        assert_eq!(drive, BenchDrive { rate: 500, size: 64, qos: 0 }, "the desktop lab's defaults");
+        let drive = ok(&[&base[..], &["--bench-rate", "50", "--bench-size", "15", "--bench-qos", "1"]].concat());
+        assert_eq!(drive, Some(BenchDrive { rate: 50, size: 15, qos: 1 }));
+
+        assert!(fails(&["verify", "--scenario", "r", "--bench-rate", "5"]).contains("--for"));
+        assert!(fails(&["verify", "--topic", "a", "--assert", "qos >= 1", "--for", "1s", "--bench-rate", "5"])
+            .contains("--scenario"));
+        assert!(fails(&[&base[..], &["--bench-size", "64"]].concat()).contains("--bench-rate"));
+        assert!(fails(&[&base[..], &["--bench-rate", "5", "--count", "3"]].concat()).contains("--count"));
+        assert!(fails(&[&base[..], &["--bench-rate", "fast"]].concat()).contains("not a number"));
+        assert!(fails(&[&base[..], &["--bench-rate", "5", "--bench-qos", "3"]].concat()).contains("0, 1 or 2"));
+    }
+
+    #[test]
+    fn a_load_tally_buckets_acks_and_keeps_its_own_traffic_from_the_rules() {
+        let topics = vec!["load/a".to_string()];
+        let mut load = LoadTally::default();
+        for code in [0x00, 0x00, 0x10, 0x87] {
+            load.record_ack(code);
+        }
+        assert_eq!((load.acked, load.no_subscribers, load.nacked), (2, 1, 1));
+
+        let ours = crate::bench::bench_payload(64, 7, 1_000);
+        assert!(load.absorb(&topics, 64, "load/a", &ours, 1_012));
+        assert!(!load.absorb(&topics, 64, "load/a", br#"{"tempC":21}"#, 1_012), "a device on the topic is still judged");
+        assert!(!load.absorb(&topics, 64, "other", &ours, 1_012), "only the bench topics");
+        assert!(load.absorb(&topics, 4, "load/a", b"bbbb", 0), "untimed filler is ours too");
+        assert!(!load.absorb(&topics, 4, "load/a", b"bbbbb", 0));
+        assert_eq!(load.looped, 1, "filler carries no time and adds no sample");
+    }
+
+    #[test]
+    fn a_load_is_drained_when_every_publish_has_its_answer() {
+        let mut load = LoadTally { sent: 2, ..Default::default() };
+        assert!(!load.drained(0, 64), "QoS 0 still waits for the timed copies");
+        load.looped = 2;
+        assert!(load.drained(0, 64));
+        assert!(!load.drained(1, 64), "QoS 1 also waits for the acks");
+        load.record_ack(0);
+        load.record_ack(0x87);
+        assert!(load.drained(1, 64), "a refusal is an answer");
+        let untimed = LoadTally { sent: 3, acked: 3, ..Default::default() };
+        assert!(untimed.drained(1, 4), "untimed load never loops back as a sample");
+    }
+
+    #[test]
+    fn the_measured_rate_is_over_the_send_phase_and_no_sample_is_not_zero_ms() {
+        let mut load = LoadTally { sent: 300, acked: 300, ..Default::default() };
+        let m = load.measurement(std::time::Duration::from_secs(3), true);
+        assert_eq!((m.sent, m.acked, m.rate, m.p99_ms, m.settled), (300, 300, 100, None, true));
+        load.absorb(&["t".to_string()], 64, "t", &crate::bench::bench_payload(64, 0, 0), 9);
+        assert_eq!(load.measurement(std::time::Duration::ZERO, false).p99_ms, Some(9));
+        assert_eq!(load.measurement(std::time::Duration::ZERO, false).rate, 0, "no division by zero");
+        assert!(load.summary_line(&m).contains("p99 none timed"));
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { SilenceAlertEvent, SilenceRule } from '../types';
 import { usePersistentState } from './usePersistentState';
+import { useReleasedHeaderSecrets } from './useReleasedHeaderSecrets';
 
 const ALERT_LOG_CAP = 80;
 
@@ -21,6 +22,7 @@ export function useSilence(visible: boolean) {
   const [alerts, setAlerts] = useState<SilenceAlertEntry[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const seqRef = useRef(0);
+  useReleasedHeaderSecrets(rules);
 
   useEffect(() => {
     if (!visible) return;

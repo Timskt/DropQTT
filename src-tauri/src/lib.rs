@@ -159,19 +159,21 @@ async fn secret_status() -> Result<secrets::SecretStatus, String> {
     Ok(secrets::status())
 }
 
+// `kind` is optional so the broker callers written before webhook headers had a
+// namespace of their own keep working unchanged.
 #[tauri::command]
-async fn secret_put(reference: String, value: String) -> Result<(), String> {
-    secrets::put(&reference, &value)
+async fn secret_put(reference: String, value: String, kind: Option<String>) -> Result<(), String> {
+    secrets::put(secrets::SecretKind::parse(kind.as_deref())?, &reference, &value)
 }
 
 #[tauri::command]
-async fn secret_exists(reference: String) -> Result<bool, String> {
-    secrets::exists(&reference)
+async fn secret_exists(reference: String, kind: Option<String>) -> Result<bool, String> {
+    secrets::exists(secrets::SecretKind::parse(kind.as_deref())?, &reference)
 }
 
 #[tauri::command]
-async fn secret_delete(reference: String) -> Result<(), String> {
-    secrets::delete(&reference)
+async fn secret_delete(reference: String, kind: Option<String>) -> Result<(), String> {
+    secrets::delete(secrets::SecretKind::parse(kind.as_deref())?, &reference)
 }
 
 /// The acceptance verdict, judged by the same code the CLI runs. The panel used to
@@ -587,6 +589,9 @@ async fn bridge_sync_rules(
     state: State<'_, AppState>,
     rules: Vec<BridgeRule>,
 ) -> Result<(), String> {
+    // Stored header values are loaded here, at the IPC boundary, so the engine never
+    // holds a reference it would have to resolve mid-delivery.
+    let rules = bridge::load_credentials(rules, secrets::resolve_webhook)?;
     state.bridge.clone().sync_rules(app, rules).await
 }
 
@@ -597,6 +602,7 @@ async fn silence_sync_rules(
     state: State<'_, AppState>,
     rules: Vec<silence::SilenceRule>,
 ) -> Result<(), String> {
+    let rules = silence::load_credentials(rules, secrets::resolve_webhook)?;
     state.mqtt.silence_watchdog
         .sync_rules(rules, chrono::Utc::now().timestamp())
 }

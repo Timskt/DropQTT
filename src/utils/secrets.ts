@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { SecretStatus } from '../types';
+import { newSecretRef } from './secretRef';
+import { migrateWebhookHeaders } from './webhookHeaders';
 
 /**
  * Where a broker password lives once it is saved.
@@ -29,8 +31,9 @@ export const SECRET_BEARING_KEYS = [
   'dropqtt_bridge_remember',
 ] as const;
 
-/** Bumped when stored shapes change; see `dropqtt_schema_version`. */
-export const SCHEMA_VERSION = 1;
+/** Bumped when stored shapes change; see `dropqtt_schema_version`.
+ *  2: webhook header credentials moved to `secretHeaders` references. */
+export const SCHEMA_VERSION = 2;
 
 const SCHEMA_KEY = 'dropqtt_schema_version';
 
@@ -82,18 +85,7 @@ const countPasswords = (value: unknown, which: 'exposed' | 'covered', depth = 0)
   return (mine ? 1 : 0) + Object.values(record).reduce<number>((sum, child) => sum + countPasswords(child, which, depth + 1), 0);
 };
 
-/**
- * An opaque id for one credential. It is not a secret and says nothing about which
- * broker it belongs to; the backend prefixes it with its own namespace before it
- * reaches the store, and validates it against `[A-Za-z0-9_-]`.
- */
-export function newSecretRef(): string {
-  const random =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID().replace(/-/g, '')
-      : `${Date.now()}${Math.floor(Math.random() * 1e9)}`;
-  return random.slice(0, 16);
-}
+export { newSecretRef };
 
 /**
  * What the backend says about the credential store. A host with no backend at all --
@@ -112,19 +104,25 @@ export async function readSecretStatus(): Promise<SecretStatus> {
   }
 }
 
+/**
+ * Which namespace a reference lives in. Broker is the default, so every caller written
+ * before webhook headers had one of their own keeps sending exactly what it sent.
+ */
+export type SecretKind = 'broker' | 'webhook';
+
 /** `null` on success, otherwise the reason, which is safe to put on screen. */
-export async function writeSecret(reference: string, value: string): Promise<string | null> {
+export async function writeSecret(reference: string, value: string, kind?: SecretKind): Promise<string | null> {
   try {
-    await invoke('secret_put', { reference, value });
+    await invoke('secret_put', kind ? { reference, value, kind } : { reference, value });
     return null;
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }
 }
 
-export async function dropSecret(reference: string): Promise<string | null> {
+export async function dropSecret(reference: string, kind?: SecretKind): Promise<string | null> {
   try {
-    await invoke('secret_delete', { reference });
+    await invoke('secret_delete', kind ? { reference, kind } : { reference });
     return null;
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
@@ -141,7 +139,9 @@ export async function hasSecret(reference: string): Promise<boolean | null> {
 
 export interface SecretStore {
   status: () => Promise<SecretStatus>;
-  put: (reference: string, value: string) => Promise<string | null>;
+  put: (reference: string, value: string, kind?: SecretKind) => Promise<string | null>;
+  /** Optional so a test double that only records writes still fits. */
+  drop?: (reference: string, kind?: SecretKind) => Promise<string | null>;
 }
 
 export interface MigrationReport {
@@ -151,6 +151,8 @@ export interface MigrationReport {
   failed: string[];
   /** True when this host has no credential store to move anything into. */
   skipped: boolean;
+  /** Webhook header values that moved, counted apart because they are not passwords. */
+  headersMoved?: number;
 }
 
 /**
@@ -241,6 +243,7 @@ export function writeSchemaVersion(write: (key: string, value: string) => void):
 export const credentialStore: SecretStore = {
   status: readSecretStatus,
   put: writeSecret,
+  drop: dropSecret,
 };
 
 /** The two storage calls every migration and every hook needs, from one place. */
@@ -262,7 +265,11 @@ export const localStorageWrite = (key: string, value: string): void => {
  * application.
  */
 export async function migrateBeforeRender(timeoutMs = 4000): Promise<MigrationReport> {
-  const work = migrateStoredSecrets(credentialStore, localStorageRead, localStorageWrite).catch((e: unknown) => ({
+  const work = (async (): Promise<MigrationReport> => {
+    const passwords = await migrateStoredSecrets(credentialStore, localStorageRead, localStorageWrite);
+    const headers = await migrateWebhookHeaders(credentialStore, localStorageRead, localStorageWrite);
+    return { ...passwords, failed: [...passwords.failed, ...headers.failed], headersMoved: headers.moved };
+  })().catch((e: unknown) => ({
     moved: 0,
     failed: [String(e)],
     skipped: false,

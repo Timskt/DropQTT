@@ -211,7 +211,8 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
 - **每轮改动在 `docs/ITERATION_2026_09.md` 加一节 §4.x**，写清"为什么这么做、推翻了哪个假设、
   被自己抓到什么错"。这份文档是本项目最有价值的部分：很多结论只能从"当初为什么"里恢复。
   近几条：§4.70 CLI、§4.71 门禁接 CI、§4.72 密码入钥匙串（含 `keyring` 默认 feature 是**进程内 mock**
-  这个坑）、§4.73 场景判定下沉 Rust（含"只查退出码的门放过了根本没收到报文"）。
+  这个坑）、§4.73 场景判定下沉 Rust（含"只查退出码的门放过了根本没收到报文"）、
+  §4.74 webhook 走了系统代理、§4.75 header token 入钥匙串、§4.76 CLI 自驱 bench 流量。
 - 规模、门禁数字、已知限制记在 `docs/PROJECT_STATUS_2026_10.md`，每轮更新（数字必须是量出来的）。
 - 一次只做一件事，但做完要能证明：`tsc` / 单测 / UI / 真机 / 线上取证，逐层往上。
 - 判定规则**只允许有一个作者**：能复用引擎就别再实现一遍
@@ -222,9 +223,10 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
 
 ## 8. 待办（按建议顺序）
 
-1. **webhook header 里的 Bearer token 也进钥匙串**——和 broker 密码同一类明文暴露；
-   `secrets.rs` 的账户前缀 `broker:` 就是为它留的扩展位。
-2. **CLI 侧生成 bench 流量**，让 `verify --scenario` 能真的判速率条、能拿到 0（现在上限是 4，usage 里已写明）。
+1. ~~**webhook header 里的 Bearer token 也进钥匙串**~~ ✅ 2026-10-08 完成（§4.75）。
+   还差一次真 OS 钥匙串上的 GUI 端到端（按 `keyring-live.mjs` 步骤）。
+2. ~~**CLI 侧生成 bench 流量**~~ ✅ 2026-10-08 完成（§4.76，`--bench-rate/--bench-size/--bench-qos`）。
+   遗留：GUI 收尾不等迟到的 ack，CLI 会等，`maxLost` 在边界上两边可能不一致。
 3. 桌面集成：系统托盘、开机自启、全局快捷键（审计列为系统类缺口）。
 4. 把 `dropqtt-cli` 二进制挂进 release 产物（现在只有 GUI 安装包）。
 5. 主题树浏览器 / 在线设备清单（靠 LWT + `$SYS` + 静默看门狗三块拼图，已有素材）。

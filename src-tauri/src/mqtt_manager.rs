@@ -1394,16 +1394,7 @@ impl MqttManager {
         spec: BenchSpec,
         cancel: Arc<AtomicBool>,
     ) {
-        // Pacing is windowed, not one sleep per message. Windows only resolves
-        // timer wakeups every ~10-16 ms, so at the rates this lab exists for
-        // (1000/s => a 1 ms period) the loop spent its life waiting for a wake
-        // that could not arrive that fast: measured 90-170 msg/s delivered
-        // against 1000 requested. Each window now emits whatever the elapsed
-        // time says should already have gone out.
-        const WINDOW: std::time::Duration = std::time::Duration::from_millis(20);
-        let rate_per_window =
-            (WINDOW.as_micros() as u64 * spec.rate as u64 / 1_000_000).max(1);
-        let mut window = tokio::time::interval(WINDOW);
+        let mut window = tokio::time::interval(bench::PACING_WINDOW);
         window.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1425,10 +1416,7 @@ impl MqttManager {
                             return;
                         }
                     }
-                    // Catch-up is bounded: a starved task must not dump its whole
-                    // backlog in one burst the moment it is scheduled again.
-                    let target = (elapsed.as_micros() as u64 * spec.rate as u64 / 1_000_000)
-                        .min(seq as u64 + rate_per_window * 4);
+                    let target = bench::paced_target(elapsed, spec.rate, seq as u64);
                     while (seq as u64) < target {
                         if cancel.load(Ordering::SeqCst) {
                             return;

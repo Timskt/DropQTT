@@ -17,12 +17,19 @@ pub struct WebhookConfig {
     pub format: String,
     #[serde(default)]
     pub headers: Vec<(String, String)>,
+    /// Header values held by the OS credential store: `(name, reference)`. The UI
+    /// persists only the reference, and `secrets::resolve_webhook` folds the value
+    /// into `headers` before the engine sees the rule. Never sent to the webview.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_headers: Vec<(String, String)>,
 }
 
 fn default_format() -> String { "json".into() }
 
 impl Default for WebhookConfig {
-    fn default() -> Self { Self { url: String::new(), format: default_format(), headers: Vec::new() } }
+    fn default() -> Self {
+        Self { url: String::new(), format: default_format(), headers: Vec::new(), secret_headers: Vec::new() }
+    }
 }
 
 impl WebhookConfig {
@@ -42,6 +49,12 @@ impl WebhookConfig {
     }
 
     fn header_map(&self) -> Result<HeaderMap, String> {
+        // An unresolved reference means the credential was never loaded. Posting
+        // without it would turn "the keychain is locked" into a 401 from someone
+        // else's server, so the delivery is refused here instead.
+        if !self.secret_headers.is_empty() {
+            return Err("A webhook header credential has not been loaded from the system credential store".into());
+        }
         let mut headers = HeaderMap::new();
         for (name, value) in &self.headers {
             let name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(|_| "Invalid webhook header name")?;
@@ -90,8 +103,15 @@ pub fn sink_at(primary: &WebhookConfig, extras: &[WebhookConfig], index: usize) 
     }
 }
 
+/// The client is always direct. `default-features = false` on our own reqwest line
+/// does not achieve that: `tauri-plugin-updater` turns `system-proxy` back on through
+/// feature unification, and even without it `HTTP(S)_PROXY` is read from the
+/// environment. The macOS/Windows system reader also ignores the OS bypass list, so a
+/// POST to `127.0.0.1` or a 10.x endpoint was handed to whatever proxy the desktop
+/// had configured — together with its Authorization header and URL token.
 pub fn client() -> Result<Client, String> {
     Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
@@ -145,6 +165,23 @@ mod tests {
         assert!(config.validate().is_err());
         config.headers = vec![("Authorization".into(), "bad\r\nInjected: yes".into())];
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn an_unresolved_credential_reference_refuses_the_delivery() {
+        let config = WebhookConfig {
+            url: "http://127.0.0.1:8080/events".into(),
+            secret_headers: vec![("Authorization".into(), "r1".into())],
+            ..Default::default()
+        };
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("credential store"), "{error}");
+    }
+
+    #[test]
+    fn a_secret_reference_never_reaches_the_webview_when_absent() {
+        let json = serde_json::to_value(WebhookConfig::default()).unwrap();
+        assert!(json.get("secretHeaders").is_none(), "{json}");
     }
 
     #[test]
@@ -239,6 +276,7 @@ mod tests {
             url: format!("http://127.0.0.1:{port}/hook?token=super-secret"),
             format: format.into(),
             headers: vec![("Authorization".into(), "Bearer local-only".into())],
+            secret_headers: vec![],
         }
     }
 

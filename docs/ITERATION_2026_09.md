@@ -729,7 +729,7 @@ error: linking with `link.exe` failed
 - 并发 4、单请求 10s、请求体 2MB 上限，超出即计 dropped；
 - **无重试、无排队、无落盘 outbox**——应用退出或未运行时消息直接丢失；
 - 慢接口只会占用自己的信号量，不会拖住 MQTT，但会丢新消息；
-- 直连，未启用系统代理（`reqwest` 的 `system-proxy` 特性被 `default-features = false` 关掉了）。对以本地/内网端点为主的调试场景这是更可预测的行为，但如果你的网络必须走代理，需要显式加回该特性。
+- 直连，不走任何代理。**更正（§4.74）**：这里原先写"`system-proxy` 被 `default-features = false` 关掉了"，那是错的——`tauri-plugin-updater` 通过 feature 合并把它重新打开，环境变量 `HTTP(S)_PROXY` 也一直生效。现在由 `webhook::client()` 里的 `.no_proxy()` 保证直连，并有集成测试钉住。对以本地/内网端点为主的调试场景这是更可预测的行为；网络必须走代理时，需要一个显式的、按规则的开关（§6 第 8 项），而不是把系统代理整体打开。
 
 ### 5.3 历史过载漏记 —— **已于第二轮修复**（原限制留档）
 原问题：`push_feed`（`src-tauri/src/mqtt_manager.rs`）在显示缓冲满（`FEED_BUFFER_MAX = 2000`）时直接丢弃最旧行，而历史只在 `flush_feed` 成批落库，**因此高吞吐下被丢弃的消息既看不到也查不到**——恰恰是排障最需要的部分。
@@ -2679,6 +2679,165 @@ responder / watchdog 规则同样只列进 `notes()` 说明"没装"，不静默�
 `tsc` 干净，ESLint **0 error / 10 warning**，`cargo clippy --all-targets -- -D warnings` **通过**，
 两条真机门禁（cli-gate 36 项 + scenario-gate 18 项）全绿，CI 的 `cli` 作业已同时跑两条。
 
+### 4.74 Webhook 一直在走代理：文档说直连，代码不是（第十八轮 2026-10-08）
+
+换到一台开着本机代理（`127.0.0.1:7897`）的 macOS 上跑 `cargo test`，两条 webhook
+测试失败：投递到 `127.0.0.1` 的 POST 被代理接走了。第一反应是"环境问题"，但这其实是产品缺陷，
+而 §5.2 的文档恰好在替它作保。
+
+**根因有两层：**
+
+1. **feature 合并。** 我们自己那行 `reqwest` 写了 `default-features = false`，但
+   `tauri-plugin-updater` 的默认特性里有 `system-proxy`，Cargo 把同一 crate 的特性取并集：
+   ```
+   reqwest feature "system-proxy"
+   └── tauri-plugin-updater feature "system-proxy"
+   ```
+   §5.2 里那句"`system-proxy` 被关掉了"从这一刻起就不成立。而且即使它真被关掉，
+   `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 环境变量也照样生效。
+2. **系统读取器不认例外列表。** hyper-util 的 `Matcher::from_system()` 读取 macOS
+   SCDynamicStore（Windows 对应注册表）里的 HTTP/HTTPS 代理，却**不读 OS 的 ExceptionsList**。
+   所以就算系统设置里把 `127.0.0.1`、`10.0.0.0/8` 排除了，请求仍会交给代理。
+
+**为什么这不只是"测试红了"**：被交给代理的不只是请求体，还有 `Authorization` 头和 URL 里的
+token（例如 `?token=…`）。这正是本项目"Webhook URL / header 视为秘密"那条规则要防的东西：
+用户以为自己在打内网端点，凭据其实先过了桌面代理一手。
+
+**修法**：`webhook::client()` 加 `.no_proxy()`，显式关掉 env 和系统两路代理，让 §5.2 的
+"直连"这次由代码保证。三个调用方（桥接投递、outbox 重试、静默看门狗告警）共用这一个构造器，
+所以一处改动覆盖全部出口。
+
+**回归测试**：`src-tauri/tests/webhook_proxy.rs`。它是独立的集成测试二进制，因为它要改进程
+环境变量，放在 lib 测试里会和并行测试互相污染。做法是起一个"陷阱"监听器，把所有代理环境变量
+指向它，再把一条带 `Authorization` 和 `?token=super-secret` 的消息投递到另一个 sink：
+
+- 先断言陷阱 300ms 内**一个字节都没收到**（在看投递结果之前查，免得成功的投递掩盖泄漏）；
+- 再断言投递成功，且 sink 收到的请求行正是 `POST /hook?token=super-secret HTTP/1.1`。
+
+**区分度证明**：去掉 `.no_proxy()` 后这条测试失败（陷阱收到了整条请求），加回后通过。
+一个修复前也能通过的测试证明不了任何事。
+
+**刻意的取舍**：`.no_proxy()` 同时关掉了环境变量代理。这与文档承诺的"直连"一致，但意味着
+"网络必须走代理"的用户现在明确用不了 webhook，而不是碰运气地能用。正确的支持方式是按规则
+显式配置代理 URL（§6 第 8 项已改写），而不是重新打开一个不认例外列表的系统读取器。
+
+**门禁**：Rust 347 lib + 1 集成测试全绿，`cargo clippy --all-targets -- -D warnings` 通过，
+`tsc` 干净，ESLint **0 error / 10 warning**，vitest **149**，Playwright **221/221**。
+
+### 4.75 Webhook header 里的 token 进钥匙串（HANDOFF 待办 #1，第十八轮 2026-10-08）
+
+§4.72 把 broker 密码移进了 OS 凭据库，`Authorization: Bearer …` 却还明文躺在
+`dropqtt_bridge_rules` / `dropqtt_silence_rules` 的 localStorage 里。它是同一类暴露，
+而 §4.74 刚证明这类值会被送到哪里。
+
+**数据模型**：`WebhookConfig` 多一个 `secret_headers: Vec<(name, ref)>`（TS 侧 `secretHeaders?`），
+`headers` 只留不敏感的头。钥匙串账户沿用 §4.72 留好的前缀：`webhook:<ref>`。哪些头算敏感由名字判定
+（`authorization|cookie|token|secret|password|signature|api-key|…-key`），宁可多收不可漏收。
+
+**解析只在一处**：`bridge_sync_rules` / `silence_sync_rules` 调 `load_credentials`，把引用换成值再交给引擎；
+值从不回传给 webview。三条刻意的边界：
+
+- **只解析启用的规则**（桥接还要是 http 目标）。钥匙串锁着时，用户仍能保存一条关掉的规则。
+- **缺值是错误**，错误串点名规则和头名、不含值。
+- **兜底在投递口**：`header_map()` 见到未解析的引用就拒发。否则"钥匙串锁了"会变成别人服务器上的 401，
+  而且凭据缺失的请求已经发出去了。
+
+**编辑器**：已存的值显示为 `••••••`。原样保存不碰钥匙串；重新输入会铸新引用，旧引用在保存成功后释放
+（`useReleasedHeaderSecrets` 对前后两版规则做引用集合差，删除规则也走这条路）。两个容易做错的角落：
+
+- **记号挪到别的头名上**（`X-Token: ••••••`）时没有值可沿用。照存就会把六个圆点当 token 发出去，
+  所以这里报 `StaleHeaderMark`，点名该头，要求重填。
+- **写入中途失败要回滚**：一条规则多个 sink 时，先写成功的条目会被删掉，再报出原因，规则本身不保存。
+
+**没有可用的钥匙串时**（`secret_status` 不可用，例如没有后端的 Playwright mock），新值保持明文、旧引用原样保留。
+界面也不显示"已存入钥匙串"的提示，不许承诺做不到的事。
+
+**迁移**：`migrateBeforeRender` 在首屏前把两份规则里的敏感头搬进钥匙串，和 §4.72 的密码迁移同一个入口。
+单条写入被拒，那条头保留明文、其余照搬；钥匙串锁着就整份不动。坏 JSON 跳过，不拖垮启动。
+
+**导出与导入**：
+
+- 规则导出和环境包都经 `strippedSink` 清空 url / headers / secretHeaders。
+- **MQTT 目标的规则也清**：把规则从 http 切到 mqtt 时，旧 webhook 对象仍挂在规则上，导出会顺手带走它。
+- 导入时丢掉 `secretHeaders`：别人机器上的引用在这台机器的钥匙串里不存在。
+
+**顺手修掉的两处**：
+
+- `SilencePanel` 遇到格式错的 header 行时，解析异常一直没人接，直接抛到了 React。现在报 `webhookInvalid`。
+- `BridgePanel` 的表单错误原来只是变个颜色，屏幕阅读器什么都听不到。现在有错误时带 `role="alert"`。
+  这是 UI 测试先发现的：`getByRole('alert')` 找不到它。
+
+保存改成了异步（要等钥匙串写完），保存按钮在写入期间禁用，并带 `aria-busy`，防止连点铸出两份引用。
+
+**被自己抓到的错**：新 spec 的 9 条一开始全挂，看起来像产品崩了。实际是 mock 不全：
+`assertions_state`、`get_broker_capabilities`、`bridge_stats` 返回了 `null` / `[]`，页面根本没渲染出来。
+照 `bridge-outbox.spec` 补全命令表后，9 条里过了 7 条，剩下 2 条就是上面那个 `role="alert"` 缺陷。
+
+**门禁**：
+
+- Rust **357 lib + 1 集成**测试全绿（`secrets` / `bridge` / `silence` / `webhook` 新增 10 条），clippy `-D warnings` 通过。
+- `tsc` 干净，ESLint **0 error / 10 warning**，i18n 965 键四语言对齐。
+- vitest **181**（新增 `webhookHeaders.test.ts` 32 条）。
+- Playwright **230/230**（新增 `header-vault.spec.ts` 9 条）。
+- **未做**：没有在真 OS 钥匙串上跑 GUI 端到端。Rust 侧用的是测试 store，前端用的是 mock。下一次真机联调时，
+  按 §4.72 的 `keyring-live.mjs` 步骤补一次。
+
+### 4.76 CLI 自己打 bench 流量，`verify --scenario` 终于能拿到 0（HANDOFF 待办 #2，第十八轮 2026-10-08）
+
+之前带性能条的验收文件在 CLI 里最好的结果是 4：CLI 只会听不会发，`minRate` / `maxP99Ms` / `maxLost`
+永远是 `notRun`。夜间 CI 想用同一份 `.dqscn` 卡性能，就只能退回开 GUI。
+
+**用法**：`verify --scenario rig.dqscn --for 30s --bench-rate 2000 [--bench-size 64] [--bench-qos 1]`。
+CLI 在 `--for` 窗口内向文件里的 bench 主题发包，窗口结束后最多再等 2 s 收齐 ack，再交给判定。
+
+**几个刻意的决定**：
+
+- **速率是显式参数，不从 `minRate` 推**。按条的数值去打，量出来的只是"我发了这么多"，测不到 broker 跟不跟得上。
+  `--bench-size` / `--bench-qos` 必须跟 `--bench-rate` 一起出现。`--bench-rate` 必须配 `--scenario` 和 `--for`，
+  不能和 `--count` 同用（按条数结束的运行没有发送窗口）。哪一条缺了，报错里就点名哪一条。
+- **做不到的条在连接前就拒**（exit 2）：QoS 0 没有 ack，`maxLost` 永远量不出来；payload 小于 15 字节
+  装不下发送时间戳，`maxP99Ms` 也就无从谈起。`bench::unmeetable` 统一判，GUI 以后可以复用。
+- **自己的回声不进断言**：bench 主题可以就是断言的主题（gate 里故意这么配）。带 `BQ1` 头的 payload，
+  以及恰好等长、全是 `b` 的计时外填充，都记作 loop 和时延样本，其他消息照常进规则。否则一条 JSON 规则会被
+  二进制 bench 包刷成 `unevaluable`，把干净的一次运行判成"没证明"。
+- **最后一个节拍窗口要补发**：第一版发送窗口一到就停，最后一段不满 20 ms 的配额被截掉，
+  实测速率只有设定的约 98%。现在 `stop_when_due` 先按截止时刻补发，再进入收尾。
+- **收尾有上限**：ack 收齐就立刻判。收不齐最多等 2 s（`DRAIN_CAP`），剩下的算丢失，不会挂住 CI。
+- **判定只有一个作者**：CLI 把测量结果交给 `scenario::judge`，和 GUI 面板走同一段代码。
+  节拍从 `run_bench` 里抽成 `bench::paced_target` / `PACING_WINDOW` 两边共用：跟着时钟走，
+  一个窗口最多补 4 倍配额，不会因调度卡顿一次性灌出积压。
+- **速率改为四舍五入**（`bench::measured_rate`，GUI 和 CLI 共用）：原来向下取整，
+  1/s 跑 2001 ms 读成 0 msg/s，而且每次都偏低最多 1 msg/s，刚好够把一条按实际速率设的条判失败。
+
+**已知差异，没改**：GUI 的 `record_ack` 只在运行状态为 Running 时计数，时长到了之后才回来的 ack 算丢失；
+CLI 会等这些 ack。所以同一份文件、同一速率下，GUI 的 `maxLost` 在边界上可能比 CLI 更严。
+要统一得先定 GUI 的收尾语义，留给下一轮。
+
+**真机取证**（一次性 mosquitto `127.0.0.1:18831`，未碰 1883）：
+
+| 参数 | sent / acked / looped | 速率 | p99 |
+|---|---|---|---|
+| `--for 2s --bench-rate 1 --bench-qos 1` | 2 / 2 / 2 | 1 msg/s | 1 ms |
+| `--for 2s --bench-rate 100 --bench-qos 1` | 200 / 200 / 200 | 99 msg/s | 1 ms |
+| `--for 1s --bench-rate 200 --bench-qos 2` | 200 / 200 / 200 | 199 msg/s | — |
+| `--for 3s --bench-rate 2000 --bench-qos 1` | 6000 / 6000 / 6000 | 1999 msg/s | 3 ms |
+| `--for 2s --bench-rate 10000 --bench-qos 1` | 20000 / 20000 / 20000 | 9980 msg/s | 6 ms |
+
+minRate 400 的文件在 500/s 下退出 0，minRate 5000 的文件退出 1。QoS 0 加 `maxLost` 退出 2，并说明原因。
+不带 `--bench-rate` 时打印提示，结论是 `notRun`，退出 4。`--json` 里每条结论都带 actual / limit。
+
+**门禁**：
+
+- Rust **364 lib + 1 集成**全绿（新增：节拍、不可达的条、四舍五入、bench 参数组合、LoadTally 分桶 / 收齐 / 速率），clippy `-D warnings` 通过。
+- `scripts/scenario-gate.sh` 从 18 项扩到 **25 项**，新增 7 项（3b）：
+  - 跑满条的文件退出 0，输出带 `bench    sent` 和 `pass     minRate`。
+  - bench 回声没有污染断言，`pass     assertions` 仍在。
+  - 条高于实际速率时退出 1。
+  - QoS 0 加 `maxLost` 退出 2。
+- `cli-gate.sh` 36 项不变，全部通过。
+- 两个 gate 都在 18831 上跑完。新增用例沿用 `$TOPIC`，CI 的 ACL（只放行 `cli-gate/#`）不需要改。
+- 前端没动。
+
 
 ---
 
@@ -2706,7 +2865,7 @@ responder / watchdog 规则同样只列进 `notes()` 说明"没装"，不静默�
 5. **C2b 保存的定时任务**：把任务定义（不只是节奏默认值）持久化，支持"启动时自动恢复"。
 6. **C2c 定时任务的 CBOR 编码**：需要一个 Rust CBOR 编码器；在那之前界面明确拒绝，不做静默降级。
 7. ~~**Webhook 可选可靠性**~~ ✅ **第十四轮完成**（§4.48）：失败落盘 + 1s→300s 退避 + 死信，面板可"立即重试/清除死信"，并明确它是本地文件队列而非消息中间件。剩下的同类问题是**多 sink fan-out（E5）**——outbox 现在按 `rule_id` 记账，一条规则多个目标时要加"哪个目标"这一维。
-8. **系统代理开关**：按需启用 `reqwest/system-proxy`。
+8. **代理开关**：按规则显式配置代理 URL（`reqwest::Proxy`），而不是读系统设置——系统读取器不认 OS 的例外列表，见 §4.74。
 9. **把 gnu 路线固化成本地开发方式**：加 `pnpm tauri:dev:gnu`（设 `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu`），让没有 Windows SDK 的机器也能一键联调。顺带记录：`cargo test --lib` 在本机 gnu 下能编译但测试进程加载 Tauri/WebView2 依赖会 `STATUS_ENTRYPOINT_NOT_FOUND`，所以 Rust 门只能走 §4.1 的 harness。
 10. **补 `bridge.rs` 的自动化测试**：它只被真机端到端覆盖过一次，没有可重复回归。可把 `resync_subs` 的期望集合计算抽成不依赖 Tauri 的纯函数。
 11. **给 `ErrorBoundary` 补用例**：目前只有代码路径审查，没有 Playwright 覆盖。

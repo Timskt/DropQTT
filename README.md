@@ -103,6 +103,7 @@ dropqtt-cli pub --topic devices/gw1/cmd --payload '{"mode":"ota"}' --qos 1 --ret
 dropqtt-cli rpc --topic devices/gw1/get --payload '{}' --response-topic cli/reply --timeout 5s
 dropqtt-cli verify --topic 'devices/#' --assert '$.tempC < 80' --for 30s --junit > report.xml
 dropqtt-cli verify --scenario nightly.dqscn --for 30s --json > verdict.json
+dropqtt-cli verify --scenario nightly.dqscn --for 30s --bench-rate 2000 --bench-qos 1
 ```
 
 `verify` takes the desktop app's own assertion grammar (`$.field <op> <value>`,
@@ -111,9 +112,15 @@ passes here means the same thing when it is armed in the console.
 
 `--scenario` reads a `.dqscn` saved from the acceptance panel: its subscriptions
 get armed, its assertion rules join the ones passed on the command line, and the
-verdict is produced by the same Rust code the panel displays. What it does not do
-yet is generate the bench traffic a performance bar measures, so a scenario run
-reports that claim as *not proven* rather than as a pass — and says so.
+verdict is produced by the same Rust code the panel displays. A performance bar
+(`minRate` / `maxP99Ms` / `maxLost`) is only measured when you drive the load with
+`--bench-rate N` (plus `--bench-size B`, `--bench-qos 0|1|2`): the CLI publishes to
+the rig's bench topics for the `--for` window, then waits up to 2 s for the last
+acknowledgements before judging. The rate is a flag rather than read from
+`minRate` because offering exactly the bar measures nothing. Without it the bar is
+reported as *not proven* (exit 4), and a bar that the settings could never meet —
+`maxLost` over QoS 0, `maxP99Ms` with payloads too small to carry a timestamp — is
+refused before connecting.
 
 **Exit codes are a contract** — `0` pass, `1` refused or violated, `2` bad command
 line, `3` broker unreachable, `4` *not proven*. The last one exists because "no

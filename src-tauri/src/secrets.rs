@@ -28,6 +28,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use serde::Serialize;
 
 use crate::protocol::BrokerConfig;
+use crate::webhook::WebhookConfig;
 
 /// Namespace for every credential this app writes, so nothing here can collide with
 /// another application's entries or overwrite one by accident.
@@ -48,15 +49,42 @@ fn valid_reference(reference: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// The account name inside the `DropQTT` namespace. `broker:` is a prefix rather than
-/// a separate service so future kinds (webhook headers, key passphrases) can share it.
-pub fn account_of(reference: &str) -> Result<String, String> {
+/// What a reference points at. Each kind is its own prefix inside the `DropQTT`
+/// namespace, so a webhook header reference can never be used to read a broker
+/// password, even when a hand-edited file names the same id under both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretKind {
+    Broker,
+    WebhookHeader,
+}
+
+impl SecretKind {
+    fn prefix(self) -> &'static str {
+        match self {
+            SecretKind::Broker => "broker",
+            SecretKind::WebhookHeader => "webhook",
+        }
+    }
+
+    /// The IPC spelling. Absent means broker, which is what every caller sent before
+    /// webhook headers had a kind of their own.
+    pub fn parse(raw: Option<&str>) -> Result<Self, String> {
+        match raw {
+            None | Some("broker") => Ok(SecretKind::Broker),
+            Some("webhook") => Ok(SecretKind::WebhookHeader),
+            Some(_) => Err("unknown credential kind".to_string()),
+        }
+    }
+}
+
+/// The account name inside the `DropQTT` namespace.
+pub fn account_of(kind: SecretKind, reference: &str) -> Result<String, String> {
     if !valid_reference(reference) {
         return Err(
-            "the credential reference is not a valid identifier; re-enter the password".to_string(),
+            "the credential reference is not a valid identifier; re-enter the value".to_string(),
         );
     }
-    Ok(format!("broker:{reference}"))
+    Ok(format!("{}:{reference}", kind.prefix()))
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -185,7 +213,7 @@ pub fn resolve_with(backend: &dyn CredentialStore, config: &mut BrokerConfig) ->
         // The draft the user just typed wins over the reference it is replacing.
         return Ok(());
     }
-    let account = account_of(&reference)?;
+    let account = account_of(SecretKind::Broker, &reference)?;
     match backend.get(&account)? {
         Some(value) => {
             config.password = Some(value);
@@ -229,39 +257,93 @@ pub fn status() -> SecretStatus {
     status_with(&*store())
 }
 
-/// Store a new password. An empty value is rejected rather than written: a stored
+/// Store a new secret. An empty value is rejected rather than written: a stored
 /// empty string would later read as "no password" in `resolve_with`, which is the one
 /// confusion this module must not create.
-pub fn put_with(backend: &dyn CredentialStore, reference: &str, value: &str) -> Result<(), String> {
+pub fn put_with(
+    backend: &dyn CredentialStore,
+    kind: SecretKind,
+    reference: &str,
+    value: &str,
+) -> Result<(), String> {
     if value.is_empty() {
         return Err(
-            "an empty password is not stored; clear the credential instead of blanking it".to_string(),
+            "an empty value is not stored; clear the credential instead of blanking it".to_string(),
         );
     }
-    backend.set(&account_of(reference)?, value)
+    backend.set(&account_of(kind, reference)?, value)
 }
 
-pub fn put(reference: &str, value: &str) -> Result<(), String> {
-    put_with(&*store(), reference, value)
+pub fn put(kind: SecretKind, reference: &str, value: &str) -> Result<(), String> {
+    put_with(&*store(), kind, reference, value)
 }
 
-pub fn delete_with(backend: &dyn CredentialStore, reference: &str) -> Result<(), String> {
-    backend.remove(&account_of(reference)?)
+pub fn delete_with(backend: &dyn CredentialStore, kind: SecretKind, reference: &str) -> Result<(), String> {
+    backend.remove(&account_of(kind, reference)?)
 }
 
-pub fn delete(reference: &str) -> Result<(), String> {
-    delete_with(&*store(), reference)
+pub fn delete(kind: SecretKind, reference: &str) -> Result<(), String> {
+    delete_with(&*store(), kind, reference)
 }
 
 /// Distinguishes "never stored" from "cannot be read", so the UI can say which.
-pub fn exists_with(backend: &dyn CredentialStore, reference: &str) -> Result<bool, String> {
+pub fn exists_with(backend: &dyn CredentialStore, kind: SecretKind, reference: &str) -> Result<bool, String> {
     backend
-        .get(&account_of(reference)?)
+        .get(&account_of(kind, reference)?)
         .map(|value| value.is_some())
 }
 
-pub fn exists(reference: &str) -> Result<bool, String> {
-    exists_with(&*store(), reference)
+pub fn exists(kind: SecretKind, reference: &str) -> Result<bool, String> {
+    exists_with(&*store(), kind, reference)
+}
+
+/// The sink with every stored header value loaded into `headers`, and no references
+/// left over. A stored value replaces a plain header of the same name rather than
+/// being sent beside it, so the request carries one `Authorization`, not two.
+///
+/// The error names the header, never the value, and never a reason the platform
+/// supplied -- `CredentialStore` errors are authored strings already.
+pub fn resolve_webhook_with(
+    backend: &dyn CredentialStore,
+    config: &WebhookConfig,
+) -> Result<WebhookConfig, String> {
+    if config.secret_headers.is_empty() {
+        return Ok(config.clone());
+    }
+    let mut loaded = Vec::with_capacity(config.secret_headers.len());
+    for (name, reference) in &config.secret_headers {
+        let account = account_of(SecretKind::WebhookHeader, reference)?;
+        match backend.get(&account)? {
+            Some(value) => loaded.push((name.trim().to_string(), value)),
+            None => {
+                return Err(format!(
+                    "no value is stored for the webhook header '{}'; re-enter it in the rule",
+                    name.trim()
+                ))
+            }
+        }
+    }
+    let shadowed = |candidate: &str| {
+        loaded
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(candidate.trim()))
+    };
+    let headers = config
+        .headers
+        .iter()
+        .filter(|(name, _)| !shadowed(name))
+        .cloned()
+        .chain(loaded.iter().cloned())
+        .collect();
+    Ok(WebhookConfig {
+        headers,
+        secret_headers: Vec::new(),
+        ..config.clone()
+    })
+}
+
+pub fn resolve_webhook(config: &WebhookConfig) -> Result<WebhookConfig, String> {
+    resolve_webhook_with(&*store(), config)
 }
 
 /// An in-memory store: the test double, and the shape any future non-platform
@@ -329,7 +411,11 @@ mod tests {
 
     #[test]
     fn a_reference_is_scoped_to_this_app() {
-        assert_eq!(account_of("abc123").unwrap(), "broker:abc123");
+        assert_eq!(account_of(SecretKind::Broker, "abc123").unwrap(), "broker:abc123");
+        assert_eq!(
+            account_of(SecretKind::WebhookHeader, "abc123").unwrap(),
+            "webhook:abc123"
+        );
     }
 
     #[test]
@@ -337,17 +423,17 @@ mod tests {
         let too_long = "x".repeat(65);
         for bad in ["", "with space", "../../other", too_long.as_str(), "ünïcøde"] {
             assert!(
-                account_of(bad).is_err(),
+                account_of(SecretKind::Broker, bad).is_err(),
                 "accepted {bad:?} as a credential reference"
             );
         }
-        assert!(account_of("a-b_C9").is_ok());
+        assert!(account_of(SecretKind::Broker, "a-b_C9").is_ok());
     }
 
     #[test]
     fn a_stored_password_reaches_the_config_that_points_at_it() {
         let backend = MemoryStore::new();
-        put_with(&backend, "r1", "hunter2").unwrap();
+        put_with(&backend, SecretKind::Broker, "r1", "hunter2").unwrap();
         let mut config = config_with(Some("r1"), None);
         resolve_with(&backend, &mut config).unwrap();
         assert_eq!(config.password.as_deref(), Some("hunter2"));
@@ -357,7 +443,7 @@ mod tests {
     #[test]
     fn a_freshly_typed_password_beats_the_reference_it_is_replacing() {
         let backend = MemoryStore::new();
-        put_with(&backend, "r1", "old").unwrap();
+        put_with(&backend, SecretKind::Broker, "r1", "old").unwrap();
         let mut config = config_with(Some("r1"), Some("new"));
         resolve_with(&backend, &mut config).unwrap();
         assert_eq!(config.password.as_deref(), Some("new"));
@@ -387,24 +473,24 @@ mod tests {
     #[test]
     fn an_empty_password_is_never_stored() {
         let backend = MemoryStore::new();
-        assert!(put_with(&backend, "r1", "").is_err());
+        assert!(put_with(&backend, SecretKind::Broker, "r1", "").is_err());
         assert_eq!(backend.peek("broker:r1"), None);
     }
 
     #[test]
     fn deleting_a_reference_clears_it_and_is_idempotent() {
         let backend = MemoryStore::new();
-        put_with(&backend, "r1", "x").unwrap();
-        delete_with(&backend, "r1").unwrap();
+        put_with(&backend, SecretKind::Broker, "r1", "x").unwrap();
+        delete_with(&backend, SecretKind::Broker, "r1").unwrap();
         assert_eq!(backend.peek("broker:r1"), None);
-        delete_with(&backend, "r1").unwrap();
-        assert!(!exists_with(&backend, "r1").unwrap());
+        delete_with(&backend, SecretKind::Broker, "r1").unwrap();
+        assert!(!exists_with(&backend, SecretKind::Broker, "r1").unwrap());
     }
 
     #[test]
     fn existence_distinguishes_absent_from_broken() {
         let backend = MemoryStore::new();
-        assert!(!exists_with(&backend, "never").unwrap());
+        assert!(!exists_with(&backend, SecretKind::Broker, "never").unwrap());
         struct Broken;
         impl CredentialStore for Broken {
             fn get(&self, _: &str) -> Result<Option<String>, String> {
@@ -420,7 +506,7 @@ mod tests {
                 true
             }
         }
-        assert!(exists_with(&Broken, "any").is_err());
+        assert!(exists_with(&Broken, SecretKind::Broker, "any").is_err());
         let report = status_with(&Broken);
         assert!(!report.available);
         assert!(report.supported);
@@ -488,14 +574,25 @@ mod tests {
         // every other test here injects its own store, so they cannot interfere.
         let backend = Arc::new(MemoryStore::new());
         use_test_store(backend.clone());
-        put("r9", "via-global").unwrap();
-        assert!(exists("r9").unwrap());
+        put(SecretKind::Broker, "r9", "via-global").unwrap();
+        assert!(exists(SecretKind::Broker, "r9").unwrap());
         let mut config = config_with(Some("r9"), None);
         resolve(&mut config).unwrap();
         assert_eq!(config.password.as_deref(), Some("via-global"));
         assert_eq!(status(), SecretStatus { available: true, supported: true, reason: None });
-        delete("r9").unwrap();
-        assert!(!exists("r9").unwrap());
+        delete(SecretKind::Broker, "r9").unwrap();
+        assert!(!exists(SecretKind::Broker, "r9").unwrap());
+        put(SecretKind::WebhookHeader, "w9", "Bearer via-global").unwrap();
+        let sink = WebhookConfig {
+            url: "http://127.0.0.1:1/x".into(),
+            secret_headers: vec![("Authorization".into(), "w9".into())],
+            ..WebhookConfig::default()
+        };
+        assert_eq!(
+            resolve_webhook(&sink).unwrap().headers,
+            vec![("Authorization".to_string(), "Bearer via-global".to_string())]
+        );
+        delete(SecretKind::WebhookHeader, "w9").unwrap();
     }
 
     #[test]
@@ -513,6 +610,82 @@ mod tests {
             assert!(!shown.contains(secret), "{shown}");
             assert!(!shown.is_empty());
         }
+    }
+
+    fn sink_with(plain: &[(&str, &str)], stored: &[(&str, &str)]) -> WebhookConfig {
+        let pairs = |rows: &[(&str, &str)]| {
+            rows.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>()
+        };
+        WebhookConfig {
+            url: "http://127.0.0.1:8080/events".into(),
+            headers: pairs(plain),
+            secret_headers: pairs(stored),
+            ..WebhookConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_stored_header_value_reaches_the_request_and_no_reference_survives() {
+        let backend = MemoryStore::new();
+        put_with(&backend, SecretKind::WebhookHeader, "w1", "Bearer abc").unwrap();
+        let sink = sink_with(&[("X-Device", "gw-1")], &[("Authorization", "w1")]);
+        let resolved = resolve_webhook_with(&backend, &sink).unwrap();
+        assert_eq!(
+            resolved.headers,
+            vec![
+                ("X-Device".to_string(), "gw-1".to_string()),
+                ("Authorization".to_string(), "Bearer abc".to_string()),
+            ]
+        );
+        assert!(resolved.secret_headers.is_empty());
+        assert!(resolved.validate().is_ok(), "a resolved sink must be deliverable");
+        assert_eq!(backend.peek("webhook:w1").as_deref(), Some("Bearer abc"));
+    }
+
+    #[test]
+    fn a_stored_header_replaces_a_plain_one_of_the_same_name() {
+        let backend = MemoryStore::new();
+        put_with(&backend, SecretKind::WebhookHeader, "w1", "Bearer new").unwrap();
+        let sink = sink_with(&[("authorization", "Bearer stale")], &[("Authorization", "w1")]);
+        let headers = resolve_webhook_with(&backend, &sink).unwrap().headers;
+        assert_eq!(headers, vec![("Authorization".to_string(), "Bearer new".to_string())]);
+    }
+
+    #[test]
+    fn a_missing_header_value_names_the_header_and_never_posts_anonymously() {
+        let backend = MemoryStore::new();
+        let sink = sink_with(&[], &[("Authorization", "gone")]);
+        let error = resolve_webhook_with(&backend, &sink).unwrap_err();
+        assert!(error.contains("'Authorization'"), "{error}");
+        // And the unresolved sink itself refuses to deliver.
+        assert!(sink.validate().is_err());
+    }
+
+    #[test]
+    fn a_header_reference_cannot_read_a_broker_password() {
+        let backend = MemoryStore::new();
+        put_with(&backend, SecretKind::Broker, "shared", "broker-pass").unwrap();
+        let sink = sink_with(&[], &[("Authorization", "shared")]);
+        assert!(
+            resolve_webhook_with(&backend, &sink).is_err(),
+            "a webhook reference resolved against the broker namespace"
+        );
+    }
+
+    #[test]
+    fn a_sink_without_stored_headers_is_left_alone() {
+        let backend = MemoryStore::new();
+        let sink = sink_with(&[("X-A", "1")], &[]);
+        assert_eq!(resolve_webhook_with(&backend, &sink).unwrap(), sink);
+    }
+
+    #[test]
+    fn the_ipc_kind_defaults_to_broker_and_rejects_strangers() {
+        assert_eq!(SecretKind::parse(None).unwrap(), SecretKind::Broker);
+        assert_eq!(SecretKind::parse(Some("webhook")).unwrap(), SecretKind::WebhookHeader);
+        assert!(SecretKind::parse(Some("ssh")).is_err());
     }
 
     #[test]

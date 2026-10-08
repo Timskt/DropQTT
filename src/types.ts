@@ -854,13 +854,13 @@ export interface BridgeRule {
   sourceQos: number;
   targetConn: string;
   targetKind: 'mqtt' | 'http';
-  webhook: { url: string; format: 'raw' | 'json'; headers: [string, string][] };
+  webhook: WebhookSink;
   /**
    * Extra sinks the same message fans out to. Each is delivered and retried on
    * its own, because one endpoint being down is not the others' excuse. Optional
    * so rules written before fan-out keep loading unchanged.
    */
-  targets?: { url: string; format: 'raw' | 'json'; headers: [string, string][] }[];
+  targets?: WebhookSink[];
   topicMode: BridgeTopicMode;
   prefixFrom: string;
   prefixTo: string;
@@ -890,6 +890,15 @@ export interface BridgeRule {
   enabled: boolean;
 }
 
+/** One HTTP destination. `secretHeaders` holds `[name, reference]` for values that
+ *  live in the OS credential store; the plaintext is never in this object. */
+export interface WebhookSink {
+  url: string;
+  format: 'raw' | 'json';
+  headers: [string, string][];
+  secretHeaders?: [string, string][];
+}
+
 /** A silence-watchdog rule: alert when a topic filter stops carrying traffic. */
 export interface SilenceRule {
   id: string;
@@ -900,7 +909,7 @@ export interface SilenceRule {
   /** Minimum gap between alerts for one continuous outage. */
   cooldownSec: number;
   enabled: boolean;
-  webhook: { url: string; format: 'raw' | 'json'; headers: [string, string][] };
+  webhook: WebhookSink;
 }
 
 export const silenceRuleDefaults: Omit<SilenceRule, 'id' | 'name' | 'topicFilter'> = {

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { formatBytes } from '../../utils/format';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -32,6 +32,10 @@ import { Translations, fill } from '../../i18n';
 import { useBridge } from '../../hooks/useBridge';
 import { EVENT_LOG_CAP } from '../../hooks/useBridge';
 import { saveTextFile } from '../../utils/exportMessages';
+import { credentialStore, readSecretStatus } from '../../utils/secrets';
+import {
+  commitSinkSecrets, formatSinkHeaders, parseHeaderLines, planSinkSecrets, StaleHeaderMark, strippedSink, type SinkSecretPlan,
+} from '../../utils/webhookHeaders';
 import { useSilence } from '../../hooks/useSilence';
 import { SilencePanel } from './SilencePanel';
 
@@ -80,21 +84,6 @@ const parseTopicMap = (text: string): TopicMapEntry[] =>
 
 const formatTopicMap = (rows: TopicMapEntry[]): string =>
   (rows ?? []).map((e) => `${e.from} => ${e.to}`).join('\n');
-
-/** "Name: value" lines -> header rows; a malformed line throws, and the caller
- *  turns that into the form error rather than a partial save. */
-const parseHeaders = (text: string): [string, string][] =>
-  text
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => {
-      const colon = line.indexOf(':');
-      if (colon < 1) throw new Error('invalid header line');
-      return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
-    });
-
-const formatHeaders = (rows: [string, string][] | undefined): string =>
-  (rows ?? []).map(([k, v]) => `${k}: ${v}`).join('\n');
 
 /** An absolute http(s) URL with no credentials or fragment hiding in it. */
 const normalizeWebhookUrl = (raw: string): string => {
@@ -318,6 +307,18 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   const [extraHeaderTexts, setExtraHeaderTexts] = useState<string[]>([]);
   const [draft, setDraft] = useState<BridgeRule>(() => newRuleDraft('src', 'dst'));
   const fileRef = useRef<HTMLInputElement>(null);
+  // A save that stores header credentials waits on the keychain; a second click
+  // meanwhile would mint a second set of references for the same values.
+  const [saving, setSaving] = useState(false);
+  const [vaultReady, setVaultReady] = useState(false);
+  useEffect(() => {
+    if (!showForm) return;
+    let alive = true;
+    void readSecretStatus().then((s) => alive && setVaultReady(s.available));
+    return () => {
+      alive = false;
+    };
+  }, [showForm]);
 
   // Script dry-run state
   const [testPayload, setTestPayload] = useState('{"temp":23.5}');
@@ -359,7 +360,11 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     if (rules.length === 0) return;
     await saveTextFile(
       'dropqtt-bridge-rules.json',
-      JSON.stringify({ app: 'dropqtt-bridge', version: 2, rules: rules.map((r) => r.targetKind === 'http' ? { ...r, enabled: false, webhook: { ...r.webhook, url: '', headers: [] }, targets: (r.targets ?? []).map((s) => ({ ...s, url: '', headers: [] })) } : r) }, null, 2),
+      // Every rule loses its sinks' credentials, not only HTTP ones: an MQTT rule can
+      // still carry the webhook it was switched away from.
+      JSON.stringify({ app: 'dropqtt-bridge', version: 2, rules: rules.map((r) => r.targetKind === 'http'
+        ? { ...r, enabled: false, webhook: strippedSink(r.webhook), targets: (r.targets ?? []).map(strippedSink) }
+        : { ...r, ...(r.webhook ? { webhook: strippedSink(r.webhook) } : {}), ...(r.targets ? { targets: r.targets.map(strippedSink) } : {}) }) }, null, 2),
     );
   };
 
@@ -411,8 +416,8 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     setDraft(full);
     setExcludeText((full.excludeFilters ?? []).join('\n'));
     setTopicMapText(formatTopicMap(full.topicMap ?? []));
-    setHeaderText(formatHeaders(full.webhook.headers));
-    setExtraHeaderTexts((full.targets ?? []).map((s) => formatHeaders(s.headers)));
+    setHeaderText(formatSinkHeaders(full.webhook));
+    setExtraHeaderTexts((full.targets ?? []).map((s) => formatSinkHeaders(s)));
     setEditingId(r.id);
     setFormError(null);
     setShowAdvanced(
@@ -428,7 +433,52 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
     setShowForm(true);
   };
 
-  const submitDraft = () => {
+  /** Parses, normalises and stores every sink's headers, or reports why it cannot. */
+  const finalizeSinks = async (rule: BridgeRule): Promise<Pick<BridgeRule, 'webhook' | 'targets'> | null> => {
+    // Every sink is normalised and parsed as a unit: a rule must not save with
+    // three targets where the third one's headers were silently dropped. The
+    // header box index follows draft.targets, so it is kept through the filter.
+    const extras = (rule.targets ?? [])
+      .map((sink, box) => ({ sink, box }))
+      .filter(({ sink }) => sink.url.trim());
+    const hasPrimary = Boolean(rule.webhook.url.trim());
+    const status = await readSecretStatus();
+    let plans: SinkSecretPlan[];
+    let sinks: Pick<BridgeRule, 'webhook' | 'targets'>;
+    try {
+      if (!hasPrimary && extras.length === 0) throw new Error('nothing to deliver to');
+      const primary = hasPrimary
+        ? planSinkSecrets(rule.webhook, parseHeaderLines(headerText), status)
+        : { headers: [], secretHeaders: [], writes: [] };
+      const others = extras.map(({ sink, box }) => planSinkSecrets(sink, parseHeaderLines(extraHeaderTexts[box] ?? ''), status));
+      plans = [primary, ...others];
+      sinks = {
+        webhook: hasPrimary
+          ? { ...rule.webhook, url: normalizeWebhookUrl(rule.webhook.url), headers: primary.headers, secretHeaders: primary.secretHeaders }
+          : { ...rule.webhook, url: '', headers: [], secretHeaders: [] },
+        targets: extras.map(({ sink }, i) => ({
+          ...sink,
+          url: normalizeWebhookUrl(sink.url),
+          headers: others[i].headers,
+          secretHeaders: others[i].secretHeaders,
+        })),
+      };
+    } catch (e) {
+      setFormError(e instanceof StaleHeaderMark ? fill(t.webhookHeaderMarkStale, { name: e.header }) : t.webhookInvalid);
+      return null;
+    }
+    // Stored before the rule that points at them, so a saved rule never names a
+    // value the keychain does not have. A refused write saves nothing.
+    const failed = await commitSinkSecrets(credentialStore, plans);
+    if (failed) {
+      setFormError(fill(t.webhookHeaderStoreFailed, { reason: failed }));
+      return null;
+    }
+    return sinks;
+  };
+
+  const submitDraft = async () => {
+    if (saving) return;
     if (!draft.name.trim() || !draft.sourceFilter.trim()) {
       setFormError(t.ruleName + ' / ' + t.sourceTopicFilter);
       return;
@@ -454,28 +504,20 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       topicMap: draft.topicMode === 'map' ? parseTopicMap(topicMapText) : [],
       rateLimit: Math.max(0, Math.min(1_000_000, draft.rateLimit || 0)),
     };
-    if (draft.targetKind === 'http') {
-      // Every sink is normalised and parsed as a unit: a rule must not save with
-      // three targets where the third one's headers were silently dropped.
-      const extras = (draft.targets ?? []).filter((s) => s.url.trim());
-      try {
-        if (!draft.webhook.url.trim() && extras.length === 0) throw new Error('nothing to deliver to');
-        finalRule.webhook = draft.webhook.url.trim()
-          ? { ...draft.webhook, url: normalizeWebhookUrl(draft.webhook.url), headers: parseHeaders(headerText) }
-          : { ...draft.webhook, url: '', headers: [] };
-        finalRule.targets = extras.map((s, i) => ({
-          ...s,
-          url: normalizeWebhookUrl(s.url),
-          headers: parseHeaders(extraHeaderTexts[i] ?? ''),
-        }));
-      } catch {
-        setFormError(t.webhookInvalid);
-        return;
-      }
-    }
     if (finalRule.topicMode === 'map' && finalRule.topicMap.length === 0) {
       setFormError(t.topicMapEmpty);
       return;
+    }
+    if (draft.targetKind === 'http') {
+      setSaving(true);
+      try {
+        const sinks = await finalizeSinks(draft);
+        if (!sinks) return;
+        finalRule.webhook = sinks.webhook;
+        finalRule.targets = sinks.targets;
+      } finally {
+        setSaving(false);
+      }
     }
     if (editingId) {
       updateRule({ ...finalRule, id: editingId });
@@ -535,7 +577,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
       if (kind === 'alert') next.transformScript = 'function transform(topic, payload) {\n  const data = JSON.parse(payload);\n  if (typeof data.temperature !== "number" || data.temperature < 40) return null;\n  return { text: "High temperature: " + data.temperature, topic };\n}';
     }
     setDraft(next); setEditingId(null); setFormError(null); setExcludeText(''); setTopicMapText('');
-    setHeaderText(formatHeaders(next.webhook.headers));
+    setHeaderText(formatSinkHeaders(next.webhook));
     setExtraHeaderTexts([]);
     setShowAdvanced(kind === 'alert'); setShowForm(true);
   };
@@ -720,6 +762,7 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
               <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}><span>{t.webhookUrl}</span><input aria-label={t.webhookUrl} className="field-input w-full" placeholder="http://localhost:8080/events" value={draft.webhook.url} onChange={(e) => set('webhook', { ...draft.webhook, url: e.target.value })} /></label>
               <select aria-label={t.webhookBody} className="field-input w-full" value={draft.webhook.format} onChange={(e) => set('webhook', { ...draft.webhook, format: e.target.value as 'raw' | 'json' })}><option value="json">{t.webhookEnvelope}</option><option value="raw">{t.webhookRaw}</option></select>
               <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}><span>{t.webhookHeaders}</span><textarea aria-label={t.webhookHeaders} className="field-input w-full h-16 font-mono" placeholder="Content-Type: application/json" spellCheck={false} value={headerText} onChange={(e) => setHeaderText(e.target.value)} /></label>
+              {vaultReady && <p className="text-[10px] leading-snug" data-testid="webhook-header-vault" style={{ color: 'var(--text-muted)' }}>{t.webhookHeaderVault}</p>}
 
               {extraSinks.length > 0 && (
                 <div className="space-y-2 pt-1" data-testid="extra-sinks">
@@ -1003,12 +1046,13 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
             )}
 
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <span className="text-[11px] font-mono flex-1 min-w-0" style={{ color: formError ? 'var(--danger)' : 'var(--text-muted)' }}>
+              {/* A refused save only changes this line's colour; without the role a screen reader hears nothing. */}
+              <span role={formError ? 'alert' : undefined} className="text-[11px] font-mono flex-1 min-w-0" style={{ color: formError ? 'var(--danger)' : 'var(--text-muted)' }}>
                 {formError ?? t.bridgeHint}
               </span>
               <div className="flex gap-2">
                 <button onClick={closeForm} className="btn-ghost">{t.cancel}</button>
-                <button onClick={submitDraft} className="btn-accent">
+                <button onClick={() => void submitDraft()} disabled={saving} aria-busy={saving} className="btn-accent">
                   {editingId ? t.saveChanges : t.addRule}
                 </button>
               </div>

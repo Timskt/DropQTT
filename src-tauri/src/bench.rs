@@ -197,6 +197,49 @@ impl BenchSpec {
     }
 }
 
+/// How often a paced sender wakes up. Windows only resolves timer wakeups every
+/// ~10-16 ms, so one sleep per message capped a 1000/s run at 90-170 msg/s; each
+/// window instead emits whatever the elapsed time says should already have gone out.
+pub const PACING_WINDOW: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// How many messages a sender at `rate` msg/s should have sent after `elapsed`,
+/// given it has sent `sent` so far. Catch-up is bounded to four windows: a starved
+/// task must not dump its whole backlog in one burst the moment it runs again.
+/// Shared by the desktop lab and the CLI so both mean the same thing by "rate".
+pub fn paced_target(elapsed: std::time::Duration, rate: u32, sent: u64) -> u64 {
+    let per_window = (PACING_WINDOW.as_micros() as u64 * u64::from(rate) / 1_000_000).max(1);
+    (elapsed.as_micros() as u64 * u64::from(rate) / 1_000_000).min(sent + per_window * 4)
+}
+
+/// Messages per second over `elapsed_ms`, rounded rather than floored. Floor read two
+/// messages over 2001 ms as 0 msg/s, and biased every run low by up to one message a
+/// second, which is enough to fail a bar set at the rate that was actually offered.
+/// The desktop lab and the CLI both report through this, so they cannot disagree.
+pub fn measured_rate(sent: u64, elapsed_ms: u64) -> u64 {
+    if elapsed_ms == 0 {
+        return 0;
+    }
+    sent.saturating_mul(1000).saturating_add(elapsed_ms / 2) / elapsed_ms
+}
+
+/// Bars that a run with these settings could never meet, whatever the broker does.
+/// Refusing them up front is the difference between "your rig is wrong" and a red
+/// build that someone spends an afternoon blaming on the network.
+pub fn unmeetable(expect: &BenchExpect, size: u32, qos: u8) -> Option<String> {
+    if expect.max_p99_ms.is_some() && (size as usize) < HEADER_LEN {
+        return Some(format!(
+            "a p99 bar needs payloads of at least {HEADER_LEN} bytes to carry the send time; {size} cannot be timed"
+        ));
+    }
+    if expect.max_lost.is_some() && qos == 0 {
+        return Some(
+            "a maxLost bar counts unanswered publishes, and QoS 0 publishes are never answered; use QoS 1 or 2"
+                .to_string(),
+        );
+    }
+    None
+}
+
 /// Build the wire payload. Sizes below `HEADER_LEN` cannot carry the timing
 /// header, so they stay exactly as requested and simply report no latency.
 pub fn bench_payload(size: usize, seq: u32, send_ms: i64) -> Vec<u8> {
@@ -483,7 +526,7 @@ impl BenchManager {
                     verdict: {
                         // One sample per call: a verdict whose rate and counters
                         // straddle two loads can blame the run for a torn read.
-                        let rate = sent.saturating_mul(1000).checked_div(elapsed_ms).unwrap_or(0);
+                        let rate = measured_rate(sent, elapsed_ms);
                         let summary = inner.latency.summary();
                         r.spec.evaluate(
                             sent,
@@ -653,6 +696,36 @@ impl BenchRun {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn pacing_follows_the_clock_and_never_bursts_a_backlog() {
+        assert_eq!(paced_target(Duration::from_millis(500), 1000, 0), 80, "capped at four 20 ms windows");
+        assert_eq!(paced_target(Duration::from_millis(500), 1000, 490), 500);
+        assert_eq!(paced_target(Duration::from_secs(1), 1000, 1000), 1000, "on time means nothing more is due");
+        // One per window at the floor, so a 1 msg/s run still advances when it is late.
+        assert_eq!(paced_target(Duration::from_secs(3), 1, 0), 3);
+    }
+
+    #[test]
+    fn the_measured_rate_rounds_instead_of_flooring() {
+        assert_eq!(measured_rate(2, 2001), 1, "floor said 0 msg/s");
+        assert_eq!(measured_rate(200, 2003), 100);
+        assert_eq!(measured_rate(149, 1000), 149);
+        assert_eq!(measured_rate(5, 0), 0, "no time, no rate");
+    }
+
+    #[test]
+    fn bars_that_cannot_be_met_are_named_before_the_run() {
+        let p99 = BenchExpect { max_p99_ms: Some(50), ..Default::default() };
+        assert!(unmeetable(&p99, (HEADER_LEN - 1) as u32, 1).unwrap().contains("p99"));
+        assert!(unmeetable(&p99, HEADER_LEN as u32, 0).is_none());
+        let lost = BenchExpect { max_lost: Some(0), ..Default::default() };
+        assert!(unmeetable(&lost, 64, 0).unwrap().contains("QoS 0"));
+        assert!(unmeetable(&lost, 64, 1).is_none());
+        let rate = BenchExpect { min_rate: Some(100), ..Default::default() };
+        assert!(unmeetable(&rate, 1, 0).is_none(), "a rate bar is measurable at any size and QoS");
+    }
 
     fn spec(id: &str) -> BenchSpec {
         BenchSpec {

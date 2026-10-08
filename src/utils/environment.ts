@@ -1,4 +1,5 @@
-import { BrokerProfile } from '../types';
+import { BrokerProfile, WebhookSink } from '../types';
+import { strippedSink } from './webhookHeaders';
 
 /**
  * The environment bundle: one text blob that describes a reproducible bench —
@@ -69,15 +70,15 @@ const stripSecrets = (value: unknown, depth = 0): unknown => {
 };
 
 /** A webhook target is replaced by an empty one and flagged, never partially kept. */
-const redactWebhook = <T extends { webhook?: { url?: string; format?: string; headers?: unknown } }>(rule: T): T => {
+const redactWebhook = <T extends { webhook?: Partial<WebhookSink> }>(rule: T): T => {
   if (!rule.webhook) return rule;
-  const sinks = rule as T & { targets?: { url?: string; format?: string; headers?: unknown }[] };
+  const sinks = rule as T & { targets?: Partial<WebhookSink>[] };
   return {
     ...rule,
-    webhook: { url: '', format: rule.webhook.format ?? 'json', headers: [] },
+    webhook: strippedSink(rule.webhook),
     // A fan-out rule carries one address per sink: blanking only the primary would
     // export the rest of them.
-    ...(sinks.targets ? { targets: sinks.targets.map((s) => ({ ...s, url: '', headers: [] })) } : {}),
+    ...(sinks.targets ? { targets: sinks.targets.map(strippedSink) } : {}),
     webhookRedacted: true,
   };
 };

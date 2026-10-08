@@ -66,7 +66,7 @@ cat > "$WORK/rig.dqscn" <<EOF
 }
 EOF
 
-# The same rig, with a performance bar verify has no way to exercise.
+# The same rig, with a performance bar that only a driven load can measure.
 cat > "$WORK/rig-bar.dqscn" <<EOF
 {
   "kind": "scenario",
@@ -98,6 +98,40 @@ expect_says 'fail     assertions' "and the failing claim is the assertion"
 echo "3. a rig that sets a bar"
 expect_code 4 "a bar with no run behind it is not proven" "$(run_rig '{"tempC":21}' "$WORK/rig-bar.dqscn")"
 expect_says 'notRun' "reported as not run, not as met"
+
+# The bar a modest load can meet. The bench topic is the assertion's own topic on
+# purpose: the load's echoes must be told apart from device traffic, or a binary bench
+# payload would reach a JSON rule and turn a clean run into "unevaluable".
+cat > "$WORK/rig-load.dqscn" <<EOF
+{
+  "kind": "scenario",
+  "format": "dropqtt-scenario/1",
+  "name": "Gate rig with a load",
+  "subscriptions": [ { "topic": "$TOPIC", "qos": 1,
+    "options": { "qos": 1, "noLocal": false, "retainAsPublished": false, "retainHandling": 0 } } ],
+  "responders": [],
+  "assertions": [
+    { "id": "temp-under-boiling", "filter": "$TOPIC",
+      "field": { "json": "\$.tempC" }, "op": "lt", "expected": "80",
+      "enabled": true, "label": "", "text": "\$.tempC < 80" }
+  ],
+  "bench": { "topics": ["$TOPIC"], "expect": { "minRate": 150, "maxP99Ms": 500, "maxLost": 0 } },
+  "silence": []
+}
+EOF
+
+echo "3b. a rig whose bar is driven"
+expect_code 0 "a met bar and held rules pass" \
+  "$(run_rig '{"tempC":21}' "$WORK/rig-load.dqscn" --bench-rate 200 --bench-qos 1)"
+expect_says 'bench    sent' "the load is reported"
+expect_says 'pass     minRate' "and the rate claim reads pass"
+expect_says 'pass     assertions' "with the load's own echoes kept from the rule"
+expect_code 1 "an offered rate below the bar fails" \
+  "$(run_rig '{"tempC":21}' "$WORK/rig-bar.dqscn" --bench-rate 200 --bench-qos 1)"
+expect_says 'fail     minRate' "and the failing claim is the rate"
+"$CLI" verify "${B[@]}" --scenario "$WORK/rig-load.dqscn" --for 1s --bench-rate 200 >"$WORK/out" 2>"$WORK/err"
+expect_code 2 "a loss bar over QoS 0 is refused before the run" "$?"
+expect_says 'QoS 0' "naming why it could never be met"
 
 echo "4. broken input is caught before the network"
 echo '{ "kind": "scenario", "format": "dropqtt-scenario/9", "name": "future" }' > "$WORK/other.dqscn"

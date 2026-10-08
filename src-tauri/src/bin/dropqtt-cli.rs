@@ -16,6 +16,7 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use dropqtt_lib::assertions::{self, AssertionRule, AssertOutcome, AssertStats};
+use dropqtt_lib::bench::{self, BenchSpec};
 use dropqtt_lib::cli::{
     self, Command, VerifyReport, EXIT_FAIL, EXIT_PASS, EXIT_UNAVAILABLE, EXIT_UNKNOWN, EXIT_USAGE,
 };
@@ -540,7 +541,20 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
         for note in scenario::notes(loaded, cmd.broker.protocol_version == 5) {
             eprintln!("dropqtt-cli: note: {note}");
         }
+        if cmd.bench.is_none() && loaded.bench.as_ref().is_some_and(|b| b.expect.is_some()) {
+            eprintln!("dropqtt-cli: note: the performance bar is not measured without --bench-rate");
+        }
     }
+    let load_spec = match (&cmd.bench, &scenario) {
+        (Some(drive), Some(loaded)) => match load_spec(drive, loaded, cmd.duration_ms.unwrap_or(0)) {
+            Ok(spec) => Some(spec),
+            Err(err) => {
+                eprintln!("dropqtt-cli: {err}");
+                return EXIT_USAGE;
+            }
+        },
+        _ => None,
+    };
 
     // Validate every rule before touching the network: a typo in a predicate should
     // fail in milliseconds, not after a wait that produced nothing.
@@ -591,6 +605,21 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
     if let Some(loaded) = &scenario {
         subs.extend(loaded.subscriptions.iter().map(|sub| (sub.topic.clone(), sub.options)));
     }
+    if let Some(spec) = &load_spec {
+        for topic in &spec.topics {
+            if let Err(err) = check_publishable(&session.caps, topic, spec.qos, false, spec.size as usize) {
+                eprintln!("dropqtt-cli: bench topic {topic}: {err}");
+                session.close().await;
+                return EXIT_USAGE;
+            }
+            // The loopback copy is what latency is timed from. A rig that already
+            // subscribes the exact topic keeps its own options; a second SUBSCRIBE to
+            // the same filter would replace them, not add to them.
+            if !subs.iter().any(|(filter, _)| filter == topic) {
+                subs.push((topic.clone(), SubOptions { qos: spec.qos, ..Default::default() }));
+            }
+        }
+    }
     let mut refused = Vec::new();
     for (filter, sub_options) in &subs {
         match session.subscribe_and_wait(filter, sub_options).await {
@@ -624,29 +653,72 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
 
     let started = Instant::now();
     let deadline = cmd.duration_ms.map(|ms| started + Duration::from_millis(ms));
+    let send_for = Duration::from_millis(cmd.duration_ms.unwrap_or(0));
+    let mut load = load_spec.map(|spec| Load::new(spec, started, send_for));
     let mut observed = 0u64;
+    let mut pacing = tokio::time::interval(bench::PACING_WINDOW);
+    pacing.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let Session { client, rx, .. } = &mut session;
     loop {
         if cmd.count.is_some_and(|target| observed >= target) {
             break;
         }
-        let budget = match deadline {
-            Some(at) => at.saturating_duration_since(Instant::now()),
-            None => Duration::from_secs(3600),
+        if let Some(load) = &mut load {
+            if let Err(err) = load.stop_when_due(client).await {
+                eprintln!("dropqtt-cli: bench publish failed: {err}");
+                return EXIT_UNAVAILABLE;
+            }
+        }
+        let budget = match &load {
+            Some(load) => match load.budget() {
+                Some(budget) => budget,
+                None => break,
+            },
+            None => match deadline {
+                Some(at) => at.saturating_duration_since(Instant::now()),
+                None => Duration::from_secs(3600),
+            },
         };
-        if budget.is_zero() {
+        if budget.is_zero() && load.is_none() {
             break;
         }
-        match session.next(budget).await {
-            Some(NetEvent::Publish(publish)) => {
+        let sending = load.as_ref().is_some_and(Load::sending);
+        let event = tokio::select! {
+            _ = pacing.tick(), if sending => {
+                if let Some(load) = &mut load {
+                    if let Err(err) = load.publish_due(client).await {
+                        eprintln!("dropqtt-cli: bench publish failed: {err}");
+                        return EXIT_UNAVAILABLE;
+                    }
+                }
+                continue;
+            }
+            event = tokio::time::timeout(budget, rx.recv()) => event,
+        };
+        match event {
+            Ok(Some(NetEvent::Publish(publish))) => {
+                let ours = load.as_mut().is_some_and(|load| load.absorb(&publish.topic, &publish.payload));
+                if ours {
+                    continue;
+                }
                 observed += 1;
                 let msg = cli::message_of(&publish, &format!("v{observed}"));
                 judge_into(&mut tallies, &rules, &msg);
             }
-            Some(NetEvent::ConnectionError(text)) => {
+            Ok(Some(NetEvent::PublishAcked { code, .. })) => {
+                if let Some(load) = &mut load {
+                    load.tally.record_ack(code);
+                }
+            }
+            Ok(Some(NetEvent::ConnectionError(text))) => {
                 eprintln!("dropqtt-cli: link error: {text}");
                 return EXIT_UNAVAILABLE;
             }
-            Some(_) | None => continue,
+            Ok(Some(_)) | Err(_) => continue,
+            Ok(None) => {
+                eprintln!("dropqtt-cli: the connection task ended");
+                return EXIT_UNAVAILABLE;
+            }
         }
     }
     session.close().await;
@@ -658,7 +730,12 @@ async fn run_verify(cmd: cli::VerifyCmd) -> i32 {
         rules: tallies,
     };
     if let Some(loaded) = &scenario {
-        return report_scenario(loaded, &report, cmd.json, cmd.junit, started.elapsed(), refused.len() as u64);
+        let measured = load.as_ref().map(Load::measurement);
+        if let (Some(load), Some(measured), false) = (&load, &measured, cmd.json || cmd.junit) {
+            println!("{}", load.tally.summary_line(measured));
+        }
+        let elapsed = started.elapsed();
+        return report_scenario(loaded, &report, cmd.json, cmd.junit, elapsed, refused.len() as u64, measured);
     }
     if cmd.junit {
         print!("{}", report.to_junit());
@@ -704,6 +781,7 @@ fn report_scenario(
     junit: bool,
     elapsed: Duration,
     refused: u64,
+    measurement: Option<scenario::Measurement>,
 ) -> i32 {
     let summed = |pick: fn(&dropqtt_lib::cli::RuleTally) -> u64| {
         report.rules.iter().map(pick).sum::<u64>()
@@ -714,18 +792,19 @@ fn report_scenario(
         violated: summed(|t| t.violated),
         unevaluable: summed(|t| t.unevaluable),
     };
-    let evidence = scenario::Evidence {
+    // The same judgement the desktop panel asks for, from the same function: a CLI
+    // that assembled its own evidence would be a second verdict waiting to disagree.
+    let verdict = scenario::judge(scenario::VerdictRequest {
         expect: loaded.bench.as_ref().and_then(|b| b.expect.clone()),
-        // verify generates no bench traffic, so there is nothing to grade the bar
-        // against. `None` here is what makes the rate claim come out as not proven.
-        bench: None,
+        // `None` when no load was driven, which is what reports the bar as not run.
+        measurement,
         assertions: (!report.rules.is_empty()).then_some(stats),
         // A filter the broker refused is a hole in the rig, and a hole in the rig is
         // not a pass: the rules beside it were judged against traffic that never came.
         refused,
-    };
-    let claims = scenario::claims(&evidence);
-    let outcome = scenario::verdict_of(&claims);
+    });
+    let claims = verdict.claims;
+    let outcome = verdict.overall;
     let generated_at = chrono::Utc::now().to_rfc3339();
     if junit {
         print!(
@@ -761,6 +840,112 @@ fn report_scenario(
         );
     }
     outcome.exit_code()
+}
+
+/// How long a driven load may wait for its last acks and loopback copies once sending
+/// stops. Long enough for a loaded broker's tail, short enough that a lost loopback
+/// subscription costs a CI step seconds rather than its timeout.
+const DRAIN_CAP: Duration = Duration::from_secs(2);
+
+/// The scenario's bench topics at the load the command line asked for, refused up
+/// front by the same checks the desktop lab runs.
+fn load_spec(drive: &cli::BenchDrive, loaded: &Scenario, duration_ms: u64) -> Result<BenchSpec, String> {
+    let Some(rig) = loaded.bench.as_ref() else {
+        return Err("--bench-rate was given, but the scenario has no bench section to drive".into());
+    };
+    if duration_ms / 1000 > u64::from(bench::MAX_DURATION_SEC) {
+        return Err(format!("a bench run is at most {} seconds", bench::MAX_DURATION_SEC));
+    }
+    let spec = BenchSpec {
+        id: "cli".into(),
+        topics: rig.topics.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect(),
+        rate: drive.rate,
+        size: drive.size,
+        qos: drive.qos,
+        retain: false,
+        duration_sec: 0,
+        expect: rig.expect.clone(),
+        mirror: false,
+    };
+    spec.validate()?;
+    if let Some(reason) = rig.expect.as_ref().and_then(|e| bench::unmeetable(e, drive.size, drive.qos)) {
+        return Err(reason);
+    }
+    Ok(spec)
+}
+
+/// A load being driven: paced publishes for `send_for`, then a bounded wait for the
+/// answers. Assertion traffic keeps being judged through both phases.
+struct Load {
+    spec: BenchSpec,
+    tally: cli::LoadTally,
+    started: Instant,
+    send_for: Duration,
+    stopped: Option<Instant>,
+}
+
+impl Load {
+    fn new(spec: BenchSpec, started: Instant, send_for: Duration) -> Self {
+        Self { spec, tally: cli::LoadTally::default(), started, send_for, stopped: None }
+    }
+
+    fn sending(&self) -> bool {
+        self.stopped.is_none()
+    }
+
+    /// Once the send window is over, send what the last partial window still owed and
+    /// stop. Without it the final tick lands up to 20 ms early and a 100/s run for 2 s
+    /// reports 98/s: a bar set at exactly the rate would fail on our own rounding.
+    async fn stop_when_due(&mut self, client: &MqttClient) -> Result<(), String> {
+        if self.stopped.is_none() && self.started.elapsed() >= self.send_for {
+            self.publish_due(client).await?;
+            self.stopped = Some(Instant::now());
+        }
+        Ok(())
+    }
+
+    /// How long to wait for the next event, or `None` once the run is over.
+    fn budget(&self) -> Option<Duration> {
+        let now = Instant::now();
+        let Some(stopped) = self.stopped else {
+            // Never longer than one window, so the pacing tick is not starved.
+            let send_end = self.started + self.send_for;
+            return Some(send_end.saturating_duration_since(now).min(bench::PACING_WINDOW));
+        };
+        let drain_end = stopped + DRAIN_CAP;
+        if self.tally.drained(self.spec.qos, self.spec.size) || now >= drain_end {
+            return None;
+        }
+        Some(drain_end - now)
+    }
+
+    async fn publish_due(&mut self, client: &MqttClient) -> Result<(), String> {
+        let elapsed = self.started.elapsed().min(self.send_for);
+        let target = bench::paced_target(elapsed, self.spec.rate, self.tally.sent);
+        while self.tally.sent < target {
+            let seq = self.tally.sent as u32;
+            let topic = &self.spec.topics[self.tally.sent as usize % self.spec.topics.len()];
+            let payload = Bytes::from(bench::bench_payload(
+                self.spec.size as usize,
+                seq,
+                chrono::Utc::now().timestamp_millis(),
+            ));
+            client.publish(topic, self.spec.qos, false, payload, None).await?;
+            self.tally.sent += 1;
+        }
+        Ok(())
+    }
+
+    fn absorb(&mut self, topic: &str, payload: &[u8]) -> bool {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        self.tally.absorb(&self.spec.topics, self.spec.size, topic, payload, now_ms)
+    }
+
+    /// Settled only if sending ran its full length; a run cut short measured a sample.
+    fn measurement(&self) -> scenario::Measurement {
+        let send_elapsed = self.stopped.map_or_else(|| self.started.elapsed(), |at| at - self.started);
+        self.tally.measurement(send_elapsed, self.stopped.is_some())
+    }
 }
 
 fn judge_into(tallies: &mut [cli::RuleTally], rules: &[AssertionRule], msg: &MqttGenericMessage) {    for (tally, rule) in tallies.iter_mut().zip(rules) {

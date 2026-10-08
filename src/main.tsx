@@ -14,6 +14,7 @@ try { applyTheme((localStorage.getItem('dropqtt_theme') || 'cyberpunk') as Theme
 void migrateBeforeRender()
   .then((report) => {
     if (report.moved > 0) console.info(`moved ${report.moved} broker password(s) into the system credential store`);
+    if (report.headersMoved) console.info(`moved ${report.headersMoved} webhook header value(s) into the system credential store`);
     report.failed.forEach((reason) => console.warn('credential store:', reason));
   })
   .catch((e: unknown) => console.warn('credential migration did not run:', String(e)))

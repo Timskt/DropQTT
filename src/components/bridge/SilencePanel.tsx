@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BellOff, Plus, Trash2, X, Check, CircleAlert } from 'lucide-react';
 import { SilenceRule, silenceRuleDefaults } from '../../types';
 import { Translations, fill } from '../../i18n';
 import { SilenceAlertEntry } from '../../hooks/useSilence';
+import { credentialStore, readSecretStatus } from '../../utils/secrets';
+import {
+  commitSinkSecrets, formatSinkHeaders, parseHeaderLines, planSinkSecrets, StaleHeaderMark, type SinkSecretPlan,
+} from '../../utils/webhookHeaders';
 
 interface SilencePanelProps {
   rules: SilenceRule[];
@@ -32,18 +36,31 @@ export const SilencePanel: React.FC<SilencePanelProps> = ({
   const [editing, setEditing] = useState<SilenceRule | null>(null);
   const [headerText, setHeaderText] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  // Storing a header credential waits on the keychain; a second click meanwhile
+  // would mint a second reference for the same value.
+  const [saving, setSaving] = useState(false);
+  const [vaultReady, setVaultReady] = useState(false);
+  const isEditing = editing !== null;
+  useEffect(() => {
+    if (!isEditing) return;
+    let alive = true;
+    void readSecretStatus().then((s) => alive && setVaultReady(s.available));
+    return () => {
+      alive = false;
+    };
+  }, [isEditing]);
 
   const start = (existing?: SilenceRule) => {
     const base = existing ?? {
       id: newId(), name: '', topicFilter: '', ...silenceRuleDefaults,
     };
     setEditing(base);
-    setHeaderText(base.webhook.headers.map(([k, v]) => `${k}: ${v}`).join('\n'));
+    setHeaderText(formatSinkHeaders(base.webhook));
     setFormError(null);
   };
 
-  const submit = () => {
-    if (!editing) return;
+  const submit = async () => {
+    if (!editing || saving) return;
     if (!editing.name.trim() || !editing.topicFilter.trim()) {
       setFormError(t.silenceNeedFields);
       return;
@@ -60,22 +77,42 @@ export const SilencePanel: React.FC<SilencePanelProps> = ({
       setFormError(t.webhookInvalid);
       return;
     }
-    const headers: [string, string][] = headerText
-      .split('\n')
-      .filter((l) => l.trim())
-      .map((line) => {
-        const colon = line.indexOf(':');
-        if (colon < 1) throw new Error();
-        return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()] as [string, string];
-      });
-    const rule: SilenceRule = {
-      ...editing,
-      name: editing.name.trim(),
-      topicFilter: editing.topicFilter.trim(),
-      webhook: { ...editing.webhook, url: url.toString(), headers },
-    };
-    (rules.some((r) => r.id === rule.id) ? onUpdate : onAdd)(rule);
-    setEditing(null);
+    setSaving(true);
+    try {
+      const plan = await planHeaders(editing);
+      if (!plan) return;
+      const rule: SilenceRule = {
+        ...editing,
+        name: editing.name.trim(),
+        topicFilter: editing.topicFilter.trim(),
+        webhook: { ...editing.webhook, url: url.toString(), headers: plan.headers, secretHeaders: plan.secretHeaders },
+      };
+      (rules.some((r) => r.id === rule.id) ? onUpdate : onAdd)(rule);
+      setEditing(null);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Parses the header box and stores its credentials, or reports why it cannot. */
+  const planHeaders = async (rule: SilenceRule): Promise<SinkSecretPlan | null> => {
+    const status = await readSecretStatus();
+    let plan: SinkSecretPlan;
+    try {
+      plan = planSinkSecrets(rule.webhook, parseHeaderLines(headerText), status);
+    } catch (e) {
+      // A malformed header line used to escape this handler as an uncaught throw
+      // and leave the form silently unsaved.
+      setFormError(e instanceof StaleHeaderMark ? fill(t.webhookHeaderMarkStale, { name: e.header }) : t.webhookInvalid);
+      return null;
+    }
+    // Stored before the rule that points at it; a refused write saves nothing.
+    const failed = await commitSinkSecrets(credentialStore, [plan]);
+    if (failed) {
+      setFormError(fill(t.webhookHeaderStoreFailed, { reason: failed }));
+      return null;
+    }
+    return plan;
   };
 
   return (
@@ -136,11 +173,12 @@ export const SilencePanel: React.FC<SilencePanelProps> = ({
           </label>
           <label className="block text-[11px] space-y-1" style={{ color: 'var(--text-secondary)' }}>
             <span>{t.webhookHeaders}</span>
-            <textarea className="field-input w-full h-14 font-mono" spellCheck={false} placeholder="Authorization: Bearer …" value={headerText} onChange={(e) => setHeaderText(e.target.value)} />
+            <textarea aria-label={t.webhookHeaders} className="field-input w-full h-14 font-mono" spellCheck={false} placeholder="Authorization: Bearer …" value={headerText} onChange={(e) => setHeaderText(e.target.value)} />
           </label>
+          {vaultReady && <p className="text-[10px] leading-snug" data-testid="silence-header-vault" style={{ color: 'var(--text-muted)' }}>{t.webhookHeaderVault}</p>}
           <div className="flex justify-end gap-2">
             <button onClick={() => setEditing(null)} className="btn-ghost">{t.cancel}</button>
-            <button onClick={submit} className="btn-accent">{t.saveChanges}</button>
+            <button onClick={() => void submit()} disabled={saving} aria-busy={saving} className="btn-accent">{t.saveChanges}</button>
           </div>
         </div>
       )}

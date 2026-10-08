@@ -329,6 +329,9 @@ export interface Translations {
   webhookHeaders: string;
   webhookHint: string;
   webhookInvalid: string;
+  webhookHeaderVault: string;
+  webhookHeaderMarkStale: string;
+  webhookHeaderStoreFailed: string;
   webhookExportHint: string;
   customEndpoint: string;
   hostPlaceholder: string;

@@ -266,6 +266,24 @@ pub fn alert_webhook(config: &WebhookConfig) -> WebhookConfig {
     WebhookConfig { format: "json".into(), ..config.clone() }
 }
 
+/// The silence twin of `bridge::load_credentials`: enabled rules get their stored
+/// header values, disabled ones keep the references.
+pub fn load_credentials(
+    rules: Vec<SilenceRule>,
+    resolve: impl Fn(&WebhookConfig) -> Result<WebhookConfig, String>,
+) -> Result<Vec<SilenceRule>, String> {
+    rules
+        .into_iter()
+        .map(|rule| {
+            if !rule.enabled {
+                return Ok(rule);
+            }
+            let webhook = resolve(&rule.webhook).map_err(|e| format!("Rule '{}': {e}", rule.name))?;
+            Ok(SilenceRule { webhook, ..rule })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +302,7 @@ mod tests {
                 url: "http://127.0.0.1:8081/alert".into(),
                 format: "json".into(),
                 headers: vec![],
+                secret_headers: vec![],
             },
         }
     }
@@ -429,6 +448,12 @@ mod tests {
 
         // Alerts always post JSON even when the rule was saved as raw.
         let raw = WebhookConfig { format: "raw".into(), ..Default::default() };
+        let refused = |_: &WebhookConfig| -> Result<WebhookConfig, String> { Err("locked".into()) };
+        let mut off = rule("a/#", 30, 60);
+        off.enabled = false;
+        assert!(load_credentials(vec![off], refused).is_ok(), "a disabled rule asked the store");
+        let error = load_credentials(vec![rule("a/#", 30, 60)], refused).unwrap_err();
+        assert_eq!(error, "Rule 'heartbeat': locked");
         assert_eq!(alert_webhook(&raw).format, "json");
     }
 }

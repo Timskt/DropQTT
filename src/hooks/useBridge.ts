@@ -13,6 +13,7 @@ import {
 } from '../types';
 import { usePersistentState } from './usePersistentState';
 import { withoutStoredSecrets } from '../utils/secrets';
+import { useReleasedHeaderSecrets } from './useReleasedHeaderSecrets';
 
 // The panel quotes this number in its own truncation notice, so it is
 // exported rather than duplicated: a changed cap must not leave a message
@@ -32,6 +33,8 @@ export interface BridgeEventEntry {
   ev: BridgeEvent;
 }
 
+const dropReferences = <S extends { secretHeaders?: unknown }>({ secretHeaders: _gone, ...sink }: S): Omit<S, 'secretHeaders'> => sink;
+
 /**
  * Bridge session state: two independent broker connections ("src"/"dst"),
  * forwarding rules (persisted here; pushed to the backend on every change),
@@ -50,6 +53,7 @@ export function useBridge(visible: boolean) {
   // Last endpoints per role + autostart switch (survives restarts) 
   const [remember, setRemember] = usePersistentState<BridgeRemember>('dropqtt_bridge_remember', {}, withoutStoredSecrets);
   const [autoReconnect, setAutoReconnect] = usePersistentState<boolean>('dropqtt_bridge_auto', false);
+  useReleasedHeaderSecrets(rules);
   const bootRef = useRef(false);
 
   const seqRef = useRef(0);
@@ -210,7 +214,11 @@ export function useBridge(visible: boolean) {
           let n = 0;
           while (existing.has(id)) id = `${base}_${++n}`;
           existing.add(id);
-          return { ...bridgeRuleDefaults, ...r, id } as BridgeRule;
+          // An imported file cannot point a sink at a credential already on this
+          // machine: a reference from elsewhere is either dangling or borrowed.
+          const sinks = r.webhook ? { webhook: dropReferences(r.webhook) } : {};
+          const targets = r.targets ? { targets: r.targets.map(dropReferences) } : {};
+          return { ...bridgeRuleDefaults, ...r, ...sinks, ...targets, id } as BridgeRule;
         });
       });
     },
