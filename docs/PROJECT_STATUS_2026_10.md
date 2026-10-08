@@ -8,7 +8,7 @@
 （文件传输 / MQTT 控制台 / 数据桥接 / 消息历史 / 运维诊断），外加设备仿真与验收场景、
 会话录制回放、Prometheus 指标导出。贯穿全部功能的一条主张是**失败不许看起来像成功**。
 
-当前版本 **0.11.0**（本轮发布），`main` 与 `origin/main` 同步，工作区干净
+当前版本 **0.11.2**，`main` 与 `origin/main` 同步，工作区干净
 （仅 `PROJECT_ANALYSIS_v0.9.md`、`docs/REVIEW_2026_10_03.md` 两份按你决定不入库的文档）。
 
 ## 2. 规模与门禁
@@ -108,8 +108,9 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 ## 7. 发布与产物状态
 
 - 已推 tag：`v0.10.0`（→ `3f99499`）、`v0.10.1`（→ `b6c442b`，**含标题修复**）、
-  `v0.11.0`（已删除，见下）→ `v0.11.1`（本轮内容：报文对比 / 字段取值取证 / 投递审计 / TLS 材料取证 /
-  CLI 自驱 bench / webhook header 入钥匙串 / CI 门禁修复）。
+  `v0.11.0`（已删除，见下）→ `v0.11.1`（报文对比 / 字段取值取证 / 投递审计 / TLS 材料取证 /
+  CLI 自驱 bench / webhook header 入钥匙串 / CI 门禁修复）→ `v0.11.2`
+  （修 `$SYS/#` 被拒后每秒一条 toast 的循环，§4.85）。
   **`v0.11.0` 发布失败、`v0.11.1` 成功**，原因与教训见下两条。
 - **`v0.11.0` 四目标全挂在 tauri-action 一步**：`Unterminated inline array at row 56`。
   `src-tauri/Cargo.toml` 里 Linux target 的 `keyring` 写成了**跨行内联表**——TOML 1.0 不允许，
