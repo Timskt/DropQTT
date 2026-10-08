@@ -108,16 +108,24 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 ## 7. 发布与产物状态
 
 - 已推 tag：`v0.10.0`（→ `3f99499`）、`v0.10.1`（→ `b6c442b`，**含标题修复**）、
-  本次提交打 `v0.11.0`（本轮内容：报文对比 / 字段取值取证 / 投递审计 / TLS 材料取证 /
-  CLI 自驱 bench / webhook header 入钥匙串 / CI 门禁修复）；发布结果见本节末尾。
-  两者只差一个提交，选补版本而不是移动 tag：**移动要删掉一次已完成的发布**，
-  而自动更新端点读 `releases/latest`，新版本天然覆盖，旧发布留作历史无害。
+  `v0.11.0` → `v0.11.1`（本轮内容：报文对比 / 字段取值取证 / 投递审计 / TLS 材料取证 /
+  CLI 自驱 bench / webhook header 入钥匙串 / CI 门禁修复）。
+  **`v0.11.0` 发布失败、`v0.11.1` 成功**，原因与教训见下两条。
+- **`v0.11.0` 四目标全挂在 tauri-action 一步**：`Unterminated inline array at row 56`。
+  `src-tauri/Cargo.toml` 里 Linux target 的 `keyring` 写成了**跨行内联表**——TOML 1.0 不允许，
+  而 `tauri-action` 用严格解析器读这个文件；cargo 自己宽容，所以 `cargo check` / `cargo test` /
+  四个 CI 作业全绿，**只有真去发版才会暴露**。它是 keyring 那批改动带进来的，v0.10.1 之后
+  没发过版，于是一直躺着。修法就是收成单行（§4.83）。
+- **`v0.11.0` 的 tag 原地不动**，补 `v0.11.1` 往前发——延续 `v0.10.0 → v0.10.1` 的先例：
+  四个作业都在创建 Release 之前失败，GitHub 上并不存在 v0.11.0 这个发布对象，
+  但移动/删除已推的 tag 属于要属主点头的动作，不该由"顺手修好"来触发。
 - **CI 可读，且本轮已在读**。这台机器上有已授权的 `gh`，`ci.yml` 四个作业的结果全部核实过
   （§4.77 连红五次就是靠读 CI 日志定位的）。读作业日志需要 `gh api --allow-escape-sequences`，
   否则它会拒绝输出，很容易被误当成"日志是空的"。
-  发版要盯的两处不变：版本一致性校验（本地按 workflow 同一段 shell 复现通过：
-  package = tauri = cargo = lock = 0.11.0），以及签名步骤——secrets 是否齐备仍是**推断**
-  （依据是 v0.9.0/v0.10.1 曾成功发布），不是查证。
+  版本一致性校验本地按 workflow 同一段 shell 复现通过（package = tauri = cargo = lock）。
+  签名步骤**这次是查证过的，不再是推断**：`v0.11.1` 产出 17 个产物，
+  rpm / deb / AppImage / msi / setup.exe / 两个 app.tar.gz 都带 `.sig`，
+  `latest.json` 线上可读且 `version` 为 `0.11.1`。
 - **本轮新增权限 `core:window:allow-set-title`** 会随 0.10.1 进入正式产物。
   范围窄（capabilities 限定 `windows: ["main"]`，只能改自己窗口的标题；远程 URL 关闭、
   CSP `default-src 'self'`）。不认可的话删这一行即退回静态英文标题。
