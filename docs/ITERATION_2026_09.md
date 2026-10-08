@@ -3236,8 +3236,19 @@ x86_64 那条 leg 跑的是**同一台 macos-latest、同一个 rustc 1.99.0、�
 AGENTS.md 把 `releaseDraft` 明确列为"已评估但留给属主决定"，所以这里只记录证据：
 若要"全部 leg 绿了才对外可见"，需要 draft + 一个收尾发布 job，代价是多一个 job 和一次人工节奏。
 
-**验证**：Rust **384 条**（383 + 1）全绿、clippy `--all-targets -D warnings` 干净；
-重跑的 aarch64 leg 打包中，完成后 release 会补齐 `darwin-aarch64` 与 `latest.json`。
+**我这边能不动发布流程就补上的部分**：新增 `scripts/check-release-shipped.py`，发版**之后**
+按资产验收（缺平台 / `latest.json` 指向不存在的资产 / 缺 `.sig` / 空资产四类）。
+这次真正伤用户的不是那条红腿，而是**没有任何东西去看资产**——`gh run view` 当时显示
+3/4 success，看起来"只是少个包"，而少的那个恰好是主力 Mac 平台。
+`check-release-ready.py` 管发版前，这个管发版后，`HANDOFF §6` 把两步和
+`gh run rerun --failed` 的补发做法一起写进了流程。
+**它自己被变异测试验过**：加一个幻影平台 → `release-shipped: NO` 并点名该平台没有自动更新；
+把 `.sig` 改名 → 四条"客户端无法校验，会拒绝更新"。两个方向都能红，不是永绿断言。
+
+**验证**：Rust **384 条**（383 + 1）全绿、clippy `--all-targets -D warnings` 干净。
+重跑的 aarch64 leg **四目标全绿**，`v0.11.2` 补齐 `DropQTT_0.11.2_aarch64.dmg` +
+`DropQTT_aarch64.app.tar.gz(.sig)`，`latest.json` 里 `darwin-aarch64` 已回到位——
+残缺是**发完了才被发现的那种**，只看 workflow 结论看不出来，所以要按资产清单验收。
 
 ### 现在的门禁口径
 

@@ -33,6 +33,7 @@ bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli <host> <port>
 python scripts/check-i18n-parity.py  # 四语言 + Translations 接口三方核对
 python3 scripts/check-ci-shell.py             # 工作流 run 块语法（纯标准库，无需 PyYAML）
 python3 scripts/check-release-ready.py        # 只有发版才会暴露的那批问题，本地先跑
+python3 scripts/check-release-shipped.py v0.11.2  # 发版**之后**按资产验收：workflow 全绿 ≠ 四个平台都发出去了
 ```
 
 CI（`.github/workflows/ci.yml`）有四个作业：`frontend` / `ui` / `backend` / `cli`，push 即跑。

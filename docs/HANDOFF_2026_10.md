@@ -241,8 +241,21 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
    **本地没有私钥，产不出可升级签名包**——这是设计如此，不是漏配。`.gitignore` 已排除 `*.key`、
    `*.key.pub`、`src-tauri/.updater-key-password`。
 4. 产物：macOS（aarch64 + x86_64）、Linux（deb/AppImage）、Windows（msi/NSIS）+ `latest.json`。
-5. **绝不移动已发布的 tag**。要修已发布版本，就发 patch 版本（0.10.0 之后是 0.10.1，而不是回退）。
-6. 推送后一定要用 `git ls-remote` 按 SHA 核对——本机曾经出现过"push 显示成功、远端啥也没有"
+5. **按产物验收，不要只看 workflow 结论**：`releaseDraft: false` 意味着每条腿各自发布，
+   一条腿失败会留下**公开但残缺**的 release。v0.11.2 就这样少了 Apple Silicon 包，
+   `latest.json` 里没有 `darwin-aarch64`，那批用户当时已经能看到这个 release 却拿不到自动更新。
+
+   ```bash
+   python3 scripts/check-release-shipped.py v0.11.2   # 期望 release-shipped: YES
+   ```
+
+   它检查四类只会静默伤害用户的东西：缺平台、`latest.json` 指向不存在的资产（提示可更新然后 404）、
+   缺 `.sig`（客户端无法校验，直接拒绝更新）、空资产。
+   残缺版的补救：`gh run rerun <run-id> --failed` 只重跑失败那条腿，它会补齐资产并
+   **重写** `latest.json`（合并已有资产），不用动 tag（2026-10-08 实测有效）。
+   重跑前先确认红的原因不是代码——取证顺序见 §4.86（那次是同一个原生测试二进制一次过一次红）。
+6. **绝不移动已发布的 tag**。要修已发布版本，就发 patch 版本（0.10.0 之后是 0.10.1，而不是回退）。
+7. 推送后一定要用 `git ls-remote` 按 SHA 核对——本机曾经出现过"push 显示成功、远端啥也没有"
    （TLS 中断），此后每次推都核对。
 
 本机 `pnpm tauri build` 打 NSIS 包目前**跑不通**：下载 GitHub release 资源时连接被截断（重试 6 次）。
