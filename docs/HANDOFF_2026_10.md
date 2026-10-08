@@ -87,7 +87,7 @@ printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credent
 两个坑：别把变量命名成 `TMP`（MSYS 用它当临时目录，会伪装成"凭据没返回"）；
 GCM 在 `GCM_INTERACTIVE=never` 下可能直接返回空，只设 `GIT_TERMINAL_PROMPT=0` 即可。
 本机留了一份只读脚本 `~/dq-ci.sh`（不入库，因为它依赖属主机器的凭据助手）。
-**"本地全绿 + 没读 CI"不等于交付完成**——§4.74 就是连红五次之后才去读的。
+**"本地全绿 + 没读 CI"不等于交付完成**——§4.77 就是连红五次之后才去读的。
 
 ---
 
@@ -107,7 +107,7 @@ GCM 在 `GCM_INTERACTIVE=never` 下可能直接返回空，只设 `GIT_TERMINAL_
 `allow_anonymous false` + `password_file` + ACL 里写 `user <名>` / `topic readwrite cli-gate/#`，
 真拒绝回来的是 `0x87`。（此前记在这里的"`pattern` 行对匿名客户端不生效"**是错的**：在
 2.0.11 / 2.0.22 / 2.1.2 上实测，`pattern cli-gate/#` 对匿名客户端照样把树外的发布拒成 0x87。
-详见 §4.75。）
+详见 §4.78。）
 
 **真正会咬人的是另外两条**，都是这轮从 CI 日志里挖出来的：
 
@@ -121,7 +121,7 @@ GCM 在 `GCM_INTERACTIVE=never` 下可能直接返回空，只设 `GIT_TERMINAL_
 `.github/ci/mosquitto.conf` + `mosquitto.acl` 在仓库里；前者是参考件（workflow 运行时自己生成
 conf），后者是**真的被 CI 和本地复现共用**的那份 ACL。两个 gate 脚本都支持
 `GATE_USER` / `GATE_PASSWORD_ENV`，所以本地起一个和 CI 同构的 broker 是可行的——**该这么做**，
-因为对匿名 broker 跑绿并不能证明 CI 会绿（§4.74 就是为此连红五次）。
+因为对匿名 broker 跑绿并不能证明 CI 会绿（§4.77 就是为此连红五次）。
 
 `cli-gate.sh` 现在在第一条断言之前先做 **broker 身份自检**（匿名发布必须被拒 + 被拒主题必须
 回来 0x87），不成立就当场退出并说明"这不是那个带 ACL 的 broker"。复现 CI 同构环境时

@@ -27,7 +27,7 @@
 - Rust **364 lib + 1 集成通过**（macOS 本机 `cargo test`）
 - 前端单测 **181 通过**（`npm test` = `vitest run tests/unit`）
 - 真 DOM UI **230 通过**（`npx playwright test`）
-- 真机 CLI 门禁 **cli-gate 36 项 + scenario-gate 25 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76）
+- 真机 CLI 门禁 **cli-gate 37 项 + scenario-gate 26 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76；cli-gate 多出的那一项是 broker 身份自检，§4.78）
 - `tsc --noEmit` 干净；`cargo clippy --all-targets -- -D warnings` **通过**
 - ESLint **0 error / 10 warning**（预算锁在 10，本轮未涨）
 
@@ -93,7 +93,7 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 | 项 | 状态 |
 | --- | --- |
 | §3.5 多连接工作区 | **未做**。实测改造面：73 个命令全部隐含"只有一个连接"、`App.tsx` 单 `broker.isConnected` 就 23 处、事件名要按连接分道、32 个 spec 的 mock 随之全改；且需先定"现有 4.8 万行历史如何归属"。属架构决策，不适合顺手做。 |
-| §3.2 无头 CLI 进 CI | **已完成**（2026-10-07）。`ci.yml` 新增 `cli` 作业：一次性 mosquitto + ACL，跑 `scripts/cli-gate.sh` 的 36 项退出码断言。2026-10-08 起 `verify --scenario --bench-rate N` 能自己打负载、判性能条，带条的验收文件在 CLI 里也能拿到 0（§4.76）。 |
+| §3.2 无头 CLI 进 CI | **已完成**（2026-10-07）。`ci.yml` 新增 `cli` 作业：一次性 mosquitto + ACL，跑 `scripts/cli-gate.sh` 的 37 项退出码断言。2026-10-08 起 `verify --scenario --bench-rate N` 能自己打负载、判性能条，带条的验收文件在 CLI 里也能拿到 0（§4.76）。**四个作业在 2026-10-08 首次同时转绿**——此前 `cli` 作业自引入起连红六次，真实原因是门禁对着别人的 broker 跑（§4.78）。 |
 | §3.3 broker 凭据入 keyring | **已完成**（2026-10-07，见 §4.72）。密码进 OS 凭据库，本地设置只留随机引用；启动前迁移旧明文；引用悬空时连接明确报错而不是匿名重试。webhook header 里的敏感值 2026-10-08 也已入库（`webhook:` 前缀，见 §4.75）。 |
 | §1.6 桥接每消息克隆 rules/conns 表 | **未做**。评审称是最大可优化项，但按本项目规矩要先 A/B 量出收益；此前两次"看起来该优化"的地方量下来都不是瓶颈。 |
 | §1.7 `BEGIN IMMEDIATE` 失败少报计数 | **已完成**（本轮复核发现评审该条已过期，代码里已是"计入 lost_rows 并跳过本批"）。 |

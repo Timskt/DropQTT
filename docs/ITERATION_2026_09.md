@@ -2841,7 +2841,7 @@ minRate 400 的文件在 500/s 下退出 0，minRate 5000 的文件退出 1。Qo
 
 ---
 
-### 4.74 CI 连红 5 次：门禁在本地是绿的，因为**两边的 broker 不是同一个**（2026-10-07）
+### 4.77 CI 连红 5 次：门禁在本地是绿的，因为**两边的 broker 不是同一个**（2026-10-07）
 
 接手文档写完后去读 CI，发现 `cli` 作业从引入它的那次提交（`1e58613`）起**连红 5 次**，
 一直红到手。红的是 `cli-gate.sh` 里这两条：
@@ -2855,7 +2855,7 @@ FAIL pub to a denied topic reports the refusal: wanted exit 1, got 4
 `password_file` + ACL 里的 `user labuser / topic readwrite public/#`；
 而 CI 那份是 `allow_anonymous true` + 只有 `pattern cli-gate/#`。
 当时据此断定"**mosquitto 的 `pattern` 行不适用于匿名客户端**"，于是 CI 里那次发布被放行、
-PUBACK 回来 `0x10`（没人订阅），CLI 如实报 4。**这个断定是错的**，§4.75 用 CI 那个版本
+PUBACK 回来 `0x10`（没人订阅），CLI 如实报 4。**这个断定是错的**，§4.78 用 CI 那个版本
 实测推翻了它；命名用户这套形态本身没问题，问题是它并没有让 CI 变绿。
 
 也就是说：门禁没错，代码没错，**是两边测的不是同一件事**。
@@ -2879,14 +2879,14 @@ CLI 报 4 在 CI 那个环境下恰恰是正确的——broker 确实没拒绝�
 当成可交付证据推上去。用机器上已存的 git 凭据只读调用 Actions API（不打印 token、只发 GET）
 之后，第一份日志就给出了答案。**"看不到"要区分"没有权限"和"没有去找"。**
 
-### 4.75 CI 连红的真正机制：`mosquitto -d` 绑定失败也返回 0（第十九轮 2026-10-08）
+### 4.78 CI 连红的真正机制：`mosquitto -d` 绑定失败也返回 0（第十九轮 2026-10-08）
 
 `9d3c553` 之后 CI 仍然红，红的还是那两条。于是这次不推理，直接**量**——用 docker 起
 `ubuntu:22.04` 装 CI 同款 `mosquitto 2.0.11`，把每条假设变成一个可执行的断言：
 
 | 量什么 | 结果 |
 | --- | --- |
-| `pattern cli-gate/#` + 匿名客户端（2.0.11 / 2.0.22 / 2.1.2） | 树内 `RC:16`，树外 **`RC:135`** —— §4.74 的断定不成立 |
+| `pattern cli-gate/#` + 匿名客户端（2.0.11 / 2.0.22 / 2.1.2） | 树内 `RC:16`，树外 **`RC:135`** —— §4.77 的断定不成立 |
 | `user gateuser` + `topic readwrite cli-gate/#` + 命名用户 | 树内 `RC:16`，树外 `RC:135`，匿名连接 `CONNACK 135` —— 想要的形态确实造得出来 |
 | `acl_file` 指向不存在的文件 | broker **不启动**（"Unable to open acl_file"），端口没人监听 |
 | `acl_file` 指向打不开的路径 | 一律**拒绝**（fail closed） |
@@ -2911,6 +2911,11 @@ CLI 报 4 在 CI 那个环境下恰恰是正确的——broker 确实没拒绝�
    `0x87`。任一条不成立就立刻退出，并说明"这不是那个带 ACL 的 broker"——而不是跑完 90 秒，
    再交出两条无法解释的红。
 
+**修法在 CI 上自证**：换到 18831 之后，身份自检的三条第一次全绿，其中
+`anonymous publish to a granted topic rejected (exit 3)`——**同一条断言、同一份配置**，
+在 1883 上是被放行（`0x10`）、在 18831 上是被拒。端口是唯一变量，
+"应答的不是这个 broker"从此不再只是推断。
+
 **区分度证明**（这条修法值得单独记，因为它当场救了一次）：改完在本地跑正向验证时，
 我先把口令文件重建了一遍却忘了同步环境变量，身份自检 3 秒内就红并打印
 `ConnectionRefused(NotAuthorized)`。以前这种自己搭错 rig 的情况会表现成"CLI 好像坏了"，
@@ -2924,7 +2929,7 @@ YAML 17 个 run 块 `bash -n` 全过。
 - `cli-gate.sh` 37 项、`scenario-gate.sh` 18 项，**都要在两种 broker 下跑过**：
   本地匿名 broker（快速回环）与 CI 同构的认证 broker（`scripts/` 里两个 gate 都吃
   `GATE_USER` / `GATE_PASSWORD_ENV`）。只有后者能证明拒绝路径——而 `cli-gate.sh`
-  现在会先自己确认这一点（身份自检，§4.75）。
+  现在会先自己确认这一点（身份自检，§4.78）。
 - CI 状态查询脚本放在仓库外（`~/dq-ci.sh`，只读、不打印 token），因为它用到属主机器的
   凭据助手，不适合入库。
 
