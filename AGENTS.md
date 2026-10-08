@@ -27,6 +27,7 @@ npx playwright test                  # 真 DOM UI
 cd src-tauri && cargo test           # Rust（含 mqtt_manager / bridge）
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 cd src-tauri && cargo build --bin dropqtt-cli
+bash scripts/gate-rig.sh                                   # 起 CI 同构 broker 并跑下面两项
 bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli <host> <port>
 bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli <host> <port>
 python scripts/check-i18n-parity.py  # 四语言 + Translations 接口三方核对

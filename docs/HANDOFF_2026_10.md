@@ -31,10 +31,12 @@ cd ..
 node node_modules/vite/bin/vite.js --host 127.0.0.1 &   # 另开终端
 npx playwright test                           # 期望：221 passed
 
-# 5) 无头 CLI 门禁（需要一个一次性 broker，见 §4 的端口表）
+# 5) 无头 CLI 门禁（一条命令搞定 broker）
 cd src-tauri && cargo build --bin dropqtt-cli && cd ..
-bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 <port>       # 36 项
-bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 <port>   # 18 项
+bash scripts/gate-rig.sh                                  # 起 CI 同构的 broker，跑两项门禁
+# 想自己起 broker 就分开跑：
+bash scripts/cli-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 <port>       # 37 项
+bash scripts/scenario-gate.sh ./src-tauri/target/debug/dropqtt-cli 127.0.0.1 <port>   # 26 项
 
 # 6) i18n
 python scripts/check-i18n-parity.py           # 期望：962 × 4，parity OK
@@ -69,7 +71,7 @@ python scripts/check-i18n-parity.py           # 期望：962 × 4，parity OK
 | `frontend` | `tsc` → `eslint --max-warnings=10` → `vitest` → `vite build` | ESLint 预算由它守 |
 | `ui` | Playwright + mock 掉的 Tauri IPC | 真 DOM 行为 |
 | `backend` | `cargo check --all-targets` → `cargo clippy --all-targets -- -D warnings` → `cargo test` | **只有它跑 `mqtt_manager.rs` / `bridge.rs` 的测试**（本机 harness 覆盖不到，见 §5） |
-| `cli` | 起一个带 ACL 的 mosquitto，跑 `cli-gate.sh`（36 项）+ `scenario-gate.sh`（18 项） | 退出码契约 |
+| `cli` | 起一个带 ACL 的 mosquitto（监听 `18831`），跑 `cli-gate.sh`（37 项）+ `scenario-gate.sh`（26 项） | 退出码契约；本地同构环境用 `scripts/gate-rig.sh` |
 
 `.github/workflows/release.yml`：`v*.*.*` tag 或手动触发，三平台四目标矩阵。
 
@@ -87,6 +89,13 @@ printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credent
 两个坑：别把变量命名成 `TMP`（MSYS 用它当临时目录，会伪装成"凭据没返回"）；
 GCM 在 `GCM_INTERACTIVE=never` 下可能直接返回空，只设 `GIT_TERMINAL_PROMPT=0` 即可。
 本机留了一份只读脚本 `~/dq-ci.sh`（不入库，因为它依赖属主机器的凭据助手）。
+装了 `gh` 的机器上更省事，但有一个坑：作业日志带 ANSI 转义，`gh api` 会**拒绝输出**，
+必须加 `--allow-escape-sequences`——不然会误读成"日志是空的"：
+
+```bash
+gh api --allow-escape-sequences repos/Timskt/DropQTT/actions/jobs/<job-id>/logs \
+  | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g'        # 去色再 grep
+```
 **"本地全绿 + 没读 CI"不等于交付完成**——§4.77 就是连红五次之后才去读的。
 
 ---
