@@ -217,6 +217,7 @@ export const zhCN: Translations = {
     historyEmptyTitle: '暂无历史报文',
     historyEmptyHint: '所有收发的报文都会自动持久化到本地 SQLite（不含分块数据），可跨重启检索、统计与重发。连接并收发消息后即可看到记录。',
     historyShowing: '显示 {count} 条',
+    historyZoneNote: '界面时间是本地 {zone} · 导出文件用 UTC',
     historyBinary: '二进制',
     historyEmptyPayload: '空',
     clientId: '客户端标识 (Client ID)',
@@ -1051,4 +1052,5 @@ export const zhCN: Translations = {
     deviceSecondsAgo: '{n}s 前',
     deviceMinutesAgo: '{n}m 前',
     deviceHoursAgo: '{n}h 前',
+    deviceDaysAgo: '{n} 天前',
 };

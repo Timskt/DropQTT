@@ -47,3 +47,55 @@ export function relativeFromNow(unixSec: number, nowSec: number): string {
   if (d < 3600) return `${Math.floor(d / 60)}m`;
   return `${Math.floor(d / 3600)}h`;
 }
+
+export type AgeUnit = 'now' | 'seconds' | 'minutes' | 'hours' | 'days';
+
+/**
+ * The same stepping `relativeFromNow` renders literally, returned as unit plus
+ * count so each caller can put it into its own words. A view that localises
+ * needs the number separated from the unit; one that fills a status column does not.
+ *
+ * Coarse on purpose: these ages answer "from this minute or from last year", and
+ * a reading like "3.2 days" implies a precision we do not have — we know when we
+ * saw something, not when it was set. Negative input is an age of zero, because a
+ * device with a fast clock must not read as a countdown.
+ */
+export function ageUnit(ageMs: number): { unit: AgeUnit; n: number } {
+  const secs = Math.max(0, Math.floor(ageMs / 1000));
+  if (secs < 5) return { unit: 'now', n: 0 };
+  if (secs < 60) return { unit: 'seconds', n: secs };
+  if (secs < 3_600) return { unit: 'minutes', n: Math.floor(secs / 60) };
+  if (secs < 86_400) return { unit: 'hours', n: Math.floor(secs / 3_600) };
+  return { unit: 'days', n: Math.floor(secs / 86_400) };
+}
+
+/**
+ * One timestamp for every file this app writes out.
+ *
+ * The four export paths used to build their own — a sliced ISO here, a full ISO
+ * with punctuation stripped there, a bare `Date.now()` millisecond count that no
+ * human can read — which meant two artifacts from the same session sorted apart
+ * and named differently. UTC with an explicit `Z`, because a filename nobody is
+ * standing in front of a screen cannot carry the viewer's zone.
+ */
+export function exportStamp(at: Date): string {
+  return at.toISOString().slice(0, 19).replace(/[:.]/g, '-') + 'Z';
+}
+
+/**
+ * `UTC+08:00` / `UTC-03:30` / `UTC+05:30`.
+ *
+ * Takes the value of `Date#getTimezoneOffset`, which is **inverted** — minutes to
+ * add to local time to reach UTC, so Beijing reports -480 and Newfoundland +210.
+ * Naming the parameter after that method is the guard: reading a raw number into
+ * it the other way round would print a zone that is the mirror of the real one.
+ * Half-hour and three-quarter-hour offsets exist, so minutes are printed, not
+ * assumed to be zero.
+ */
+export function utcOffsetLabel(getTimezoneOffsetMinutes: number): string {
+  const sign = getTimezoneOffsetMinutes <= 0 ? '+' : '-';
+  const total = Math.abs(Math.round(getTimezoneOffsetMinutes));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `UTC${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}

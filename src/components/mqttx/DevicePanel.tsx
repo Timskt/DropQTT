@@ -3,7 +3,7 @@ import { Cpu } from 'lucide-react';
 import { AssertionViolation, TopicStatRow } from '../../types';
 import { fill, Translations } from '../../i18n';
 import { buildTopicTree, nodesAtDepth } from '../../utils/topicTree';
-import { formatBytes } from '../../utils/format';
+import { ageUnit, formatBytes } from '../../utils/format';
 
 interface DevicePanelProps {
   t: Translations;
@@ -17,11 +17,12 @@ interface DevicePanelProps {
 const DEPTHS = [1, 2, 3];
 
 const ageOf = (lastSeenSec: number, nowSec: number, t: Translations): string => {
-  const secs = Math.max(0, nowSec - lastSeenSec);
-  if (secs < 5) return t.deviceNow;
-  if (secs < 60) return fill(t.deviceSecondsAgo, { n: String(secs) });
-  if (secs < 3600) return fill(t.deviceMinutesAgo, { n: String(Math.floor(secs / 60)) });
-  return fill(t.deviceHoursAgo, { n: String(Math.floor(secs / 3600)) });
+  const { unit, n } = ageUnit((nowSec - lastSeenSec) * 1000);
+  if (unit === 'now') return t.deviceNow;
+  if (unit === 'seconds') return fill(t.deviceSecondsAgo, { n: String(n) });
+  if (unit === 'minutes') return fill(t.deviceMinutesAgo, { n: String(n) });
+  if (unit === 'hours') return fill(t.deviceHoursAgo, { n: String(n) });
+  return fill(t.deviceDaysAgo, { n: String(n) });
 };
 
 /**

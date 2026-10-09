@@ -2,7 +2,8 @@ import React, { useMemo } from 'react';
 import { Archive } from 'lucide-react';
 import { RetainedLineage } from '../../types';
 import { Translations, fill } from '../../i18n';
-import { ageUnit, orderRetained, retainedState } from '../../utils/retained';
+import { ageUnit } from '../../utils/format';
+import { orderRetained, retainedState } from '../../utils/retained';
 
 interface Props {
   /** `null` when the backend did not answer, which is not the same as "none". */

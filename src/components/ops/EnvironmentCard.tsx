@@ -1,3 +1,4 @@
+import { exportStamp } from '../../utils/format';
 import React, { useState } from 'react';
 import { Download, ClipboardCopy, CircleAlert, Package } from 'lucide-react';
 import {
@@ -29,7 +30,7 @@ export const EnvironmentCard: React.FC<EnvironmentCardProps> = ({ t }) => {
 
   const exportBundle = async () => {
     const body = buildEnvironmentBundle(collectPersistedSections(), new Date().toISOString());
-    const path = await saveTextFile(`dropqtt-environment-${Date.now()}.json`, body);
+    const path = await saveTextFile(`dropqtt-environment-${exportStamp(new Date())}.json`, body);
     if (path) toast.success(t.envExported);
   };
 

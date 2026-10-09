@@ -1,3 +1,4 @@
+import { exportStamp } from './format';
 import { MqttGenericMessage } from '../types';
 import { base64ToUint8, uint8ToUtf8 } from './cbor';
 import { csvRow } from './csv';
@@ -83,7 +84,7 @@ export async function exportMessages(
   format: ExportFormat,
 ): Promise<string | null> {
   if (messages.length === 0) return null;
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const stamp = exportStamp(new Date());
   const content = format === 'json' ? messagesToJson(messages) : messagesToCsv(messages);
   return saveTextFile(`dropqtt-messages-${stamp}.${format}`, content);
 }

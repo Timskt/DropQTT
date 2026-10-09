@@ -217,6 +217,7 @@ export const zhTW: Translations = {
     historyEmptyTitle: '尚無歷史報文',
     historyEmptyHint: '所有收發的報文都會自動持久化到本機 SQLite（不含分塊資料），可跨重啟檢索、統計與重送。連線並收發訊息後即可看到記錄。',
     historyShowing: '顯示 {count} 條',
+    historyZoneNote: '介面時間是本地 {zone} · 匯出檔案用 UTC',
     historyBinary: '二進位',
     historyEmptyPayload: '空',
     clientId: '用戶端標識 (Client ID)',
@@ -1051,4 +1052,5 @@ export const zhTW: Translations = {
     deviceSecondsAgo: '{n}s 前',
     deviceMinutesAgo: '{n}m 前',
     deviceHoursAgo: '{n}h 前',
+    deviceDaysAgo: '{n} 天前',
 };

@@ -218,6 +218,7 @@ export interface Translations {
   historyEmptyTitle: string;
   historyEmptyHint: string;
   historyShowing: string;
+  historyZoneNote: string;
   historyBinary: string;
   historyEmptyPayload: string;
   clientId: string;
@@ -888,6 +889,7 @@ export interface Translations {
   deviceSecondsAgo: string;
   deviceMinutesAgo: string;
   deviceHoursAgo: string;
+  deviceDaysAgo: string;
   paletteGroupView: string;
   paletteConnect: string;
   paletteDisconnect: string;

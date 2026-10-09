@@ -10,6 +10,7 @@ import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, His
 import { Translations, fill } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
+import { exportStamp, utcOffsetLabel } from '../../utils/format';
 import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView, listTruncation } from '../../utils/history';
 import { buildTraceHtml } from '../../utils/traceHtml';
 import { buildCapture, CAPTURE_EXTENSION } from '../../utils/capture';
@@ -325,7 +326,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
       // recording that held "the newest N of M" without saying so would misreport
       // the window it captured.
       const cut = listTruncation(rows.length, totalInWindow);
-      const name = `dropqtt-capture-${new Date().toISOString().replace(/[:.]/g, '-')}.${CAPTURE_EXTENSION}`;
+      const name = `dropqtt-capture-${exportStamp(new Date())}.${CAPTURE_EXTENSION}`;
       const saved = await saveTextFile(name, buildCapture(rows, { filter: debouncedSearch || undefined, capped: cut !== null }));
       if (saved) {
         const file = saved.replace(/^.*[\\/]/, '');
@@ -752,6 +753,12 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
         <div className="flex items-center justify-between px-3 py-1.5 text-[10px]" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-inset)' }}>
           <span className="flex items-center gap-2">
             {fill(t.historyShowing, { count: String(rows.length) })}
+            {/* The rows on this screen are local wall-clock; the files this panel
+                writes are UTC. A timestamp without its zone is a measurement
+                missing its units, so the zone is said rather than assumed. */}
+            <span data-testid="history-zone-note">
+              {fill(t.historyZoneNote, { zone: utcOffsetLabel(new Date().getTimezoneOffset()) })}
+            </span>
             {(stats.prunedRows ?? 0) > 0 && (
               <span data-testid="history-pruned" style={{ color: 'var(--warn)' }}>
                 {fill(t.historyPruned, { count: String(stats.prunedRows ?? 0) })}

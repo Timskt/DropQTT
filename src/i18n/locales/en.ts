@@ -217,6 +217,7 @@ export const en: Translations = {
     historyEmptyTitle: 'No history yet',
     historyEmptyHint: 'Every message you send or receive is persisted to a local SQLite store (chunk data excluded) for search, stats and resend across restarts. Connect and exchange messages to populate it.',
     historyShowing: 'Showing {count}',
+    historyZoneNote: 'times are local {zone} · files export UTC',
     historyBinary: 'binary',
     historyEmptyPayload: 'empty',
     clientId: 'Client Identifier (Client ID)',
@@ -1051,4 +1052,5 @@ export const en: Translations = {
     deviceSecondsAgo: '{n}s ago',
     deviceMinutesAgo: '{n}m ago',
     deviceHoursAgo: '{n}h ago',
+    deviceDaysAgo: '{n}d ago',
 };

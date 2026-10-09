@@ -217,6 +217,7 @@ export const ja: Translations = {
     historyEmptyTitle: '履歴はまだありません',
     historyEmptyHint: '送受信したメッセージはすべてローカルの SQLite に自動永続化（チャンクデータ除く）され、再起動後も検索・統計・再送が可能です。接続してメッセージをやり取りすると記録が表示されます。',
     historyShowing: '{count} 件を表示',
+    historyZoneNote: '表示はローカル {zone} · ファイルは UTC',
     historyBinary: 'バイナリ',
     historyEmptyPayload: '空',
     clientId: 'クライアント ID',
@@ -1051,4 +1052,5 @@ export const ja: Translations = {
     deviceSecondsAgo: '{n} 秒前',
     deviceMinutesAgo: '{n} 分前',
     deviceHoursAgo: '{n} 時間前',
+    deviceDaysAgo: '{n} 日前',
 };
