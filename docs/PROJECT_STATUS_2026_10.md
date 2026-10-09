@@ -17,16 +17,16 @@
 | --- | --- |
 | Rust 源码 | 23,282 行 / 27 个模块（含 `bin/dropqtt-cli.rs` 与 `tls_report.rs`） |
 | TS + TSX 源码 | 25,173 行 / 98 个文件 |
-| Tauri 命令 | 79 个 `#[tauri::command]` |
-| i18n 键 | 1033 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
+| Tauri 命令 | 81 个 `#[tauri::command]`（按实测计数，旧值 79 已漂） |
+| i18n 键 | 1049 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
 | 依赖 | npm 31（运行时 14 + 开发 17）/ cargo 22 个直接依赖（本轮新增 `x509-parser`，11 个传递依赖） |
-| 测试文件 | 22 个 unit + 38 个 Playwright spec + 1 个 Rust 集成测试 |
+| 测试文件 | 24 个 unit + 39 个 Playwright spec + 1 个 Rust 集成测试 |
 
 **门禁全绿（2026-10-09 本轮末次运行）**：
 
-- Rust **384 lib + 1 集成通过**（macOS 本机 `cargo test`；第 384 条是 §4.86 的分流反向用例）
-- 前端单测 **233 通过**（`npm test` = `vitest run tests/unit`）
-- 真 DOM UI **259 通过**（`npx playwright test`）
+- Rust **389 lib + 1 集成通过**（macOS 本机 `cargo test`；含 §4.86 分流用例与 §4.88 的保留值沿革 5 条）
+- 前端单测 **240 通过**（`npm test` = `vitest run tests/unit`）
+- 真 DOM UI **263 通过**（`npx playwright test`）
 - 真机 CLI 门禁 **cli-gate 37 项 + scenario-gate 26 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76；cli-gate 多出的那一项是 broker 身份自检，§4.78）
 - `tsc --noEmit` 干净；`cargo clippy --all-targets -- -D warnings` **通过**
 - ESLint **0 error / 10 warning**（预算锁在 10，本轮未涨）
@@ -51,7 +51,7 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 **两条报文对比**（JSON 逐字段 / 文本逐行 / 二进制整体，附传输字段差异与截断感知，§4.80）、
 **字段级取值历史**（按 `temp.c` 这类路径追一个字段的历史，静默画断点不插值，§4.81a）、
 **投递审计**（按序号字段判缺口/重复/乱序/时延分位，并拒绝把它说成 broker 丢包，§4.81b）、
-活动时间轴视图（按 correlation 跨主题配对 RPC）、捕获文件导出。
+活动时间轴视图（按 correlation 跨主题配对 RPC）、**保留值沿革**（当前保留值 + 版本数 + 多久没变 + 空负载删除识别 + 僵尸 retain 优先排序，broker 从不给出这些，§4.88）、捕获文件导出。
 
 **运维诊断**：12 项主动健康检查、自身耗时仪表（flush / 滞后 / 历史写）、
 **TLS 材料取证**（证书有效期判定 / 主体与颁发者 / SAN / CA 与叶子槽位错配 / 只有 CN 对得上这个 rustls 会忽略的陷阱，§4.82）、

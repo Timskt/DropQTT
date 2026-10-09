@@ -653,6 +653,56 @@ mod tests {
         assert!(snapshot.checks.iter().all(|c| c.level == "ok"));
     }
 
+    /// Every key the snapshot can serialize, nested objects included.
+    fn field_names(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    out.push(key.to_lowercase());
+                    field_names(child, out);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| field_names(item, out)),
+            _ => {}
+        }
+    }
+
+    /// A field may not be called one of these. `url` is in the list because the rule
+    /// is that an alert endpoint never travels in an exported file at all.
+    const CREDENTIAL_SHAPED: [&str; 12] = [
+        "password", "passwd", "secret", "token", "apikey", "api_key", "credential",
+        "authorization", "cert", "pem", "webhook", "url",
+    ];
+
+    #[test]
+    fn the_snapshot_cannot_grow_a_field_that_holds_a_credential() {
+        // The snapshot is one of the few artifacts an operator saves to disk and
+        // attaches to a ticket, so the red line covers it. No producer puts a
+        // credential in it today -- which is exactly the claim that needs a machine
+        // policing it, because the leak would be the next field someone adds "to
+        // debug this faster", not a deliberate copy of a password.
+        let json =
+            serde_json::to_value(build_snapshot(mqtt(), BridgeDiagnostics::default())).unwrap();
+        let mut names = Vec::new();
+        field_names(&json, &mut names);
+        // Self-certifying: a walk that collected nothing would pass the assertion
+        // below for the wrong reason (§4.84).
+        assert!(
+            names.len() > 60,
+            "the walk saw only {} field names; the snapshot shape moved under it",
+            names.len()
+        );
+        let offenders: Vec<_> = names
+            .iter()
+            .filter(|name| CREDENTIAL_SHAPED.iter().any(|needle| name.contains(needle)))
+            .cloned()
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "diagnostics now exposes {offenders:?}: a credential or an alert endpoint must not be given a field to live in"
+        );
+    }
+
     #[test]
     fn dropped_feed_rows_are_surfaced() {
         let mut input = mqtt();
