@@ -18,15 +18,15 @@
 | Rust 源码 | 23,282 行 / 27 个模块（含 `bin/dropqtt-cli.rs` 与 `tls_report.rs`） |
 | TS + TSX 源码 | 25,173 行 / 98 个文件 |
 | Tauri 命令 | 79 个 `#[tauri::command]` |
-| i18n 键 | 1032 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
+| i18n 键 | 1033 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
 | 依赖 | npm 31（运行时 14 + 开发 17）/ cargo 22 个直接依赖（本轮新增 `x509-parser`，11 个传递依赖） |
-| 测试文件 | 22 个 unit + 37 个 Playwright spec + 1 个 Rust 集成测试 |
+| 测试文件 | 22 个 unit + 38 个 Playwright spec + 1 个 Rust 集成测试 |
 
-**门禁全绿（2026-10-08 本轮末次运行）**：
+**门禁全绿（2026-10-09 本轮末次运行）**：
 
 - Rust **384 lib + 1 集成通过**（macOS 本机 `cargo test`；第 384 条是 §4.86 的分流反向用例）
-- 前端单测 **231 通过**（`npm test` = `vitest run tests/unit`）
-- 真 DOM UI **256 通过**（`npx playwright test`）
+- 前端单测 **233 通过**（`npm test` = `vitest run tests/unit`）
+- 真 DOM UI **259 通过**（`npx playwright test`）
 - 真机 CLI 门禁 **cli-gate 37 项 + scenario-gate 26 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76；cli-gate 多出的那一项是 broker 身份自检，§4.78）
 - `tsc --noEmit` 干净；`cargo clippy --all-targets -- -D warnings` **通过**
 - ESLint **0 error / 10 warning**（预算锁在 10，本轮未涨）

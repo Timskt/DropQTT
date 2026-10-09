@@ -36,3 +36,6 @@ src-tauri/.updater-key-password
 win-cap*.png
 test-results/
 playwright-report/
+
+# the python gate scripts leave byte-code behind when run as modules
+__pycache__/

@@ -143,9 +143,9 @@ python scripts/check-i18n-parity.py    # 四语言 + Translations 接口三方�
 `pnpm test:ui` 会在 `127.0.0.1:1420` 起 Vite，用打桩的 IPC 驱动真实组件，
 所以它验证的是渲染与交互，不是真实 MQTT 或 HTTP 网络。
 
-**当前门禁数字（2026-10-08 实测）**：Rust 381 lib + 1 集成、前端单测 225、真 DOM 254、
-`cli-gate` 37 项 + `scenario-gate` 26 项、`tsc --noEmit` 干净、ESLint 0 error / 10 warning
-（预算锁死在 10）、i18n 1010 键 × 4 语言。
+**门禁数字（条数、键数）以 `docs/PROJECT_STATUS_2026_10.md` 为唯一出处**，这里以前抄过一份，
+抄的那份先过期了（README 写 381 / 225 / 254 / 1010，实测已是 384 / 233 / 259 / 1033）。
+一个对不上的数字和一个跑不起来的检查一样，报出的"无事发生"长得和真的一样（§4.84、O9）。
 
 CI（`.github/workflows/ci.yml`）有 `frontend` / `ui` / `backend` / `cli` 四个作业，push 即跑，
 **CI 是权威门禁**。
