@@ -471,6 +471,25 @@ async fn set_history_retention(state: State<'_, AppState>, days: i64) -> Result<
     state.mqtt.set_history_retention(days).await
 }
 
+/// The retained value of each topic, how many versions of it we recorded, and how
+/// long the live one has been sitting there.
+#[tauri::command]
+async fn history_retained(
+    state: State<'_, AppState>,
+    search: Option<String>,
+    limit: Option<i64>,
+    stale_after_days: Option<i64>,
+) -> Result<Vec<history::RetainedLineage>, String> {
+    state
+        .mqtt
+        .history_retained(
+            &search.unwrap_or_default(),
+            limit.unwrap_or(20),
+            stale_after_days.unwrap_or(7),
+        )
+        .await
+}
+
 #[tauri::command]
 async fn history_stats(state: State<'_, AppState>) -> Result<history::HistoryStats, String> {
     Ok(state.mqtt.history_stats().await)
@@ -926,6 +945,7 @@ pub fn run() {
             history_trace,
             history_timeline,
             history_topics,
+            history_retained,
             set_history_retention,
             clear_history,
             set_topic_stats_cap,

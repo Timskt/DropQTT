@@ -581,6 +581,27 @@ export interface HistoryStats {
   prunedRows?: number;
 }
 
+/**
+ * One topic's retained value and the versions of it this app recorded, from
+ * `history_retained`. A broker only ever hands over the *current* retained value,
+ * so the age of it — and whether it is a deletion — is only knowable from history.
+ */
+export interface RetainedLineage {
+  topic: string;
+  versions: number;
+  firstTs: number;
+  lastTs: number;
+  payload: string;
+  payloadB64: string;
+  payloadLen: number;
+  /** The newest row was stored cut off, so `payload` is a prefix, not the value. */
+  truncated: boolean;
+  /** An empty retained publish deletes the value: there is nothing live. */
+  cleared: boolean;
+  /** Older than the bar the view asked for, and still delivered to new subscribers. */
+  stale: boolean;
+}
+
 /** One topic's share of a time window, from `history_topics`. */
 export interface HistoryTopicRow {
   topic: string;

@@ -6,13 +6,14 @@ import {
   Inbox, Send, Rss, Filter, Copy, Check, Zap, BarChart3, Download, ChevronRight,
   GitCompareArrows, Globe, Film,
 } from 'lucide-react';
-import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, HistoryTopicRow, TraceResult } from '../../types';
+import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, HistoryTopicRow, RetainedLineage, TraceResult } from '../../types';
 import { Translations, fill } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
 import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView, listTruncation } from '../../utils/history';
 import { buildTraceHtml } from '../../utils/traceHtml';
 import { buildCapture, CAPTURE_EXTENSION } from '../../utils/capture';
+import { RetainedCard } from './RetainedCard';
 import { TimelineCard } from './TimelineCard';
 import { MessageDiffCard } from './MessageDiffCard';
 import { FieldProbeCard } from './FieldProbeCard';
@@ -167,6 +168,13 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   const [stats, setStats] = useState<HistoryStats>({ rows: 0, inbound: 0, outbound: 0 });
   // Per-topic totals over the same window the list is showing
   const [topics, setTopics] = useState<HistoryTopicRow[]>([]);
+  // Each topic's retained value and how many versions of it we hold; `null` means
+  // the backend did not answer, which is a different claim from "nothing retained".
+  const [retained, setRetained] = useState<RetainedLineage[] | null>([]);
+  const [staleDays, setStaleDays] = useState<number>(7);
+  // The instant this snapshot was taken. Ages are measured against it rather than
+  // against `Date.now()` at render, so two rows on screen agree with each other.
+  const [loadedAtMs, setLoadedAtMs] = useState<number>(() => Date.now());
   const [retentionDraft, setRetentionDraft] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -200,15 +208,22 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
       const until = Date.now();
       const since = win.ms ? until - win.ms : Math.min(st.oldestTs ?? until, until);
       const bucket = Math.max(1000, Math.ceil((until - since) / 60 / 1000) * 1000);
-      const [r, s, tp] = await Promise.all([
+      const [r, s, tp, kept] = await Promise.all([
         invoke<HistoryRow[]>('query_history', { search: debouncedSearch, direction, limit, sinceMs: since, untilMs: until }),
         invoke<HistorySeriesPoint[]>('history_series', { topic: debouncedSearch, direction, bucketMs: bucket, sinceMs: since, untilMs: until }),
         invoke<HistoryTopicRow[]>('history_topics', { search: debouncedSearch, direction, sinceMs: since, untilMs: until, limit: 12 }),
+        // Not scoped to the time window on purpose: a retained value is whatever the
+        // broker is still handing to new subscribers, however old, and the window a
+        // reader is looking at does not change that. It degrades to the card's own
+        // "needs the desktop backend" line instead of reddening this panel.
+        invoke<RetainedLineage[]>('history_retained', { search: debouncedSearch, limit: 20, staleAfterDays: staleDays }).catch(() => null),
       ]);
       if (requestId !== requestRef.current) return;
       setRows(r);
       setSeries(s.length ? fillHistorySeries(s, since, until, bucket) : []);
       setTopics(tp ?? []);
+      setRetained(Array.isArray(kept) ? kept : null);
+      setLoadedAtMs(until);
       setStats(st);
       setError(null);
     } catch (e) {
@@ -217,10 +232,11 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
       setRows([]);
       setSeries([]);
       setTopics([]);
+      setRetained(null);
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
-  }, [debouncedSearch, direction, limit, windowId]);
+  }, [debouncedSearch, direction, limit, windowId, staleDays]);
 
   useEffect(() => {
     void load();
@@ -757,6 +773,13 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
           <FieldProbeCard rows={rows} t={t} suggested={comparedPaths} />
           <DeliveryAuditCard rows={rows} t={t} />
         </div>
+        <RetainedCard
+          rows={retained}
+          t={t}
+          nowMs={loadedAtMs}
+          staleDays={staleDays}
+          onStaleDays={setStaleDays}
+        />
         <div className="max-h-[52vh] overflow-y-auto" data-testid="history-results">
           {rows.length === 0 && !loading ? (
             <div className="p-10 text-center flex flex-col items-center gap-2">

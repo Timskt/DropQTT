@@ -1146,6 +1146,33 @@ impl MqttManager {
         store.topics(search, direction, since_ms, until_ms, limit)
     }
 
+    /// Each topic's retained value and every version of it this store recorded.
+    ///
+    /// The stale bar arrives in days and the clock is read here, so the store's own
+    /// judgement stays a pure function of `(last_ts, now, bar)` and can be tested
+    /// against a fixed instant instead of against wall-clock luck.
+    pub async fn history_retained(
+        &self,
+        search: &str,
+        limit: i64,
+        stale_after_days: i64,
+    ) -> Result<Vec<crate::history::RetainedLineage>, String> {
+        let store = self
+            .history
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "message history is not available".to_string())?;
+        let days = stale_after_days.clamp(1, 3650);
+        store.retained(
+            search,
+            limit,
+            chrono::Utc::now().timestamp_millis(),
+            days * 86_400_000,
+        )
+    }
+
     /// Age policy for the store, in days (0 = only the row cap trims).
     pub async fn set_history_retention(&self, days: i64) -> Result<(), String> {
         let store = self

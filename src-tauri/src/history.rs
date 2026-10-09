@@ -136,6 +136,41 @@ pub struct HistoryTopicRow {
     pub last_ts: i64,
 }
 
+/// One topic's retained value and the versions of it we happened to record.
+///
+/// Every inbound row with `retain` set is one replacement of that topic's
+/// retained value, and those rows are already in the store: this reads the
+/// history of a value that no MQTT client shows, because a broker only ever
+/// hands over the current one. It is what makes a *stale* retained value
+/// visible — a config pushed once and never cleared keeps being delivered to
+/// every new subscriber forever, and at connect time it looks brand new.
+///
+/// Claims are bounded by what we stored. A version published while this app was
+/// disconnected is not missing here, it was never observed, and the view says so
+/// rather than reporting a complete lineage.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetainedLineage {
+    pub topic: String,
+    /// Retained publishes we recorded for this topic, newest of them being `payload`.
+    pub versions: i64,
+    pub first_ts: i64,
+    /// When the newest retained publish we hold arrived.
+    pub last_ts: i64,
+    /// The newest retained payload, lossy-decoded for display.
+    pub payload: String,
+    pub payload_b64: String,
+    /// Length as the publisher sent it, so a truncated `payload` is recognisable.
+    pub payload_len: usize,
+    /// The newest row was stored cut off: this value is partial, not the whole thing.
+    pub truncated: bool,
+    /// An empty retained publish is how a publisher *deletes* a retained value, so the
+    /// topic has no live value — that is a terminal state, not an empty one.
+    pub cleared: bool,
+    /// Older than the caller's bar, and still being handed to new subscribers.
+    pub stale: bool,
+}
+
 /// One uninterrupted stretch of traffic from one entity on the timeline.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -634,6 +669,73 @@ impl HistoryStore {
         Ok(rows)
     }
 
+    /// The retained value of each topic, plus every version of it this store holds.
+    ///
+    /// `now_ms` comes in rather than being read from a clock so the staleness
+    /// judgement is testable and cannot disagree between two rows of one result.
+    pub fn retained(
+        &self,
+        search: &str,
+        limit: i64,
+        now_ms: i64,
+        stale_after_ms: i64,
+    ) -> Result<Vec<RetainedLineage>, String> {
+        let conn = self.conn.lock().map_err(|_| "history store is unavailable".to_string())?;
+        let limit = limit.clamp(1, 200);
+        let like = search_pattern(search);
+        // The frame is written out because the default (UNBOUNDED PRECEDING to
+        // CURRENT ROW) would make these running totals over the rows above each
+        // row rather than counts of the whole topic -- and the newest row is the
+        // one row this query keeps.
+        let sql = "WITH kept AS ( \
+               SELECT topic, payload, payload_b64, payload_len, truncated, ts, \
+                      COUNT(*)  OVER w AS versions, \
+                      MIN(ts)   OVER w AS first_ts, \
+                      MAX(ts)   OVER w AS last_ts, \
+                      ROW_NUMBER() OVER (PARTITION BY topic ORDER BY ts DESC, rowid DESC) AS newest \
+                 FROM messages \
+                WHERE retain = 1 AND direction = 'in' \
+                  AND (?1 = '' OR topic LIKE ?1 ESCAPE '\\' OR payload LIKE ?1 ESCAPE '\\') \
+                WINDOW w AS (PARTITION BY topic ORDER BY ts DESC, rowid DESC \
+                             ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) \
+             ) \
+             SELECT topic, versions, first_ts, last_ts, payload, payload_b64, payload_len, truncated \
+               FROM kept WHERE newest = 1 \
+              ORDER BY last_ts DESC, topic ASC LIMIT ?2";
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| format!("history retained: {e}"))?;
+        let stale_after_ms = stale_after_ms.max(0);
+        let rows = stmt
+            .query_map(
+                params![if search.trim().is_empty() { "" } else { &like }, limit],
+                |r| {
+                    let last_ts: i64 = r.get(3)?;
+                    let payload_len: i64 = r.get(6)?;
+                    let truncated: i64 = r.get(7)?;
+                    Ok(RetainedLineage {
+                        topic: r.get(0)?,
+                        versions: r.get(1)?,
+                        first_ts: r.get(2)?,
+                        last_ts,
+                        payload: r.get(4)?,
+                        payload_b64: r.get(5)?,
+                        payload_len: payload_len as usize,
+                        truncated: truncated != 0,
+                        // An empty retained publish deletes the value; there is no
+                        // live retained payload left to go stale.
+                        cleared: payload_len == 0,
+                        stale: payload_len != 0
+                            && now_ms.saturating_sub(last_ts) >= stale_after_ms,
+                    })
+                },
+            )
+            .map_err(|e| format!("history retained: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("history retained row unreadable: {e}"))?;
+        Ok(rows)
+    }
+
     /// Activity segments per topic prefix over a window.
     ///
     /// "How many times did this gateway drop off last night, and for how long" is
@@ -908,6 +1010,132 @@ mod tests {
         let mut m = msg(id, topic, payload, dir);
         m.timestamp_ms = ts;
         m
+    }
+
+    /// A retained publish: the only shape a broker keeps on behalf of later
+    /// subscribers, and therefore the only one that has a history worth reading.
+    fn kept_at(id: &str, topic: &str, payload: &str, dir: &str, ts: i64) -> MqttGenericMessage {
+        let mut m = msg_at(id, topic, payload, dir, ts);
+        m.retain = true;
+        m
+    }
+
+    #[test]
+    fn retained_shows_the_newest_value_and_counts_every_version_of_it() {
+        let (store, _) = temp_store("retained_versions");
+        store.append(&[
+            kept_at("a1", "cfg/gw1/mode", "auto", "in", 1_000),
+            kept_at("a2", "cfg/gw1/mode", "manual", "in", 2_000),
+            kept_at("a3", "cfg/gw1/mode", "eco", "in", 3_000),
+            // The same instant twice. Insertion order decides which is newest, and
+            // guessing wrong here would present a superseded value as the current one.
+            kept_at("b1", "cfg/gw2/mode", "first", "in", 5_000),
+            kept_at("b2", "cfg/gw2/mode", "second", "in", 5_000),
+            // Not retained values: one is our own publish, one the broker forgets.
+            kept_at("c1", "cfg/gw3/mode", "ours", "out", 9_000),
+            msg_at("c2", "cfg/gw4/mode", "ephemeral", "in", 9_500),
+        ]);
+        let rows = store.retained("", 50, 10_000, 1_000).unwrap();
+        let by = |t: &str| rows.iter().find(|r| r.topic == t).cloned();
+
+        let gw1 = by("cfg/gw1/mode").expect("three retained versions of one topic");
+        assert_eq!(gw1.payload, "eco", "the newest replacement is the live value");
+        assert_eq!(gw1.versions, 3);
+        assert_eq!((gw1.first_ts, gw1.last_ts), (1_000, 3_000));
+        assert_eq!(by("cfg/gw2/mode").map(|r| r.payload).as_deref(), Some("second"));
+        assert!(by("cfg/gw3/mode").is_none(), "our own outbound publish is not the broker's retained value");
+        assert!(by("cfg/gw4/mode").is_none(), "a publish without RETAIN is never a retained value");
+    }
+
+    #[test]
+    fn an_empty_retained_publish_is_a_deletion_and_ends_the_lineage() {
+        // MQTT deletes a retained value by publishing zero bytes with RETAIN set.
+        // Reading that as "the value is empty" would leave the last row of the
+        // timeline looking like a device that stopped saying anything.
+        let (store, _) = temp_store("retained_cleared");
+        store.append(&[
+            kept_at("v1", "cfg/gw1/mode", "auto", "in", 1_000),
+            kept_at("gone", "cfg/gw1/mode", "", "in", 9_000),
+        ]);
+        let row = store
+            .retained("", 50, 100_000, 1_000)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.topic == "cfg/gw1/mode")
+            .expect("the topic keeps a lineage after deletion");
+        assert!(row.cleared, "an empty retained publish removes the value");
+        assert_eq!(row.payload_len, 0);
+        assert!(!row.stale, "there is no live retained value left to go stale");
+        assert_eq!(row.versions, 2, "both the value and its deletion are versions");
+        assert_eq!(row.last_ts, 9_000, "the deletion is the newest fact about it");
+
+        // A value that comes back is no longer a deletion.
+        store.append(&[kept_at("v2", "cfg/gw1/mode", "manual", "in", 20_000)]);
+        let again = store
+            .retained("", 50, 21_000, 1_000)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.topic == "cfg/gw1/mode")
+            .unwrap();
+        assert!(!again.cleared);
+        assert_eq!(again.payload, "manual");
+    }
+
+    #[test]
+    fn staleness_is_measured_on_the_callers_clock_against_the_callers_bar() {
+        let (store, _) = temp_store("retained_stale");
+        store.append(&[
+            kept_at("old", "cfg/legacy", "set-once", "in", 1_000),
+            kept_at("fresh", "cfg/current", "recent", "in", 9_500),
+        ]);
+        let rows = store.retained("", 50, 10_000, 1_000).unwrap();
+        let old = rows.iter().find(|r| r.topic == "cfg/legacy").unwrap();
+        let fresh = rows.iter().find(|r| r.topic == "cfg/current").unwrap();
+        // 9_000 ms of age against a 1_000 ms bar, and 500 ms against the same bar:
+        // the boundary is inclusive, so exactly-at-bar counts as stale.
+        assert!(old.stale, "a retained value this old still reaches new subscribers");
+        assert!(!fresh.stale, "500ms old is inside the bar");
+        assert_eq!(old.last_ts, 1_000);
+
+        // Raising the bar is the whole difference between a nuisance and a report.
+        let generous = store.retained("", 50, 10_000, 60_000).unwrap();
+        assert!(!generous.iter().find(|r| r.topic == "cfg/legacy").unwrap().stale);
+
+        // A value stored truncated is a partial value: the row has to say so rather
+        // than let someone diff against a payload that was cut on the way in.
+        let mut cut = kept_at("cut", "cfg/big", "prefix…", "in", 9_600);
+        cut.truncated = true;
+        cut.payload_len = 4_000_000;
+        store.append(&[cut]);
+        let rows = store.retained("", 50, 10_000, 1_000).unwrap();
+        let big = rows.iter().find(|r| r.topic == "cfg/big").unwrap();
+        assert!(big.truncated);
+        assert_eq!(big.payload_len, 4_000_000, "the real length survives the cut display");
+    }
+
+    #[test]
+    fn retained_narrows_with_the_filter_and_respects_the_row_budget() {
+        let (store, _) = temp_store("retained_scope");
+        for i in 0..12 {
+            store.append(&[kept_at(
+                &format!("t{i}"),
+                &format!("cfg/node{i}/mode"),
+                &format!("v{i}"),
+                "in",
+                1_000 + i as i64 * 100,
+            )]);
+        }
+        let all = store.retained("", 200, 5_000, 1_000).unwrap();
+        assert_eq!(all.len(), 12);
+        assert_eq!(all[0].topic, "cfg/node11/mode", "newest lineage first");
+
+        let few = store.retained("", 4, 5_000, 1_000).unwrap();
+        assert_eq!(few.len(), 4, "the budget is a promise, not a suggestion");
+
+        let one = store.retained("cfg/node3/mode", 200, 5_000, 1_000).unwrap();
+        assert_eq!(one.iter().map(|r| r.topic.as_str()).collect::<Vec<_>>(), vec!["cfg/node3/mode"]);
+        // A `%` in the search box means percent-sign-in-a-topic, not "everything".
+        assert!(store.retained("cfg/%", 200, 5_000, 1_000).unwrap().is_empty());
     }
 
     #[test]
