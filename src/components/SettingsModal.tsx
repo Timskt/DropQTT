@@ -4,9 +4,10 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { BrokerConfig, BROKER_PRESETS, BrokerProfile, SecretStatus } from '../types';
 import { Language, Translations, fill } from '../i18n';
 import { Theme } from '../themes';
+import { TimePref } from '../utils/timePref';
 import {
   X, Server, Shield, Key, Sliders, CheckCircle2, Globe, Palette,
-  RefreshCw, Zap, BookmarkPlus, Trash2, Check, AlertCircle, Hash, Activity, ShieldCheck,
+  RefreshCw, Zap, BookmarkPlus, Trash2, Check, AlertCircle, Hash, Activity, ShieldCheck, Clock,
 } from 'lucide-react';
 import {
   dropSecret, hasSecret, newSecretRef, readSecretStatus, takeBootReport, writeSecret,
@@ -24,6 +25,9 @@ interface SettingsModalProps {
   onLangChange: (lang: Language) => void;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
+  /** Which zone UI timestamps render in (files always export UTC) */
+  timePref: TimePref;
+  onTimePrefChange: (pref: TimePref) => void;
   t: Translations;
   onCheckUpdate: () => void;
   updateStatusText: string | null;
@@ -91,7 +95,7 @@ const CertRow: React.FC<{
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen, onClose, config, onSaveAndConnect, onDisconnect, isConnected,
-  lang, onLangChange, theme, onThemeChange, t, onCheckUpdate, updateStatusText,
+  lang, onLangChange, theme, onThemeChange, timePref, onTimePrefChange, t, onCheckUpdate, updateStatusText,
   profiles, onSaveProfile, onDeleteProfile,
 }) => {
   const [form, setForm] = useState<BrokerConfig>(config);
@@ -361,6 +365,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <option value="zh-TW" style={OPT_STYLE}>繁體中文 (Traditional Chinese)</option>
                 <option value="ja" style={OPT_STYLE}>日本語 (Japanese)</option>
               </select>
+            </div>
+            <div>
+              <label className={LABEL} style={LABEL_COLOR}>
+                <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" style={{ color: 'var(--violet)' }} /><span>{t.timePrefLabel}</span></span>
+              </label>
+              <select
+                value={timePref}
+                onChange={(e) => onTimePrefChange(e.target.value as TimePref)}
+                className="field-input w-full"
+                aria-label={t.timePrefLabel}
+                title={t.timePrefHint}
+              >
+                <option value="local" style={OPT_STYLE}>{t.timePrefLocal}</option>
+                <option value="utc" style={OPT_STYLE}>{t.timePrefUtc}</option>
+              </select>
+              <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>{t.timePrefHint}</p>
             </div>
           </div>
 

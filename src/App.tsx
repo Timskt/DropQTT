@@ -29,6 +29,7 @@ import { traceTokenFor } from './utils/history';
 import { LANGUAGES, Language, Translations, fill, translations } from './i18n';
 import { applyTheme, THEMES, Theme } from './themes';
 import { usePersistentString } from './hooks/usePersistentState';
+import { useTimePref } from './hooks/useTimePref';
 import { useBroker } from './hooks/useBroker';
 import { useBridge } from './hooks/useBridge';
 import { useMqttMessages } from './hooks/useMqttMessages';
@@ -103,6 +104,11 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.density = density === 'compact' ? 'compact' : 'cozy';
   }, [density]);
+
+  // UTC vs local for every timestamp the UI prints. Mounted once, here, so the
+  // preference is live wherever the app runs — the panels only read the format
+  // functions, and this re-render is what makes them see a toggle immediately.
+  const timePref = useTimePref();
 
   // ---- File-transfer topic configuration ----
   const [publishTopic, setPublishTopic] = usePersistentString('dropqtt_publish_topic', 'dropqtt/public-lobby');
@@ -726,6 +732,8 @@ export function App() {
         onLangChange={setLangStr}
         theme={theme}
         onThemeChange={setThemeStr}
+        timePref={timePref.pref}
+        onTimePrefChange={timePref.setPref}
         t={t}
         onCheckUpdate={handleCheckUpdate}
         updateStatusText={updateStatusText}

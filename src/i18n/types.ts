@@ -220,6 +220,7 @@ export interface Translations {
   historyEmptyHint: string;
   historyShowing: string;
   historyZoneNote: string;
+  historyZoneNoteUtc: string;
   historyBinary: string;
   historyEmptyPayload: string;
   clientId: string;
@@ -282,6 +283,10 @@ export interface Translations {
   themeObsidian: string;
   themeNord: string;
   themeSolaris: string;
+  timePrefLocal: string;
+  timePrefUtc: string;
+  timePrefLabel: string;
+  timePrefHint: string;
   language: string;
   autoUpdate: string;
   checkForUpdates: string;

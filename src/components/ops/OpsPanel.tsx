@@ -26,6 +26,7 @@ import { MetricsCard } from './MetricsCard';
 import { copyToClipboard } from '../../utils/clipboard';
 import { saveTextFile } from '../../utils/exportMessages';
 import { toast } from '../../utils/toast';
+import { fmtClock as fmtZoneClock } from '../../utils/timePref';
 
 interface OpsPanelProps {
   t: Translations;
@@ -220,7 +221,7 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
 
         <div className="p-3 grid grid-cols-2 md:grid-cols-4 gap-2">
           <Metric label={t.opsHealthScore} value={`${errorCount} / ${warningCount}`} hint={t.opsErrorsWarnings} color={healthColor} />
-          <Metric label={t.opsLastUpdated} value={snapshot ? new Date(snapshot.runtime.generatedAt).toLocaleTimeString() : t.opsNever} />
+          <Metric label={t.opsLastUpdated} value={snapshot ? fmtZoneClock(snapshot.runtime.generatedAt) : t.opsNever} />
           <Metric label={t.opsSubscriptions} value={snapshot?.mqtt.subscriptions ?? '—'} hint={`${snapshot?.mqtt.topicStatsCount ?? 0} ${t.opsTrackedTopics}`} />
           <Metric label={t.opsBridgeConnections} value={`${snapshot?.bridge.connectedConnections ?? 0}/${snapshot?.bridge.totalConnections ?? 0}`} hint={`${snapshot?.bridge.enabledRules ?? 0} ${t.opsEnabledRules}`} />
         </div>

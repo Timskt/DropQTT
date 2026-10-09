@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Activity, GitBranch, Loader2 } from 'lucide-react';
 import { TimelineEntity, TimelineResult } from '../../types';
 import { fill, Translations } from '../../i18n';
+import { fmtClock as fmtZoneClock } from '../../utils/timePref';
 
 /** The window the chart is drawn against, resolved the way the list resolves it. */
 export interface TimelineWindow {
@@ -28,8 +29,7 @@ export const pct = (ms: number, win: TimelineWindow): number => {
   return Math.min(100, Math.max(0, ((ms - win.sinceMs) / span) * 100));
 };
 
-const clockOf = (ms: number): string =>
-  new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const clockOf = (ms: number): string => fmtZoneClock(ms);
 
 const silenceOf = (ms: number, t: Translations): string => {
   if (ms <= 0) return t.timelineNeverSilent;

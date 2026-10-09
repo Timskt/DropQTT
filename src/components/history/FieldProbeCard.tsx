@@ -3,8 +3,9 @@ import { Activity } from 'lucide-react';
 import { HistoryRow } from '../../types';
 import { Translations, fill } from '../../i18n';
 import { fieldReport, isNumericSeries, SeriesGap, SeriesPoint } from '../../utils/fieldSeries';
+import { fmtClock as fmtZoneClock } from '../../utils/timePref';
 
-const fmtClock = (ts: number): string => new Date(ts).toLocaleTimeString();
+const fmtClock = (ts: number): string => fmtZoneClock(ts);
 
 /**
  * A numeric series drawn with real breaks. The line is split wherever the samples went

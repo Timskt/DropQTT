@@ -10,10 +10,12 @@ import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, His
 import { Translations, fill } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
-import { exportStamp, utcOffsetLabel } from '../../utils/format';
+import { exportStamp } from '../../utils/format';
+import { fmtClock as fmtTimePref, fmtDateTime as fmtDateTimePref, zoneLabel as activeZoneLabel } from '../../utils/timePref';
 import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView, listTruncation } from '../../utils/history';
 import { buildTraceHtml } from '../../utils/traceHtml';
 import { buildCapture, CAPTURE_EXTENSION } from '../../utils/capture';
+import { useTimePref } from '../../hooks/useTimePref';
 import { RetainedCard } from './RetainedCard';
 import { TimelineCard } from './TimelineCard';
 import { MessageDiffCard } from './MessageDiffCard';
@@ -51,8 +53,8 @@ const matchLabel = (matched: string, t: Translations): string =>
 const matchColor = (matched: string): string =>
   matched === 'correlation' ? 'var(--accent)' : 'var(--text-muted)';
 
-const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString();
-const fmtDateTime = (ms: number) => new Date(ms).toLocaleString();
+const fmtTime = (ms: number) => fmtTimePref(ms);
+const fmtDateTime = (ms: number) => fmtDateTimePref(ms);
 
 /** Human span between two epoch-ms stamps (e.g. "2d 3h", "1m 20s"). */
 const fmtSpan = (from?: number | null, to?: number | null): string => {
@@ -159,6 +161,8 @@ const PayloadViewer: React.FC<{ row: HistoryRow; t: Translations }> = ({ row, t 
 export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   t, connected, requestTrace, brokerLabel, onPublish, onSubscribe,
 }) => {
+  // Mounted here so a timezone toggle re-renders this panel's timestamps too.
+  const { pref: timePref } = useTimePref();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [direction, setDirection] = useState<'all' | 'in' | 'out'>('all');
@@ -753,11 +757,14 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
         <div className="flex items-center justify-between px-3 py-1.5 text-[10px]" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-inset)' }}>
           <span className="flex items-center gap-2">
             {fill(t.historyShowing, { count: String(rows.length) })}
-            {/* The rows on this screen are local wall-clock; the files this panel
-                writes are UTC. A timestamp without its zone is a measurement
-                missing its units, so the zone is said rather than assumed. */}
+            {/* The rows on this screen follow the timestamp preference; the files
+                this panel writes are always UTC. A timestamp without its zone is
+                a measurement missing its units, so the zone is said rather than
+                assumed. */}
             <span data-testid="history-zone-note">
-              {fill(t.historyZoneNote, { zone: utcOffsetLabel(new Date().getTimezoneOffset()) })}
+              {timePref === 'utc'
+                ? t.historyZoneNoteUtc
+                : fill(t.historyZoneNote, { zone: activeZoneLabel() })}
             </span>
             {(stats.prunedRows ?? 0) > 0 && (
               <span data-testid="history-pruned" style={{ color: 'var(--warn)' }}>
