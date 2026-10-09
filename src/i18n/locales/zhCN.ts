@@ -74,6 +74,7 @@ export const zhCN: Translations = {
     sysEmptyOffline: '连接后自动采集 Broker 的 $SYS 健康指标',
     sysExpandHint: '展开查看全部 $SYS 指标明细',
     collapse: '收起',
+    expand: '展开',
     expandAll: '展开全部',
     refresh: '刷新',
     modeHistory: '报文历史',

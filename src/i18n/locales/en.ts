@@ -74,6 +74,7 @@ export const en: Translations = {
     sysEmptyOffline: 'Connect to auto-collect broker $SYS health metrics',
     sysExpandHint: 'Expand to view all $SYS metrics',
     collapse: 'Collapse',
+    expand: 'Expand',
     expandAll: 'Expand all',
     refresh: 'Refresh',
     modeHistory: 'Message History',

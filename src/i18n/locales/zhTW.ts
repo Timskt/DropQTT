@@ -74,6 +74,7 @@ export const zhTW: Translations = {
     sysEmptyOffline: '連線後自動收集 Broker 的 $SYS 健康指標',
     sysExpandHint: '展開檢視全部 $SYS 指標明細',
     collapse: '收起',
+    expand: '展開',
     expandAll: '展開全部',
     refresh: '重新整理',
     modeHistory: '報文歷史',

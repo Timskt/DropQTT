@@ -74,6 +74,7 @@ export const ja: Translations = {
     sysEmptyOffline: '接続すると Broker の $SYS 指標を自動収集',
     sysExpandHint: '展開して全ての $SYS 指標を表示',
     collapse: '折りたたむ',
+    expand: '展開',
     expandAll: '全て展開',
     refresh: '更新',
     modeHistory: 'メッセージ履歴',

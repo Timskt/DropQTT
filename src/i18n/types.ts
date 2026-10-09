@@ -75,6 +75,7 @@ export interface Translations {
   sysEmptyOffline: string;
   sysExpandHint: string;
   collapse: string;
+  expand: string;
   expandAll: string;
   refresh: string;
   modeHistory: string;
