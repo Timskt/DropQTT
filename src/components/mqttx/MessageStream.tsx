@@ -24,6 +24,7 @@ import { HtmlPreview, MarkdownView } from './RichText';
 import { looksLikeSenml, parseSenmlPack, senmlFromDecoded, senmlToTable } from '../../utils/senml';
 import { assertionOutcomeChip, assertionOutcomeGlyph, assertionVerdictTitle } from '../../utils/assertions';
 import { JsonTree } from './JsonTree';
+import { RowErrorBoundary } from './RowErrorBoundary';
 
 interface MessageStreamProps {
   messages: MqttGenericMessage[];
@@ -1064,22 +1065,24 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
                 </button>
               )}
               <div className="min-w-0 flex-1">
-            <MessageRow
-              msg={msg}
-              viewMode={viewMode}
-              copied={copiedId === msg.id}
-              replayed={replayedId === msg.id}
-              connected={connected}
-              codecScript={codecScript}
-              onCopy={handleCopy}
-              onReplay={handleReplay}
-              onQuickSubscribe={onQuickSubscribe}
-              broker={broker}
-              onTrace={onTrace}
-              onSendAsRpc={handleSendAsRpc}
-              onFilterTopic={handleFilterTopic}
-              t={t}
-            />
+                <RowErrorBoundary key={`eb-${msg.id}`}>
+                  <MessageRow
+                    msg={msg}
+                    viewMode={viewMode}
+                    copied={copiedId === msg.id}
+                    replayed={replayedId === msg.id}
+                    connected={connected}
+                    codecScript={codecScript}
+                    onCopy={handleCopy}
+                    onReplay={handleReplay}
+                    onQuickSubscribe={onQuickSubscribe}
+                    broker={broker}
+                    onTrace={onTrace}
+                    onSendAsRpc={handleSendAsRpc}
+                    onFilterTopic={handleFilterTopic}
+                    t={t}
+                  />
+                </RowErrorBoundary>
               </div>
             </div>
           ))}
