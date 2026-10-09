@@ -981,6 +981,7 @@ export interface Translations {
   exportJsonTitle: string;
   exportCsvTitle: string;
   exportDone: string;
+  exportDoneCapped: string;
   clearRetainedTitle: string;
   retainedOnTopics: string;
   clearAllRetained: string;

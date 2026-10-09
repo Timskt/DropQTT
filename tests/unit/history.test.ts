@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload } from '../../src/utils/history';
+import {
+  buildTraceExport,
+  canReplayHistory,
+  fillHistorySeries,
+  historyMessage,
+  historyPayload,
+  listTruncation,
+} from '../../src/utils/history';
 import { messagesToJson } from '../../src/utils/exportMessages';
 import type { HistoryRow, TraceResult } from '../../src/types';
 
@@ -70,5 +77,25 @@ describe('buildTraceExport', () => {
       ['rpc/request', 'correlation'],
       ['devices/edge-1/state', 'topic'],
     ]);
+  });
+});
+
+describe('a file built from the result list discloses the row cap', () => {
+  it('reports truncation as a fact about the window, not about the page being full', () => {
+    // 200 of 48,120: the list is a page and the export inherited its cap.
+    expect(listTruncation(200, 48_120)).toEqual({ shown: 200, windowTotal: 48_120 });
+    // A page that is exactly the whole window was not cut, even though it is
+    // exactly as full as a page that was.
+    expect(listTruncation(200, 200)).toBeNull();
+    expect(listTruncation(3, 3)).toBeNull();
+  });
+
+  it('refuses to claim a truncation it cannot support', () => {
+    // Nothing exported: there is no file to warn about.
+    expect(listTruncation(0, 500)).toBeNull();
+    // The window total is unknown or smaller than what is on screen. Naming a
+    // total here would put an unsupportable number in the user's receipt.
+    expect(listTruncation(200, 0)).toBeNull();
+    expect(listTruncation(200, 150)).toBeNull();
   });
 });

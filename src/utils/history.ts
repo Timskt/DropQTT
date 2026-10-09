@@ -54,6 +54,21 @@ export function fillHistorySeries(points: HistorySeriesPoint[], since: number, u
 }
 
 /**
+ * Anything built from the result list — an export, a recording — inherits the
+ * list's row cap, and a file that does not say so misreports the window it came
+ * from. `windowTotal` is what the *same* filter, direction and time window hold
+ * (the trend chart counts everything, the list is a page), so this reports
+ * truncation as a fact about the data rather than as a guess from "the page
+ * happens to be full" — a full page with nothing behind it is not truncated.
+ */
+export function listTruncation(
+  shown: number,
+  windowTotal: number,
+): { shown: number; windowTotal: number } | null {
+  return shown > 0 && windowTotal > shown ? { shown, windowTotal } : null;
+}
+
+/**
  * A trace as one portable file. Whoever receives it has to be able to read the
  * story without this app open, so each hop keeps the reason it is in the list
  * alongside both renderings of its payload: `payload` is what the bytes say as

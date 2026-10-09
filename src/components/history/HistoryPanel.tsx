@@ -10,7 +10,7 @@ import { ConsolePublishParams, HistoryRow, HistorySeriesPoint, HistoryStats, His
 import { Translations, fill } from '../../i18n';
 import { copyToClipboard } from '../../utils/clipboard';
 import { toast } from '../../utils/toast';
-import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView } from '../../utils/history';
+import { buildTraceExport, canReplayHistory, fillHistorySeries, historyMessage, historyPayload, HistoryView, listTruncation } from '../../utils/history';
 import { buildTraceHtml } from '../../utils/traceHtml';
 import { buildCapture, CAPTURE_EXTENSION } from '../../utils/capture';
 import { TimelineCard } from './TimelineCard';
@@ -291,7 +291,14 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   const handleExport = async (format: ExportFormat) => {
     setExporting(true);
     try {
-      if (await exportMessages(rows.map(historyMessage), format)) toast.success(fill(t.exportDone, { count: String(rows.length) }));
+      const cut = listTruncation(rows.length, totalInWindow);
+      if (await exportMessages(rows.map(historyMessage), format)) {
+        toast.success(
+          cut
+            ? fill(t.exportDoneCapped, { count: String(cut.shown), total: String(cut.windowTotal) })
+            : fill(t.exportDone, { count: String(rows.length) }),
+        );
+      }
     } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
   };
 
@@ -301,12 +308,16 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
       // `rows` is the list the user is looking at, and that list is capped; a
       // recording that held "the newest N of M" without saying so would misreport
       // the window it captured.
-      const capped = rows.length >= limit;
+      const cut = listTruncation(rows.length, totalInWindow);
       const name = `dropqtt-capture-${new Date().toISOString().replace(/[:.]/g, '-')}.${CAPTURE_EXTENSION}`;
-      const saved = await saveTextFile(name, buildCapture(rows, { filter: debouncedSearch || undefined, capped }));
+      const saved = await saveTextFile(name, buildCapture(rows, { filter: debouncedSearch || undefined, capped: cut !== null }));
       if (saved) {
         const file = saved.replace(/^.*[\\/]/, '');
-        toast.success(capped ? fill(t.captureSavedCapped, { name: file, count: String(rows.length) }) : fill(t.captureSaved, { name: file }));
+        toast.success(
+          cut
+            ? fill(t.captureSavedCapped, { name: file, count: String(cut.shown), total: String(cut.windowTotal) })
+            : fill(t.captureSaved, { name: file }),
+        );
       }
     } catch (e) { toast.error(String(e)); } finally { setExporting(false); }
   };
