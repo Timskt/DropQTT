@@ -28,21 +28,6 @@ jobs:
             args: ''
 
     runs-on: ${{ matrix.platform }}
-    # Secrets are not readable from a step `if:`, so they are mapped to env once here and
-    # every gate below tests `env.*`. An unset secret is an empty string, which is what the
-    # "is signing configured?" branch keys on: without the secrets the job builds exactly
-    # the way it always did, and with them it must produce a Developer ID artifact or fail.
-    env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      # Set to 1 only when the identity can actually be notarized (a Developer ID).
-      APPLE_NOTARIZE: ${{ vars.APPLE_NOTARIZE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -111,13 +96,57 @@ jobs:
         run: |
           cargo test
 
+      # Mapping secrets into `env:` at job level is what broke v0.12.3's two macOS legs:
+      # an unset secret still *defines* the variable as empty, and tauri-bundler treats a
+      # present `APPLE_CERTIFICATE` as "import this certificate" —
+      # `SecKeychainItemImport: One or more parameters passed to a function were not valid`
+      # — so "no secrets configured" stopped meaning "build the way you always did".
+      # The variables are therefore only exported when they actually hold a value, and the
+      # gates below read a sentinel rather than testing an absent variable.
+      - name: Export the signing configuration, if there is one
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NOTARY: ${{ vars.APPLE_NOTARIZE }}
+          N_ID: ${{ secrets.APPLE_ID }}
+          N_PW: ${{ secrets.APPLE_PASSWORD }}
+          N_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          N_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          N_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CERT" ]; then
+            echo "MACOS_SIGNED=0" >> "$GITHUB_ENV"
+            echo "no certificate configured — building unsigned, exactly as before"
+            exit 0
+          fi
+          # Same trap as above, one level down: an empty APPLE_ID would be "present" to
+          # the bundler too, so the optional credentials are only exported when they hold
+          # something.
+          emit() { [ -n "$2" ] && printf '%s=%s\n' "$1" "$2" >> "$GITHUB_ENV" || true; }
+          {
+            echo "MACOS_SIGNED=1"
+            echo "APPLE_CERTIFICATE=$CERT"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PW"
+            echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+            echo "APPLE_NOTARIZE=${NOTARY:-0}"
+          } >> "$GITHUB_ENV"
+          emit APPLE_ID "$N_ID"
+          emit APPLE_PASSWORD "$N_PW"
+          emit APPLE_TEAM_ID "$N_TEAM"
+          emit APPLE_API_KEY "$N_API_KEY"
+          emit APPLE_API_ISSUER "$N_API_ISSUER"
+
       # Two different mistakes hide behind "signing is configured". Half-set credentials
       # would ship a signed app whose notarization silently never happened; and a
       # self-signed identity (scripts/macos-selfsigned-identity.sh) cannot be notarized at
       # all — Apple only notarizes Developer ID — so opting into that path has to be
       # explicit rather than inferred. Hence APPLE_NOTARIZE.
       - name: Preflight the macOS signing configuration
-        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'macos-latest' && env.MACOS_SIGNED == '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -146,7 +175,7 @@ jobs:
           fi
 
       - name: Import the Developer ID certificate
-        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'macos-latest' && env.MACOS_SIGNED == '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -194,7 +223,7 @@ jobs:
       # build and "Always Allow" on the broker password dies with the next update. Green
       # jobs did not prove that was fixed; this does.
       - name: Verify the macOS artifact is Developer ID signed and notarized
-        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'macos-latest' && env.MACOS_SIGNED == '1'
         shell: bash
         run: |
           set -euo pipefail
