@@ -235,11 +235,47 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
 1. 版本号有**四处**，一起改（漏一处就会打出"版本对不上"的包）：
    `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 里的 `dropqtt` 条目。
 2. 提交 → 打 tag `v<semver>` → 推 tag：`release.yml` 由 `v*.*.*` 触发。
-3. 签名：updater 用 minisign，私钥与口令在 GitHub Secrets
-   （`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。
-   公钥与 endpoint 写死在 `src-tauri/tauri.conf.json`（`releases/latest/download/latest.json`）。
-   **本地没有私钥，产不出可升级签名包**——这是设计如此，不是漏配。`.gitignore` 已排除 `*.key`、
-   `*.key.pub`、`src-tauri/.updater-key-password`。
+3. 签名分**两套**，别混：
+   - **updater 签名**用 minisign，私钥与口令在 GitHub Secrets
+     （`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。
+     公钥与 endpoint 写死在 `src-tauri/tauri.conf.json`（`releases/latest/download/latest.json`）。
+     **本地没有私钥，产不出可升级签名包**——这是设计如此，不是漏配。`.gitignore` 已排除 `*.key`、
+     `*.key.pub`、`src-tauri/.updater-key-password`。
+   - **macOS 代码签名 + 公证**用 Apple 的 Developer ID。CI 侧已经接好（`release.yml` 的三步：
+     预检 → 导入证书 → 验产物），**但仓库里没有证书就不会启用**——那三步的门槛是
+     `env.APPLE_CERTIFICATE != ''`，缺 secrets 时构建行为与以前完全一致（产物仍是 ad-hoc 签名）。
+     启用需要属主做一次性准备：
+
+     ```text
+     1) Apple Developer Program（$99/年）。命令行证书工具拿不到 Developer ID Application 证书，
+        必须去 developer.apple.com → Certificates 用本机 Keybook 生成的 CSR 下载 .cer。
+        验证：security find-identity -v -p codesigning 里出现
+        "1) XXXX "Developer ID Application: <Name> (<TEAMID>)""
+     2) 导出 .p12（含私钥），设一个导出口令，然后：
+        base64 -i DeveloperID.p12 | pbcopy    → GitHub secret APPLE_CERTIFICATE
+        导出口令                              → secret APPLE_CERTIFICATE_PASSWORD
+        证书完整名（含括号里的 TEAMID）        → secret APPLE_SIGNING_IDENTITY
+     3) 公证二选一：
+        (a) App 专用口令：secret APPLE_ID（Apple ID 邮箱）+ APPLE_PASSWORD（app-specific）
+            + APPLE_TEAM_ID（就是上面那 10 位）
+        (b) API 密钥：developer.apple.com → Users and Access → Integrations → App Store Connect API
+            建一个，下载 .p8；secret APPLE_API_KEY = 文件内容（含 BEGIN/END 行，不要路径），
+            APPLE_API_ISSUER = 页面上的 Issuer ID
+            （这两个变量的名字与用法是从要打的那个 CLI 二进制里读出来的：它会把内容写成临时
+            `AuthKey*.p8` 再喂给 notarytool；想给路径要用另一个变量 `APPLE_API_KEY_PATH`。）
+        只配证书不配公证 = 预检直接失败退出，不会发出一个 Gatekeeper 打不开的包。
+     ```
+
+     配好之后**先跑一次 `workflow_dispatch`**（release.yml 支持手动触发）看那三步真的绿，
+     再打 tag。产物验的是签名本身，不是 job 结论：
+
+     ```bash
+     python3 scripts/check-macos-signed.py --self-test          # 期望 YES
+     python3 scripts/check-macos-signed.py /Applications/DropQTT.app --require-developer-id
+     ```
+
+     第二条现在会报 `macos-signed: NO`——本机装的正是 ad-hoc 包，这正是"每次升级都要重新
+     输一次钥匙串密码"的根因（§4.90）。它变成 YES 的那天，才算真的修好了。
 4. 产物：macOS（aarch64 + x86_64）、Linux（deb/AppImage）、Windows（msi/NSIS）+ `latest.json`。
 5. **按产物验收，不要只看 workflow 结论**：`releaseDraft: false` 意味着每条腿各自发布，
    一条腿失败会留下**公开但残缺**的 release。v0.11.2 就这样少了 Apple Silicon 包，

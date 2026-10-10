@@ -3684,6 +3684,72 @@ label 随便写——规则引用的是 id，可改 id 就得追着改规则，�
 Rust 本轮未改（402 条不变）。设置面板新状态用真 DOM 截图看过（密码行的 `Check`/`Clear`、
 "正在编辑的配置 · Production" 表头与"更新该配置"按钮均在位）。
 
+### 4.93 Developer ID 签名接进 CI，并且加了一道"签名不对就不许发"的门（第二十六轮 2026-10-11）
+
+属主决定做 Developer ID 签名。能自动化的部分我做完并证过；**证书本身只有属主能造**，
+所以这一轮的交付是"仓库侧就绪 + 一条会替你把关的门 + 一份一次性准备清单"。
+
+**先取证，不靠记忆写配置。** `tauri.conf.json` 的 schema 里 macOS 段只有
+`signingIdentity / hardenedRuntime / providerShortName / entitlements`，
+**没有任何 notarization 开关**（`grep -o '[Nn]otariz' config.schema.json` 只命中
+`providerShortName` 的描述）。所以签名与公证在这版 CLI（`@tauri-apps/cli` 2.11.4）里
+**只由环境变量驱动**。变量名不是猜的，是从真正会被执行的那个原生二进制里逐个 `strings` 查出来的：
+`APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID / APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD /
+APPLE_SIGNING_IDENTITY / APPLE_API_KEY / APPLE_API_ISSUER` 全部存在，
+而 `APPLE_KEYCHAIN_PATH / APPLE_KEYCHAIN_PASSWORD` **不存在**——意味着"建临时钥匙串、导入、
+解锁、设搜索列表"这几步必须工作流自己做，不能指望 CLI 代劳。二进制里还能看到
+`AuthKey.p8` + `failed to write notarization API key to temp file`，说明 `APPLE_API_KEY`
+要的是**内容**不是路径（给路径是另一个变量 `APPLE_API_KEY_PATH`）。
+**这一步的价值**：我原本准备在 `tauri.conf.json` 里写 `signingIdentity`，查了 schema 才知道
+写了反而会让所有没装证书的本机/贡献者构建失败——env 驱动天然"没配就没有"。
+
+**CI 三步，全部以 `env.APPLE_CERTIFICATE != ''` 为门槛**（secrets 在 step 的 `if:` 里读不到，
+所以先在 job 级 `env:` 映射一次再判空）：
+
+1. **预检**：证书在但公证凭据不全 → 直接失败，并列出缺哪几个。半配置的签名比不签名更坏——
+   会发出一个 Gatekeeper 打不开的包，而且 job 是绿的。
+2. **导入**：临时钥匙串 + `security import` + 把 runner 原有钥匙串接回搜索列表（否则 Apple 的
+   信任锚找不到，后面每个签名都建不出链）+ 删掉落盘的 .p12 +
+   `security find-identity` 当场确认那个身份真的可用（不确认的话这条错误会以"构建失败"的面目出现）。
+3. **验产物**：`scripts/check-macos-signed.py <app> --require-developer-id` +
+   `xcrun stapler validate` + `spctl --assess`。
+
+**新门 `scripts/check-macos-signed.py` 是这一轮真正的产出。** 判据来自 §4.90 那条事实：
+ad-hoc 签名的 designated requirement 是 CDHash，每构建必变，所以钥匙串的"始终允许"活不过一次升级。
+它拒绝三种形状：完全没签名、ad-hoc/链接器签名、以及**不是 `Developer ID Application:` 链**
+（`Apple Development:` 也会轮换，过不了 `--require-developer-id`）。
+
+**这道门自己先被验过，而且当场抓到我的 bug。** 第一版有两个正则写错：
+`flags=(\([^)]*\))` 漏了 `0x20002` 这个前缀（真实行是 `flags=0x20002(adhoc,linker-signed)`），
+`TeamIdentifier=(\S+)` 把 `not set` 截成 `not`。结果对**真的 ad-hoc app** 只报"不是 Developer ID"，
+不报 ad-hoc——检测静默失效。而第一版的自检喂的是手搓的 `Signature(...)` 值，
+**根本没经过解析器**，所以 10 项全绿也看不见这个洞。修法：自检改成解析
+`codesign` 的**真实输出文本**（把本机这份 ad-hoc 报告原样钉成 fixture），
+再加一条 `Developer ID` fixture；把两个正则退回错的版本，自检立刻报
+`NO (2 of 10 wrong)`。真实验收：
+`/Applications/DropQTT.app` → `macos-signed: NO`（两条 PROBLEM 都出）；
+VS Code → `YES`，带 `--require-developer-id` 也 `YES`；
+Calculator（Apple 系统签名，非 Developer ID）→ 不带门 `YES`、带门 `NO`，
+证明 `flags=0x0(none)` 不会被误判成 ad-hoc。
+另外把 verify 步骤的"找不到 bundle"分支改成先判目录再 `find`：`set -e` 下管道里的
+`find` 失败会让步骤直接以 `find: No such file or directory` 结束，运维读到的是一句路径错误
+而不是"什么都没验"。两个分支都本地跑过，各自 exit=1 且打印的是我要的那句话。
+
+**属主要做的一次性准备**写在 `docs/HANDOFF_2026_10.md` §6 第 3 条（Developer Program →
+用 CSR 在 developer.apple.com 下载 Developer ID Application 证书 → 导出带口令的 .p12 →
+六个 GitHub secrets；配好后**先手动 `workflow_dispatch` 跑一次**看那三步真绿，再打 tag）。
+我不会碰这些凭据。**没配 secrets 时行为与今天完全一致**（产物仍是 ad-hoc），
+所以这次改动对现有发布零风险。
+
+**验证**：`check-ci-shell.py` 两个 workflow 共 28 个 run 块 0 语法失败；
+新脚本 `--self-test` YES（10 项，含必须失败的那几项）；预检脚本三种凭据组合本地跑过
+（只给证书 → 失败并列出缺项；给 app 专用口令 → 过；给 API 密钥对 → 过）；
+verify 步骤两个失败分支本地跑过。Rust/前端本轮未改。
+
+**仍未证明的**：整条签名链**没有在真 CI 上跑过**——它需要属主的证书。所以下面这句话是承诺而不是结论：
+"配好 secrets 后 macOS 产物会是 Developer ID 签名"。判据已经就位并且证伪过（对现在的 ad-hoc 包
+它确实报 NO），要等第一次真签名跑出来变 YES 才算闭环。
+
 
 
 ## 6. 下一轮候选

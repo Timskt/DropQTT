@@ -28,6 +28,19 @@ jobs:
             args: ''
 
     runs-on: ${{ matrix.platform }}
+    # Secrets are not readable from a step `if:`, so they are mapped to env once here and
+    # every gate below tests `env.*`. An unset secret is an empty string, which is what the
+    # "is signing configured?" branch keys on: without the secrets the job builds exactly
+    # the way it always did, and with them it must produce a Developer ID artifact or fail.
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -96,6 +109,56 @@ jobs:
         run: |
           cargo test
 
+      # Half-configured signing is worse than none: the job would go green while shipping a
+      # Developer ID app that Gatekeeper blocks, because notarization needs its own
+      # credentials. So either the certificate and a notarization credential pair are both
+      # present, or this leg ships the way it always has.
+      - name: Refuse half-configured macOS signing
+        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ] || missing="$missing APPLE_CERTIFICATE_PASSWORD"
+          [ -n "${APPLE_SIGNING_IDENTITY:-}" ] || missing="$missing APPLE_SIGNING_IDENTITY"
+          notarized=0
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then notarized=1; fi
+          if [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then notarized=1; fi
+          [ "$notarized" = 1 ] || missing="$missing (APPLE_ID+APPLE_PASSWORD+APPLE_TEAM_ID or APPLE_API_KEY+APPLE_API_ISSUER)"
+          if [ -n "$missing" ]; then
+            echo "::error::APPLE_CERTIFICATE is set but these are not:$missing — refusing to ship a signed-but-unnotarized app"
+            exit 1
+          fi
+          echo "signing identity: $APPLE_SIGNING_IDENTITY, notarization credentials present"
+
+      - name: Import the Developer ID certificate
+        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          KC="$RUNNER_TEMP/build.keychain-db"
+          PW=$(openssl rand -hex 16)
+          security create-keychain -p "$PW" "$KC"
+          security default-keychain -s "$KC"
+          security unlock-keychain -p "$PW" "$KC"
+          # 6 h: a notarial submission waits, and the default timeout would take the
+          # keychain down mid-build.
+          security set-keychain-settings -lut 21600 "$KC"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KC"
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          # Keep the runner's own chain reachable, or the Apple trust anchors disappear and
+          # every signature later in the job fails to build a chain.
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"' | tr '\n' ' ')
+          # Fail here rather than inside the bundle step: `codesign` reports an unknown
+          # identity as a build error that reads like a toolchain problem.
+          if ! security find-identity -v -p codesigning "$KC" | grep -Fq "$APPLE_SIGNING_IDENTITY"; then
+            echo "::error::'$APPLE_SIGNING_IDENTITY' is not a valid code-signing identity in the imported certificate"
+            security find-identity -v -p codesigning "$KC" || true
+            exit 1
+          fi
+
       - name: Build and package Tauri application
         uses: tauri-apps/tauri-action@v0
         env:
@@ -111,3 +174,38 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # The claim being checked is the one that caused a user-visible bug: an ad-hoc
+      # signature makes the login keychain's ACL depend on the CDHash, so it changes every
+      # build and "Always Allow" on the broker password dies with the next update. Green
+      # jobs did not prove that was fixed; this does.
+      - name: Verify the macOS artifact is Developer ID signed and notarized
+        if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          args="${{ matrix.args }}"
+          triple=""
+          case "$args" in
+            *--target\ *) triple=$(printf '%s' "$args" | awk '{print $2}') ;;
+          esac
+          base="src-tauri/target"
+          [ -n "$triple" ] && base="$base/$triple"
+          dir="$base/release/bundle/macos"
+          # Checked before the find: with `set -e` a failing pipeline ends the step on
+          # `find`'s own message, and the operator reading the log needs the sentence
+          # that says *nothing was verified* rather than a path error.
+          if [ ! -d "$dir" ]; then
+            echo "::error::no bundle directory at $dir — the signature was not verified"
+            exit 1
+          fi
+          app=$(find "$dir" -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$app" ]; then
+            echo "::error::no .app under $dir — nothing was verified"
+            exit 1
+          fi
+          python3 scripts/check-macos-signed.py "$app" --require-developer-id
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          echo "notarytool history (last submissions):"
+          xcrun notarytool history --output-format json 2>/dev/null | head -20 || true
