@@ -47,11 +47,22 @@ fn refusing_broker() -> (u16, Arc<AtomicUsize>) {
                     break;
                 }
             }
+            // Drain the CONNECT *completely*. A single `read` is not enough: bytes left
+            // unread in this socket's receive buffer make the close below send RST, and
+            // on Windows the client then discards the CONNACK it had already buffered and
+            // reports `ConnectionReset` instead of the refusal — which is precisely the
+            // thing this test exists to pin. (It did exactly that on the first CI run.)
             let mut body = vec![0u8; remaining.min(4096)];
-            let _ = stream.read(&mut body);
+            let _ = stream.read_exact(&mut body);
             counter.fetch_add(1, Ordering::SeqCst);
             let _ = stream.write_all(&[0x20, 0x02, 0x00, 0x05]);
             let _ = stream.flush();
+            // Let the client hang up first. rumqttc drops the network as soon as it has
+            // read the refusal, so EOF is the signal that the bytes were delivered;
+            // closing before that is the same RST race in a different costume.
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut drain = [0u8; 64];
+            while stream.read(&mut drain).unwrap_or(0) > 0 {}
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
     });
