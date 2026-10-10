@@ -3812,6 +3812,47 @@ GitHub 表达式那里 `env.X` 未设置会成 `null`，我不想再赌一次它
 **闭环判据**：0.12.4 的 release 跑完后 `check-release-shipped.py v0.12.4` 必须回到
 `YES`、产物数回到 17、`latest.json` 里 `darwin-aarch64`/`darwin-x86_64` 都在。
 
+### 4.95 自签身份进 CI：门槛测的是"能不能签"，不是"keychain 显不显示它"（第二十八轮 2026-10-11）
+
+§4.93 只把"有证书时怎么签"接进了 CI，但属主没有 Developer ID 证书（$99/年，且要走 Apple 账号流程），
+而**钥匙串反复弹窗这个用户可见问题当天还在**。于是走了 §4.93 里预留的路 A：本机
+`scripts/macos-selfsigned-identity.sh` 建了一把十年期自签身份（`D483C414B23AD0E92E6B1745EFEF8A6E656BA508`
+"DropQTT Code Signing"），三个 secrets 设进仓库，本地 `.p12` 与口令文件**当场删掉**——
+私钥此后只在两处：GitHub Secrets 和 `~/Library/Keychains/login.keychain-db`（可导出，不会丢）。
+`.gitignore` 加了 `*.p12` 与 `*signing-identity.password`：一张进库的 .p12 就是一个公开私钥。
+
+**三个只有真跑一次才知道的事实**（每一个都足以让 v0.12.5 的 macOS 腿变红）：
+
+1. **`security find-identity -v -p codesigning` 报 "0 valid identities found"，而 `codesign` 用它签是 exit 0。**
+   `-v` 只列 keychain services 认为**被信任**的身份，自签证书永远是 `CSSMERR_TP_NOT_TRUSTED`（不带 `-v` 就能看到它）。
+   我在 §4.93 写的导入步骤门槛正是 `find-identity -v | grep "$APPLE_SIGNING_IDENTITY"`——
+   如果直接推 tag，两条 macOS 腿会死在这一步，**和 §4.94 是同一类错误：门槛测的是一个显示属性，不是我要的那个能力属性**。
+   改成做真正该做的事：编译一个 throwaway 二进制、用它签、再用现成的 `scripts/check-macos-signed.py` 判。
+   变异测试跑过：同一个文件 ad-hoc 签 → 门槛 **exit 1** 并给出正确理由（"keychain ACL 挂在 CDHash 上，每次构建都变，
+   '始终允许'活不过一次更新"）；自签身份 → `macos-signed: YES`，`codesign --verify --strict` 也过。
+   附带补上 headless runner 必需的两行：`security import … -T /usr/bin/codesign` 与
+   `security set-key-partition-list -S apple-tool:,apple:,codesign:`——没有后者，codesign 会卡在一个
+   **没有人能点的 GUI 访问确认**上。
+2. **`hardenedRuntime` 的默认值是 `true`**（拿 live schema `definitions.MacConfig` 核实过），
+   一旦 `APPLE_SIGNING_IDENTITY` 存在，bundler 就给每条产物加上 `--options runtime`。
+   而我们**不公证**（Apple 只公证 Developer ID，`APPLE_NOTARIZE` 明确留未设）——在这种配置下 hardened runtime
+   换不来任何东西，只换来风险：library validation 生效、又没有 entitlements 文件，WKWebView 这类系统组件的加载
+   规则是我这次没有测过的。于是显式钉成 `false`：**产物行为与今天能用的 ad-hoc 包一致，唯一变化是指派要求**
+   （CDHash → 证书叶子的哈希），而这恰好就是修弹窗所需要的全部。将来上 Developer ID + `APPLE_NOTARIZE=1` 时改回 `true`。
+3. **我自己的批量改版本号脚本把三个文件写坏了**：`replace('"version": "0.12.4"', '0.12.5')` 连键名一起替换，
+   `package.json`/`tauri.conf.json`/`Cargo.toml` 同时变成非法内容。`check-release-ready.py` 立刻
+   `release-ready: NO`（"unreadable as JSON / no package version found"）。这是 §4.71、§4.73 那条
+   "验证工具本身也要验"的第三次兑现——**它救的不是代码，是发版**。
+
+**用户侧要如实说清的两件事**：装上签名版之后**还会弹一次**钥匙串口令框（designated requirement 变了，旧的授权
+自然失效），点"始终允许"之后就**不再弹**；而 Gatekeeper 对隔离（quarantine）下载的拒绝**没有**被修好——
+自签身份在这一点上和不签名一样，只有 Developer ID + 公证能修。
+
+**验证**：本地实测 `find-identity -v`（0 个）与 `codesign --sign`（成功）这对矛盾；smoke 门槛正反两向跑过；
+`check-ci-shell.py` 两个 workflow 共 30 个 run 块 0 语法失败；`check-release-ready.py` 在 0.12.5 四处一致。
+**闭环判据**：v0.12.5 发完必须同时满足 `check-release-shipped.py v0.12.5` = `YES`（17 产物、11 个 updater 平台），
+**并且**把 release 上的 `DropQTT.app.tar.gz` 下载回来解包，`check-macos-signed.py <app>` 说 `YES`——
+即"签名这件事在产物上成立"，而不是只在 workflow 日志里成立。
 
 ## 6. 下一轮候选
 

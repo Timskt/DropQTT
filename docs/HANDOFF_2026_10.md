@@ -255,7 +255,7 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
 
      所以有两条路，成本与收益不同：
 
-     **路 A：自签证书（免费、不需要 Apple 账号、只解决钥匙串反复弹窗）**
+     **路 A：自签证书（免费、不需要 Apple 账号、只解决钥匙串反复弹窗）— 2026-10-11 已落地**
      ```bash
      scripts/macos-selfsigned-identity.sh          # 建身份 + 导出 .p12 + 打印要设的 secrets
      ```
@@ -264,6 +264,21 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
      设了预检会直接失败（这是故意的：不能声称公证了其实没有）。
      代价：Gatekeeper 行为和现在一模一样（都是拒绝），所以陌生人下载 DMG 仍然要被拦，
      你自己走自动更新没问题。
+
+     当前状态（新机器接手时不必重做，也别误删）：
+     ```text
+     身份     D483C414B23AD0E92E6B1745EFEF8A6E656BA508 "DropQTT Code Signing"（十年期，2036-10 到期）
+            在 ~/Library/Keychains/login.keychain-db；仓库外的 /tmp 副本已删除
+     secrets  APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY 已设
+     私钥     只存在于 GitHub Secrets 与登录钥匙串两处；`.gitignore` 已挡 `*.p12`、`*signing-identity.password`
+     换机器   从登录钥匙串导出 .p12 重新 `gh secret set` 即可；或在新机器重跑脚本并覆盖那三个 secrets
+     ```
+     两个只有跑过才知道的坑（细节见 ITERATION §4.95）：
+     `security find-identity -v` **看不见**自签身份（`CSSMERR_TP_NOT_TRUSTED`，它只列被信任的），
+     但 `codesign` 能正常用它——所以 CI 的门槛是"真签一个二进制"而不是"问 keychain 显不显示"；
+     以及 `bundle.macOS.hardenedRuntime` 默认 `true`，设了签名身份就会给产物加 `--options runtime`，
+     在"自签 + 不公证"这条路上一无所获只增风险，故钉成 `false`。
+     **上路 B 时记得把它改回 `true`**（Apple 公证要求 hardened runtime）。
 
      **路 B：Developer ID（$99/年，陌生人能双击安装）**
      ```text
@@ -282,7 +297,19 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
             `AuthKey*.p8` 再喂给 notarytool；想给路径要用另一个变量 `APPLE_API_KEY_PATH`。
      ```
 
-     两条路都**先跑一次 `workflow_dispatch`**（release.yml 支持手动触发）看那三步真的绿，再打 tag。
+     **别用 `workflow_dispatch` 去试这条路。** `release.yml` 里 `tagName: ${{ github.ref_name }}`，
+     手动触发时 ref 是分支名，那一步就会去**创建一个以分支为 tag 的公开 release 并上传产物**；
+     而这条 workflow 从建仓到现在**从未被 dispatch 过**，也就是说这条路的行为没有任何实测证据。
+     要验证签名链路，就在本机把 CI 那几步原样跑一遍（这就是 §4.95 里那两个坑被发现的经过）：
+     ```bash
+     # 门槛用的是"能不能真签"，所以本地直接跑门槛本身
+     dir=$(mktemp -d); printf 'int main(void){return 0;}\n' > "$dir/smoke.c"
+     clang "$dir/smoke.c" -o "$dir/smoke"
+     codesign --force --sign "DropQTT Code Signing" --timestamp=none "$dir/smoke"
+     python3 scripts/check-macos-signed.py "$dir/smoke"      # 期望 YES
+     codesign --force --sign - "$dir/smoke"                  # 变异：ad-hoc
+     python3 scripts/check-macos-signed.py "$dir/smoke"      # 期望 exit 1，理由必须是 CDHash
+     ```
      产物验的是签名本身，不是 job 结论：
 
      ```bash

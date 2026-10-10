@@ -39,3 +39,8 @@ playwright-report/
 
 # the python gate scripts leave byte-code behind when run as modules
 __pycache__/
+
+# Signing identities must never reach the repo — the self-signed helper writes one
+# next to the release artifacts, and a .p12 in git is a private key in public.
+*.p12
+*signing-identity.password

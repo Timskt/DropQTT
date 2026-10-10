@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DropQTT",
-  "version": "0.12.4",
+  "version": "0.12.5",
   "identifier": "com.dropqtt.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -38,6 +38,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "macOS": {
+      "hardenedRuntime": false
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

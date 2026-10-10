@@ -174,7 +174,7 @@ jobs:
             echo "::warning::ID certificate is still required for strangers to double-click the DMG."
           fi
 
-      - name: Import the Developer ID certificate
+      - name: Import the code-signing certificate into a build keychain
         if: matrix.platform == 'macos-latest' && env.MACOS_SIGNED == '1'
         shell: bash
         run: |
@@ -187,20 +187,39 @@ jobs:
           # 6 h: a notarial submission waits, and the default timeout would take the
           # keychain down mid-build.
           security set-keychain-settings -lut 21600 "$KC"
-          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
-          security import "$RUNNER_TEMP/developer-id.p12" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KC"
-          rm -f "$RUNNER_TEMP/developer-id.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -A -T /usr/bin/codesign -t cert -f pkcs12 -k "$KC"
+          rm -f "$RUNNER_TEMP/certificate.p12"
           # Keep the runner's own chain reachable, or the Apple trust anchors disappear and
           # every signature later in the job fails to build a chain.
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"' | tr '\n' ' ')
-          # Fail here rather than inside the bundle step: `codesign` reports an unknown
-          # identity as a build error that reads like a toolchain problem.
-          if ! security find-identity -v -p codesigning "$KC" | grep -Fq "$APPLE_SIGNING_IDENTITY"; then
-            echo "::error::'$APPLE_SIGNING_IDENTITY' is not a valid code-signing identity in the imported certificate"
-            security find-identity -v -p codesigning "$KC" || true
-            exit 1
-          fi
+          # The documented Tauri recipe, and the only way a *headless* runner is allowed to
+          # use the private key: without this codesign fails with an access check that would
+          # normally be answered by a GUI prompt nobody is there to click.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PW" "$KC"
+      # Fail here rather than inside the bundle step, where an unusable identity surfaces as
+      # a build error that reads like a toolchain problem.
+      #
+      # `security find-identity -v` cannot be the check: it only lists identities the
+      # keychain services consider *trusted*, and a self-signed certificate is always
+      # CSSMERR_TP_NOT_TRUSTED — measured on 2026-10-11, it reported "0 valid identities"
+      # for an identity that codesign then used successfully. Trust display is not the
+      # property we need; the ability to sign is. So the gate signs a throwaway binary and
+      # asserts the property this whole identity exists for: a signature whose designated
+      # requirement is the certificate, not a CDHash that changes on every build.
+      - name: Smoke-test the signing identity before the build
+        if: matrix.platform == 'macos-latest' && env.MACOS_SIGNED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/sign-smoke"
+          rm -rf "$dir"; mkdir -p "$dir"
+          printf 'int main(void){return 0;}\n' > "$dir/smoke.c"
+          clang "$dir/smoke.c" -o "$dir/smoke"
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp=none "$dir/smoke"
+          python3 scripts/check-macos-signed.py "$dir/smoke"
+          codesign --verify --strict --verbose=2 "$dir/smoke"
 
       - name: Build and package Tauri application
         uses: tauri-apps/tauri-action@v0
@@ -222,7 +241,7 @@ jobs:
       # signature makes the login keychain's ACL depend on the CDHash, so it changes every
       # build and "Always Allow" on the broker password dies with the next update. Green
       # jobs did not prove that was fixed; this does.
-      - name: Verify the macOS artifact is Developer ID signed and notarized
+      - name: Verify the macOS artifact signature (plus notarization when configured)
         if: matrix.platform == 'macos-latest' && env.MACOS_SIGNED == '1'
         shell: bash
         run: |
