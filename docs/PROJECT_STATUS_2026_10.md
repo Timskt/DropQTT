@@ -8,8 +8,8 @@
 （文件传输 / MQTT 控制台 / 数据桥接 / 消息历史 / 运维诊断），外加设备仿真与验收场景、
 会话录制回放、Prometheus 指标导出。贯穿全部功能的一条主张是**失败不许看起来像成功**。
 
-当前版本 **0.12.1**（发版中：v0.12.0 那批产物已按资产验收通过，本次只带 §4.90 的连接体验修复），
-`main` 与 `origin/main` 同步。
+当前版本 **0.12.1**（v0.12.0 四平台齐备；0.12.1 的 release 只发出 3/4 平台——Windows 那条腿被 §4.90
+新增集成测试的 Windows RST 竞态打红，属主已按资产验收查过，见 §4.86 那套判据），`main` 与 `origin/main` 同步。
 未入库的只有几份按属主决定留在工作区的评审/提案文档（`docs/PROPOSAL_2026_10*.md`、
 `docs/REVIEW_2026_10_09.md`）与 `.workbuddy/`；`AGENTS.md` 点名的那两份历史文档本机已不存在。
 
@@ -17,19 +17,19 @@
 
 | 指标 | 实测值 |
 | --- | --- |
-| Rust 源码 | 23,707 行 / 27 个模块（含 `bin/dropqtt-cli.rs` 与 `tls_report.rs`） |
-| TS + TSX 源码 | 26,217 行 / 105 个文件 |
+| Rust 源码 | 24,449 行 / 27 个模块（含 `bin/dropqtt-cli.rs` 与 `tls_report.rs`） |
+| TS + TSX 源码 | 26,500 行 / 106 个文件 |
 | Tauri 命令 | 81 个 `#[tauri::command]`（按实测计数，旧值 79 已漂） |
-| i18n 键 | 1057 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
+| i18n 键 | 1065 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
 | 依赖 | npm 31（运行时 14 + 开发 17）/ cargo 22 个直接依赖（本轮新增 `x509-parser`，11 个传递依赖） |
-| 测试文件 | 25 个 unit + 41 个 Playwright spec + 2 个 Rust 集成测试 |
+| 测试文件 | 26 个 unit + 42 个 Playwright spec + 2 个 Rust 集成测试 |
 
-**门禁全绿（2026-10-10，在 `v0.12.1` 这个 head 上重新量过，不是从上一版抄下来的）**：
+**门禁全绿（2026-10-10，在 §4.91 的 head 上重新量过，不是从上一版抄下来的）**：
 
-- Rust **397 lib + 2 集成通过**（macOS 本机 `cargo test`；§4.90 新增 8 条：CONNACK 拒绝分类
-  与映射、桥接订阅停放 5 条，外加一条真 socket 的"被拒 CONNACK 会被重放"集成测试）
-- 前端单测 **248 通过**（`npm test` = `vitest run tests/unit`）
-- 真 DOM UI **267 通过**（`npx playwright test`；新增 `connect-cost.spec.ts` 2 条）
+- Rust **402 lib + 2 集成通过**（macOS 本机 `cargo test`；§4.90 的 CONNACK 拒绝分类与桥接停放，
+  §4.91 的同名规则放行与跳数上界，外加一条真 socket 的"被拒 CONNACK 会被重放"集成测试）
+- 前端单测 **257 通过**（`npm test` = `vitest run tests/unit`；§4.91 的桥接连接模型 9 条）
+- 真 DOM UI **272 通过**（`npx playwright test`；`connect-cost.spec.ts` 2 条 + `bridge-multi-conn.spec.ts` 5 条）
 - 真机 CLI 门禁 **cli-gate 37 项 + scenario-gate 26 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76；cli-gate 多出的那一项是 broker 身份自检，§4.78）
 - `tsc --noEmit` 干净；`cargo clippy --all-targets -- -D warnings` **通过**
 - ESLint **0 error / 10 warning**（预算锁在 10，本轮未涨）
@@ -47,8 +47,10 @@ base64 / hex / markdown / html，含无依赖 CBOR 与 RFC 8428 SenML 读取）�
 SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 QoS1"就不会假装发了 QoS2）、
 订阅标识符、报文级 trace、CLI 命令复制、会话录制 `.dqrec` 与按节拍回放。
 
-**数据桥接**：broker→broker 与 broker→HTTP，多行源过滤器、排除子树、五种主题改写、
-限速、**磁盘 outbox（1s→300s 退避 + 死信）**、多 sink fan-out、转发日志、规则导入导出（脱敏）。
+**数据桥接**：broker→broker 与 broker→HTTP，**任意多个连接**（自己命名，一条连接可同时是源和目标，
+§4.91）、多行源过滤器、排除子树、五种主题改写、限速、**磁盘 outbox（1s→300s 退避 + 死信）**、
+多 sink fan-out、转发日志、规则导入导出（脱敏）、**跳数上界拦住成环的规则集**（MQTT5 `dropqtt-hop`，
+3.1.1 链路带不动时面板明说）。
 
 **消息历史**：SQLite（WAL + JSON1）追加式迁移、按主题聚合、按天/按条保留策略、
 **两条报文对比**（JSON 逐字段 / 文本逐行 / 二进制整体，附传输字段差异与截断感知，§4.80）、

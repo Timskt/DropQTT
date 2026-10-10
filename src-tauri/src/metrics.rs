@@ -667,6 +667,7 @@ mod tests {
                 forwarded: 100,
                 errors: 2,
                 dropped: 1,
+                loop_broken: 0,
             },
             checks: vec![
                 DiagnosticCheck {

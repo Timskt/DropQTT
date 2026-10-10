@@ -3575,6 +3575,66 @@ break 掉、之后不再重连"这半没有自动化断言**——被证明的�
 **顺手记下但没动**：`dropqtt-cli` 不走 `transport::build_connection`（它自己实现连接），
 所以连接层拒绝分类对它不适用；CLI 的 `connect` 自带 `--timeout`，行为未变。
 
+### 4.91 数据桥接原来只能配"一源一目标"，其实是被前端写死的（第二十四轮 2026-10-10）
+
+属主：「数据桥接转发的功能还是缺失的，目前只能配一个转发源和目标源，有的时候我这两种各有多个，
+而且可能某个即是目标也是转发源。」
+
+**先去证明"缺失"在哪里，而不是直接改。** `BridgeManager` 一直是 `HashMap<id, BridgeConn>`：
+`bridge_connect(id, config)` 接受任意 id（trim + 小写 + ≤12 字符），订阅按连接算
+（`desired_filters` 只看 `source_conn == 这条连接`），路由是"命中哪条规则就发到那条规则的
+`target_conn`"。**后端从来就是 N 路的。** 写死的是前端三处：
+
+- `useBridge.ts:22` `type BridgeRole = 'src' | 'dst'`，`:25` `BridgeRemember{src?,dst?}`，
+  `:177` 自动重连只 `['src','dst'].forEach`；
+- `BridgePanel.tsx:121` 卡片 props 写死 `connId: 'src'|'dst'`，`:627-669` 画了两张卡；
+- `:750-757` 源/目标下拉只有两个 option，而且 onChange 里互相顶替——选源时若与目标相同就把目标
+  改成另一个，这正是"不能同名"的伪装实现。
+
+后端另外有一条真限制：`sync_rules` 里 `must use two different connections`。
+
+**同名（同一条连接既是源又是目标）是真需求**——在一个 broker 内部改主题/重映射。所以按属主选的方案：
+不禁止，改成**有界**。
+
+**跳数上界走 MQTT5 user property `dropqtt-hop`**：入向解析、出向 +1，`HOP_LIMIT = 8`，
+超了就丢并计 `loop_broken`（与 `dropped` 分家——环是规则集写错了，排除过滤器是规则按设计生效）。
+`stamp_hop` 会**替换**入向已有的同名属性，否则一条被 `forward_props` 带过来的旧计数会和新的并存，
+下一跳取哪个决定环断不断。设备自己伪造这个属性最多让自己早停一条，占不到便宜。
+
+**v3.1.1 带不了它**——`mqttbytes::v4::Publish` 结构里根本没有 properties 字段，
+`MqttClient::publish` 的 v3 分支直接丢弃。所以这条限制我没有藏：面板在"规则集构成环、且环里有
+3.1.1 链路"时明说跳数上限到不了那里（`connsInCycles` 找环，`remember[id].protocolVersion` 判断
+哪条链路带得动）。**没有**为此再造一套指纹窗口——按 payload 指纹去重会把"设备 10 秒内发了两条
+相同值"这种真流量也吞掉，误杀代价比漏杀更坏。
+
+**校验抽成纯函数 `rule_error(rule)`**：整段规则校验本来内联在 `sync_rules` 里，而 `sync_rules`
+要 `AppHandle`，所以"放开同名"这件事此前**没有任何测试能碰到**。抽出来之后它能测了，
+顺手把其余六条检查也钉住（空过滤器 / fixed 无目标主题 / 空映射表 / 非法正则 / HTTP 无处可投 /
+脚本没有 `function transform`），以及"关掉的 HTTP 规则允许没有落点"这条本来只对外的行为。
+
+**前端**：连接列表成为用户数据（`dropqtt_bridge_conns`，`{id,label}`），id 生成后**不可改**、
+label 随便写——规则引用的是 id，可改 id 就得追着改规则，而把中文 label 压成合法 id 又会让两个
+不同名字撞成同一个。删除走"两次点击 + 4 秒失效"（与删规则同一套），并且**只要还有规则引用就不让删**：
+否则那条规则还在、订阅没了、一声不响地不转发，比报错更糟。源/目标两个下拉从此独立列全部连接，
+`connChoices` 还会把"导入的规则带来一个本机没有的 id"保留成选项，否则打开表单就会悄悄改写它。
+
+**验证**：Rust **402**（+5：同名规则被接受、六条检查仍拒绝、跳数解析/上限/打点各一条）；
+单测 **257**（+9：`nextConnId` 补空位不跳号、`rulesUsing` 两侧都看且 HTTP 落点不算引用、
+`connsInCycles` 两跳/三跳/禁用/HTTP/自环）；UI **272**（+5：三张卡各自可命名、添加取最小空 id、
+同名规则真的把 `sourceConn===targetConn` 送到后端、被引用的连接删不掉且原因写在 title、
+环跨 3.1.1 时警告出现而全 v5 时不出现）。
+变异：把 `must use two different connections` 加回去 → 同名用例红；删掉空过滤器检查 → 保护性检查用例红；
+`hop_exceeded` 恒 false → 上限用例红；`rulesUsing` 只看目标侧 / `nextConnId` 改成 `len+1` /
+`connsInCycles` 恒空 → 三条单测各红；`connChoices` 退回写死 `['src','dst']` → UI 第 3 条红
+（**这条第一次没红**：我原来选的是 `dst→dst`，两个选项的老列表也允许，等于没测到"列表是动态的"——
+改成 `c3→c3` 才杀掉。断言要挑那种"只有新行为才成立"的取值）。
+另外两处门禁连带改了 fixture：`BridgeDiagnostics` 多了 `loopBroken`，两个 spec 的快照补字段
+（没把字段做成可选去"兼容"——后端一定给，测试的旧形状才是该修的东西）。
+
+**仍未证明的**：`route()` 里"超限就丢并计数"这半需要真实 `AppHandle`（§4.90 同一个坑），
+所以跳数**决策**是纯函数测过的，**接线**是读代码确认的。真机端到端要等一次性 broker 上跑
+两条互相回射的规则，那属于 CLI/场景门禁的活，下一轮补。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

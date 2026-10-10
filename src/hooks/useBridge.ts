@@ -14,18 +14,24 @@ import {
 import { usePersistentState } from './usePersistentState';
 import { withoutStoredSecrets } from '../utils/secrets';
 import { useReleasedHeaderSecrets } from './useReleasedHeaderSecrets';
+import {
+  BridgeConnection,
+  DEFAULT_CONNECTIONS,
+  nextConnId,
+  rulesUsing,
+} from '../utils/bridgeConns';
 
 // The panel quotes this number in its own truncation notice, so it is
 // exported rather than duplicated: a changed cap must not leave a message
 // claiming a different length.
 export const EVENT_LOG_CAP = 150;
-type BridgeRole = 'src' | 'dst';
 
-/** What each bridge role last connected to, for quick reconnect / autostart */
-export interface BridgeRemember {
-  src?: BrokerConfig;
-  dst?: BrokerConfig;
-}
+/**
+ * Last endpoint each connection used, keyed by its id. `BridgeRemember` kept that shape
+ * while there were exactly two; the keys are the same ids, so storage written before this
+ * reads unchanged.
+ */
+export type BridgeRemember = Record<string, BrokerConfig | undefined>;
 
 /** A logged forward with a stable list key (backend timestamps can collide) */
 export interface BridgeEventEntry {
@@ -36,13 +42,17 @@ export interface BridgeEventEntry {
 const dropReferences = <S extends { secretHeaders?: unknown }>({ secretHeaders: _gone, ...sink }: S): Omit<S, 'secretHeaders'> => sink;
 
 /**
- * Bridge session state: two independent broker connections ("src"/"dst"),
- * forwarding rules (persisted here; pushed to the backend on every change),
- * per-rule stats, the webhook outbox the backend keeps on disk, and a capped
- * live event log.
+ * Bridge session state: any number of independent broker connections (the backend keyed
+ * them by id all along), forwarding rules (persisted here; pushed to the backend on every
+ * change), per-rule stats, the webhook outbox the backend keeps on disk, and a capped live
+ * event log.
  */
 export function useBridge(visible: boolean) {
   const [conns, setConns] = useState<BridgeConnInfo[]>([]);
+  const [connections, setConnections] = usePersistentState<BridgeConnection[]>(
+    'dropqtt_bridge_conns',
+    DEFAULT_CONNECTIONS,
+  );
   const [rules, setRules] = usePersistentState<BridgeRule[]>('dropqtt_bridge_rules', []);
   const [stats, setStats] = useState<Record<string, BridgeRuleStats>>({});
   const [events, setEvents] = useState<BridgeEventEntry[]>([]);
@@ -170,13 +180,49 @@ export function useBridge(visible: boolean) {
     }
   }, [setRemember]);
 
-  // ---- Autostart: restore remembered endpoints once per app launch ----
+  // ---- Connection registry (ids are generated and never edited; labels are free text) ----
+  const addConnection = useCallback((): string => {
+    const id = nextConnId(connections.map((c) => c.id));
+    setConnections((prev) => [...prev, { id, label: '' }]);
+    return id;
+  }, [connections, setConnections]);
+
+  const labelConnection = useCallback(
+    (id: string, label: string) =>
+      setConnections((prev) => prev.map((c) => (c.id === id ? { ...c, label } : c))),
+    [setConnections],
+  );
+
+  /**
+   * Forget a connection. Returns the rules that still name it instead of removing
+   * anything: a rule left pointing at a connection that no longer exists stays enabled,
+   * keeps nothing subscribed, and forwards silently — the one outcome worse than an error.
+   */
+  const removeConnection = useCallback(
+    (id: string): BridgeRule[] => {
+      const users = rulesUsing(rules, id);
+      if (users.length > 0) return users;
+      setConnections((prev) => prev.filter((c) => c.id !== id));
+      setRemember((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      if (conns.some((c) => c.id === id)) disconnect(id);
+      return [];
+    },
+    [rules, conns, setConnections, setRemember, disconnect],
+  );
+
+  // ---- Autostart: restore every remembered endpoint once per app launch ----
   useEffect(() => {
     if (bootRef.current || !autoReconnect) return;
     bootRef.current = true;
-    (['src', 'dst'] as BridgeRole[]).forEach((role) => {
-      const cfg = remember[role];
-      if (cfg) connect(role, cfg);
+    // The list, not the stored map: a connection whose rule set was removed but whose
+    // endpoint is still remembered would otherwise come back on its own.
+    connections.forEach(({ id }) => {
+      const cfg = remember[id];
+      if (cfg) connect(id, cfg);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoReconnect]);
@@ -272,6 +318,7 @@ export function useBridge(visible: boolean) {
 
   return {
     conns,
+    connections,
     rules,
     stats,
     events,
@@ -285,6 +332,9 @@ export function useBridge(visible: boolean) {
     setAutoReconnect,
     connect,
     disconnect,
+    addConnection,
+    labelConnection,
+    removeConnection,
     addRule,
     updateRule,
     removeRule,

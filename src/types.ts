@@ -791,6 +791,8 @@ export interface BridgeDiagnostics {
   forwarded: number;
   errors: number;
   dropped: number;
+  /** Stopped by the forwarding hop cap — a rule set that loops */
+  loopBroken: number;
 }
 
 export type DiagnosticLevel = 'ok' | 'warn' | 'error';
@@ -1005,6 +1007,9 @@ export interface BridgeRuleStats {
   errors: number;
   /** Skipped by exclusion filters or rate limiting */
   dropped: number;
+  /** Stopped by the forwarding hop cap. Kept apart from `dropped` because a loop is a
+   *  mistake in the rule set, while an exclusion is the rule working as written. */
+  loopBroken?: number;
   lastTopic: string;
   /** Webhook bodies still owed a delivery, and dead letters that stopped trying */
   queued?: number;

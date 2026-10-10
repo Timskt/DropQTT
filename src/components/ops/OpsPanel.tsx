@@ -391,6 +391,7 @@ export const OpsPanel: React.FC<OpsPanelProps> = ({
                 <Metric label={t.forwarded} value={snapshot.bridge.forwarded.toLocaleString()} color="var(--ok)" />
                 <Metric label={t.failed} value={snapshot.bridge.errors.toLocaleString()} color={snapshot.bridge.errors ? 'var(--bad)' : 'var(--text-primary)'} />
                 <Metric label={t.dropped} value={snapshot.bridge.dropped.toLocaleString()} color={snapshot.bridge.dropped ? 'var(--warn)' : 'var(--text-primary)'} />
+                <Metric label={t.bridgeLoopBrokenTip} value={snapshot.bridge.loopBroken.toLocaleString()} color={snapshot.bridge.loopBroken ? 'var(--danger)' : 'var(--text-primary)'} />
               </div>
             </Section>
           </div>

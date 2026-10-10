@@ -82,7 +82,7 @@ const boot = async (
                 // The lifetime counters the endpoint exports as `_total`.
                 receivedTotal: 4242, sentTotal: 111,
               },
-              bridge: { totalConnections: 0, connectedConnections: 0, configuredRules: 0, enabledRules: 0, forwarded: 0, errors: 0, dropped: 0 },
+              bridge: { totalConnections: 0, connectedConnections: 0, configuredRules: 0, enabledRules: 0, forwarded: 0, errors: 0, dropped: 0, loopBroken: 0 },
               checks: [],
             };
           }

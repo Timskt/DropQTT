@@ -211,6 +211,9 @@ pub struct BridgeDiagnostics {
     pub forwarded: u64,
     pub errors: u64,
     pub dropped: u64,
+    /// Stopped by the bridge's hop cap. Reported apart from `dropped` because the fix is
+    /// in the rule set — a loop is not the exclusion filter working as written.
+    pub loop_broken: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]

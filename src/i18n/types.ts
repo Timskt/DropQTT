@@ -401,6 +401,14 @@ export interface Translations {
   currentConfig: string;
   lastUsed: string;
   bridgeAutoReconnect: string;
+  bridgeConn: string;
+  bridgeConnName: string;
+  bridgeAddConn: string;
+  bridgeRemoveConn: string;
+  bridgeRemoveConnAgain: string;
+  bridgeRemoveConnBlocked: string;
+  bridgeLoopUnprotected: string;
+  bridgeLoopBrokenTip: string;
   historyAllTime: string;
   historyPerBucket: string;
   historyExportResults: string;

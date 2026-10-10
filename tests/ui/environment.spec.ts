@@ -73,7 +73,7 @@ const boot = async (page: any, seed: Record<string, unknown> = {}) => {
               history: { rows: 0, inbound: 0, outbound: 0, bytes: 0, oldestMs: null, newestMs: null, retentionDays: 0, prunedRows: 0 },
               downloadDir: 'D:/Downloads', downloadDirWritable: true, downloadDirError: null,
             },
-            bridge: { totalConnections: 0, connectedConnections: 0, configuredRules: 0, enabledRules: 0, forwarded: 0, errors: 0, dropped: 0 },
+            bridge: { totalConnections: 0, connectedConnections: 0, configuredRules: 0, enabledRules: 0, forwarded: 0, errors: 0, dropped: 0, loopBroken: 0 },
             checks: [],
           };
         }

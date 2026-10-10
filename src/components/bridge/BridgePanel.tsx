@@ -37,6 +37,7 @@ import {
   commitSinkSecrets, formatSinkHeaders, parseHeaderLines, planSinkSecrets, StaleHeaderMark, strippedSink, type SinkSecretPlan,
 } from '../../utils/webhookHeaders';
 import { useSilence } from '../../hooks/useSilence';
+import { connsInCycles, rulesUsing } from '../../utils/bridgeConns';
 import { SilencePanel } from './SilencePanel';
 
 interface BridgePanelProps {
@@ -99,6 +100,10 @@ type SinkTarget = NonNullable<BridgeRule['targets']>[number];
 
 const newSink = (): SinkTarget => ({ url: '', format: 'json', headers: [] });
 
+/** Card accents cycle with the connection count; the first two keep the names and colors
+ *  every existing rule set was built against. */
+const CONN_ACCENTS = ['var(--accent)', 'var(--warning)', 'var(--info)', 'var(--success)', '#a78bfa'];
+
 const SAMPLE_SCRIPT = `// transform(topic, payload, qos, retain)
 // return the new payload; returning null drops this message
 function transform(topic, payload, qos, retain) {
@@ -116,20 +121,29 @@ function transform(topic, payload, qos, retain) {
 const b64Encode = (s: string): string =>
   btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 
-/** One source/target bridge connection card */
+/** One bridge connection card. The id is generated and fixed; the label is the user's. */
 const BridgeConnCard: React.FC<{
-  connId: 'src' | 'dst';
+  connId: string;
+  /** The user's name for it. Empty falls back to the translated role name. */
+  label: string;
   title: string;
   accent: string;
   options: BrokerProfile[];
   lastConfig?: BrokerConfig;
   conn?: { connected: boolean; brokerHost: string; brokerPort: number; error?: string | null };
   busy: boolean;
+  /** Rules that still name this connection; non-empty means it cannot be forgotten */
+  usedBy: BridgeRule[];
+  removeArmed: boolean;
+  onRename: (label: string) => void;
+  onAskRemove: () => void;
+  onConfirmRemove: () => void;
   onConnect: (profileId: string, custom?: { host: string; port: number }) => void;
   onDisconnect: () => void;
   onManageConfigs: () => void;
   t: Translations;
-}> = ({ connId, title, accent, options, lastConfig, conn, busy, onConnect, onDisconnect, onManageConfigs, t }) => {
+}> = ({ connId, label, title, accent, options, lastConfig, conn, busy, usedBy, removeArmed,
+  onRename, onAskRemove, onConfirmRemove, onConnect, onDisconnect, onManageConfigs, t }) => {
   const [selected, setSelected] = useState(lastConfig ? '__last__' : (options[0]?.id ?? ''));
   const [customMode, setCustomMode] = useState(false);
   const [customHost, setCustomHost] = useState(lastConfig?.host ?? '127.0.0.1');
@@ -138,22 +152,52 @@ const BridgeConnCard: React.FC<{
   return (
     <div className="panel">
       <div className="panel-header">
-        <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-          <GitBranch className="w-4 h-4" style={{ color: accent }} />
-          {title}
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-inset)', color: 'var(--text-muted)' }}>
+        <div className="flex items-center gap-2 text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+          <GitBranch className="w-4 h-4 shrink-0" style={{ color: accent }} />
+          {/* Named inline: with several connections the generated id is not a name, and a
+              modal to rename one would cost more than the box it sits in. */}
+          <input
+            aria-label={`${t.bridgeConnName} · ${connId}`}
+            value={label}
+            onChange={(e) => onRename(e.target.value)}
+            placeholder={title}
+            maxLength={24}
+            className="min-w-0 flex-1 bg-transparent border-b text-xs font-semibold outline-none"
+            style={{ borderColor: 'var(--border-inset)', color: 'var(--text-primary)' }}
+          />
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0" style={{ background: 'var(--bg-inset)', color: 'var(--text-muted)' }}>
             {connId}
           </span>
         </div>
-        <span
-          className="flex items-center gap-1.5 text-[11px] font-mono"
-          style={{ color: conn?.connected ? 'var(--success)' : 'var(--text-muted)' }}
-        >
+        <span className="flex items-center gap-2 shrink-0">
           <span
-            className={`w-2 h-2 rounded-full ${conn?.connected ? 'animate-pulse' : ''}`}
-            style={{ background: conn?.connected ? 'var(--success)' : 'var(--text-muted)' }}
-          />
-          {conn?.connected ? t.connected : t.disconnected}
+            className="flex items-center gap-1.5 text-[11px] font-mono"
+            style={{ color: conn?.connected ? 'var(--success)' : 'var(--text-muted)' }}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${conn?.connected ? 'animate-pulse' : ''}`}
+              style={{ background: conn?.connected ? 'var(--success)' : 'var(--text-muted)' }}
+            />
+            {conn?.connected ? t.connected : t.disconnected}
+          </span>
+          {/* Same two-click idiom as deleting a rule, including the lapse: an armed
+              button left standing would delete an unrelated connection later. */}
+          <button
+            onClick={usedBy.length > 0 ? () => undefined : removeArmed ? onConfirmRemove : onAskRemove}
+            disabled={usedBy.length > 0}
+            data-testid={`conn-remove-${connId}`}
+            aria-label={removeArmed ? t.bridgeRemoveConnAgain : t.bridgeRemoveConn}
+            title={usedBy.length > 0 ? t.bridgeRemoveConnBlocked : removeArmed ? t.bridgeRemoveConnAgain : t.bridgeRemoveConn}
+            className={`px-1.5 py-0.5 rounded border text-[10px] font-mono disabled:opacity-40 ${
+              !removeArmed ? 'transition hover:brightness-125' : ''
+            }`}
+            style={{
+              borderColor: removeArmed ? 'var(--danger)' : 'var(--border-inset)',
+              color: removeArmed ? 'var(--danger)' : 'var(--text-muted)',
+            }}
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
         </span>
       </div>
 
@@ -291,8 +335,9 @@ const BridgeConnCard: React.FC<{
 export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpenSettings, connected, t }) => {
   const silence = useSilence(true);
   const {
-    conns, rules, stats, events, busy, lastError, totalSent, outbox, remember, autoReconnect, setAutoReconnect,
-    connect, disconnect, addRule, updateRule, removeRule, toggleRule, importRules, resetStats, clearEvents,
+    conns, connections, rules, stats, events, busy, lastError, totalSent, outbox, remember, autoReconnect, setAutoReconnect,
+    connect, disconnect, addConnection, labelConnection, removeConnection,
+    addRule, updateRule, removeRule, toggleRule, importRules, resetStats, clearEvents,
     flushOutbox, dropDeadLetters,
   } = bridge;
 
@@ -327,6 +372,9 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   // Two-step delete: one click should never destroy a rule the user spent
   // time writing, and a modal would be heavier than this needs.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // Same idiom for forgetting a connection, and the same lapse: an armed button
+  // left standing would delete whichever connection the user next clicks.
+  const [armedConn, setArmedConn] = useState<string | null>(null);
   // Dead letters are the only record that an endpoint was unreachable, so the
   // button that throws them away needs the same two-click guard a rule delete has.
   const [pendingDropDead, setPendingDropDead] = useState(false);
@@ -388,6 +436,17 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
   };
 
   const connOf = (id: string) => conns.find((c) => c.id === id);
+  /** The user's name for a connection, falling back to the translated role for the two
+   *  ids that predate naming, and to the bare id for anything else. */
+  const connName = (id: string) =>
+    connections.find((c) => c.id === id)?.label
+    || (id === 'src' ? t.bridgeSource : id === 'dst' ? t.bridgeTarget : id);
+  /** An imported rule can name a connection this machine does not have. Listing only the
+   *  known ones would silently rewrite that rule the first time the form was opened. */
+  const connChoices = (selected: string) =>
+    connections.map((c) => c.id).includes(selected) || !selected
+      ? connections.map((c) => c.id)
+      : [selected, ...connections.map((c) => c.id)];
   const set = <K extends keyof BridgeRule>(k: K, v: BridgeRule[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
   const extraSinks = draft.targets ?? [];
@@ -623,51 +682,73 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
 
       {/* ---- Connections ---- */}
       <div className="workspace-two-col">
-        <BridgeConnCard
-          connId="src"
-          title={t.bridgeSource}
-          accent="var(--accent)"
-          options={options}
-          lastConfig={remember.src}
-          conn={connOf('src')}
-          busy={busy}
-          t={t}
-          onConnect={(profileId, custom) => {
-            if (custom) {
-              connect('src', { ...DEFAULT_BROKER_CONFIG, host: custom.host, port: custom.port, clientId: 'DropQTT' });
-            } else if (profileId === '__last__' && remember.src) {
-              connect('src', remember.src);
-            } else {
-              const p = options.find((o) => o.id === profileId);
-              if (p) connect('src', p.config);
-            }
-          }}
-          onDisconnect={() => disconnect('src')}
-          onManageConfigs={onOpenSettings}
-        />
-        <BridgeConnCard
-          connId="dst"
-          title={t.bridgeTarget}
-          accent="var(--warning)"
-          options={options}
-          lastConfig={remember.dst}
-          conn={connOf('dst')}
-          busy={busy}
-          t={t}
-          onConnect={(profileId, custom) => {
-            if (custom) {
-              connect('dst', { ...DEFAULT_BROKER_CONFIG, host: custom.host, port: custom.port, clientId: 'DropQTT' });
-            } else if (profileId === '__last__' && remember.dst) {
-              connect('dst', remember.dst);
-            } else {
-              const p = options.find((o) => o.id === profileId);
-              if (p) connect('dst', p.config);
-            }
-          }}
-          onDisconnect={() => disconnect('dst')}
-          onManageConfigs={onOpenSettings}
-        />
+        {connections.map(({ id, label }, index) => (
+          <BridgeConnCard
+            key={id}
+            connId={id}
+            label={label}
+            // The two ids every existing rule set already uses keep their old names;
+            // anything added later is unnamed until the user calls it something.
+            title={id === 'src' ? t.bridgeSource : id === 'dst' ? t.bridgeTarget : `${t.bridgeConn} ${id}`}
+            accent={CONN_ACCENTS[index % CONN_ACCENTS.length]}
+            options={options}
+            lastConfig={remember[id]}
+            conn={connOf(id)}
+            busy={busy}
+            usedBy={rulesUsing(rules, id)}
+            removeArmed={armedConn === id}
+            t={t}
+            onRename={(next) => labelConnection(id, next)}
+            onAskRemove={() => {
+              setArmedConn(id);
+              setTimeout(() => setArmedConn((cur) => (cur === id ? null : cur)), 4000);
+            }}
+            onConfirmRemove={() => {
+              removeConnection(id);
+              setArmedConn(null);
+            }}
+            onConnect={(profileId, custom) => {
+              if (custom) {
+                connect(id, { ...DEFAULT_BROKER_CONFIG, host: custom.host, port: custom.port, clientId: 'DropQTT' });
+              } else if (profileId === '__last__' && remember[id]) {
+                connect(id, remember[id] as BrokerConfig);
+              } else {
+                const p = options.find((o) => o.id === profileId);
+                if (p) connect(id, p.config);
+              }
+            }}
+            onDisconnect={() => disconnect(id)}
+            onManageConfigs={onOpenSettings}
+          />
+        ))}
+        <button
+          type="button"
+          onClick={addConnection}
+          className="panel flex items-center justify-center gap-2 py-4 text-xs font-mono transition hover:brightness-125"
+          style={{ color: 'var(--text-secondary)', borderStyle: 'dashed' }}
+        >
+          <Plus className="w-4 h-4" />
+          {t.bridgeAddConn}
+        </button>
       </div>
+
+      {/* A loop is allowed and bounded, but the bound rides on an MQTT5 user property, so
+          a link that speaks 3.1.1 cannot carry it. Said here rather than discovered as a
+          traffic storm. */}
+      {(() => {
+        const looped = connsInCycles(rules);
+        if (looped.length === 0) return null;
+        const unprotected = looped.filter((id) => (remember[id]?.protocolVersion ?? 5) !== 5);
+        if (unprotected.length === 0) return null;
+        return (
+          <div
+            className="text-[11px] font-mono px-3 py-2 rounded border"
+            style={{ color: 'var(--warning)', borderColor: 'var(--warning)', background: 'var(--bg-inset)' }}
+          >
+            {fill(t.bridgeLoopUnprotected, { conns: unprotected.join(', ') })}
+          </div>
+        );
+      })()}
 
       {lastError && (
         <div className="text-[11px] font-mono px-3 py-2 rounded border" style={{ color: 'var(--danger)', borderColor: 'var(--danger)', background: 'var(--bg-inset)' }}>
@@ -747,14 +828,19 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                 value={draft.name}
                 onChange={(e) => set('name', e.target.value)}
               />
-              <select aria-label={`${t.bridgeRules} · ${t.bridgeSource}`} className="field-input" value={draft.sourceConn} onChange={(e) => setDraft((d) => ({ ...d, sourceConn: e.target.value, targetConn: d.sourceConn === e.target.value ? d.targetConn : e.target.value === 'src' ? 'dst' : 'src' }))}>
-                <option value="src">{t.bridgeSource} (src)</option>
-                <option value="dst">{t.bridgeTarget} (dst)</option>
+              <select aria-label={`${t.bridgeRules} · ${t.bridgeSource}`} className="field-input" value={draft.sourceConn} onChange={(e) => set('sourceConn', e.target.value)}>
+                {connChoices(draft.sourceConn).map((id) => (
+                  <option key={id} value={id}>{connName(id)} ({id})</option>
+                ))}
               </select>
-              <select aria-label={t.integrationTarget} className="field-input" value={draft.targetKind === 'http' ? 'http' : draft.targetConn} onChange={(e) => setDraft((d) => e.target.value === 'http' ? { ...d, targetKind: 'http' } : { ...d, targetKind: 'mqtt', targetConn: e.target.value, sourceConn: e.target.value === 'src' ? 'dst' : 'src' })}>
+              {/* Source and target are chosen independently now: a rule that rewrites
+                  topics inside one broker has the same connection on both sides, and the
+                  hop cap — not a refusal — is what keeps that from echoing. */}
+              <select aria-label={t.integrationTarget} className="field-input" value={draft.targetKind === 'http' ? 'http' : draft.targetConn} onChange={(e) => setDraft((d) => e.target.value === 'http' ? { ...d, targetKind: 'http' } : { ...d, targetKind: 'mqtt', targetConn: e.target.value })}>
                 <option value="http">HTTP / Webhook</option>
-                <option value="dst">{t.bridgeTarget} (dst)</option>
-                <option value="src">{t.bridgeSource} (src)</option>
+                {connChoices(draft.targetConn).map((id) => (
+                  <option key={id} value={id}>{connName(id)} ({id})</option>
+                ))}
               </select>
             </div>
 
@@ -1170,11 +1256,11 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded select-text" style={{ background: 'var(--bg-code)', color: 'var(--code-string)' }}>
-                      {r.sourceConn}:{r.sourceFilter.split('\n').map((s) => s.trim()).filter(Boolean).join(' · ')}
+                      {connName(r.sourceConn)}:{r.sourceFilter.split('\n').map((s) => s.trim()).filter(Boolean).join(' · ')}
                     </span>
                     <ArrowRight className="w-3 h-3 shrink-0" style={{ color: 'var(--text-muted)' }} />
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded select-text" style={{ background: 'var(--bg-code)', color: 'var(--code-number)' }}>
-                      {r.targetKind === 'http' ? 'HTTP' : r.targetConn}
+                      {r.targetKind === 'http' ? 'HTTP' : connName(r.targetConn)}
                       {r.topicMode === 'prefix' && r.prefixFrom ? ` → ${r.prefixTo}` : ''}
                     </span>
                   </div>
@@ -1205,6 +1291,15 @@ export const BridgePanel: React.FC<BridgePanelProps> = ({ options, bridge, onOpe
                       style={{ background: 'color-mix(in srgb, var(--warning) 14%, transparent)', color: 'var(--warning)' }}
                     >
                       ⊘ {s.dropped}
+                    </span>
+                  )}
+                  {(s?.loopBroken ?? 0) > 0 && (
+                    <span
+                      className="text-[11px] font-mono px-2 py-1 rounded"
+                      title={t.bridgeLoopBrokenTip}
+                      style={{ background: 'color-mix(in srgb, var(--danger) 14%, transparent)', color: 'var(--danger)' }}
+                    >
+                      ↻ {s.loopBroken}
                     </span>
                   )}
                   {(s?.queued ?? 0) > 0 && (

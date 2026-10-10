@@ -138,6 +138,10 @@ pub struct BridgeRuleStats {
     pub errors: u64,
     /// Messages skipped by exclusion or rate limiting
     pub dropped: u64,
+    /// Messages stopped because they had already been forwarded `HOP_LIMIT` times.
+    /// Counted apart from `dropped`: a loop is a mistake in the rule set, while an
+    /// exclusion is the rule working as written, and the two want different fixes.
+    pub loop_broken: u64,
     pub last_topic: String,
     /// Webhook bodies waiting in the outbox, and dead letters that stopped being retried
     pub queued: u64,
@@ -311,6 +315,53 @@ pub fn is_excluded(rule: &BridgeRule, topic: &str) -> bool {
     rule.exclude_filters
         .iter()
         .any(|f| !f.trim().is_empty() && wildcard_match(f.trim(), topic))
+}
+
+/// How far a message has already travelled through bridges, as an MQTT5 user property.
+///
+/// With many connections and any-to-any rules, a cycle becomes reachable — `A→B` plus
+/// `B→A`, or one connection that is both a source and a target. Without a bound, the
+/// second rule forwards what the first one just published and the loop amplifies one
+/// device message into a storm until the rate limiter kills it.
+///
+/// A v3.1.1 link has no user properties (`mqttbytes::v4::Publish` has no field for
+/// them, and `MqttClient::publish` drops them), so the marker does not survive that
+/// hop and the bound does not apply there. That is stated in the panel rather than
+/// papered over.
+pub const HOP_PROPERTY: &str = "dropqtt-hop";
+
+/// Forwards allowed before a message is considered to be going round a loop. Four
+/// connections in a ring is a real topology and stays under this; anything past it has
+/// already revisited a link it had.
+pub const HOP_LIMIT: u8 = 8;
+
+/// The hop count a message arrives with. Absent or unparseable reads as zero: a device
+/// can stamp this property itself, and the worst that can do is make the bridge stop
+/// one message early — never one it should have stopped later.
+pub fn inbound_hop(publish: &NormalizedPublish) -> u8 {
+    publish
+        .user_properties
+        .iter()
+        .find(|(name, _)| name == HOP_PROPERTY)
+        .and_then(|(_, value)| value.parse::<u8>().ok())
+        .unwrap_or(0)
+}
+
+/// True when this message has already been forwarded `HOP_LIMIT` times.
+pub fn hop_exceeded(hop: u8) -> bool {
+    hop >= HOP_LIMIT
+}
+
+/// The properties to publish with: our count replaces any marker that arrived, so a
+/// forwarded message carries one hop total rather than two competing ones.
+pub fn stamp_hop(props: Option<PubProperties>, hop: u8) -> Option<PubProperties> {
+    let mut base = props.unwrap_or_default();
+    base.user_properties.retain(|(name, _)| name != HOP_PROPERTY);
+    base.user_properties.push((
+        HOP_PROPERTY.to_string(),
+        (hop + 1).to_string(),
+    ));
+    Some(base)
 }
 
 /// Apply the rule's payload edits: optional JSON envelope + prefix/suffix.
@@ -675,6 +726,7 @@ impl BridgeManager {
             forwarded: stats.values().map(|s| s.forwarded).sum(),
             errors: stats.values().map(|s| s.errors).sum(),
             dropped: stats.values().map(|s| s.dropped).sum(),
+            loop_broken: stats.values().map(|s| s.loop_broken).sum(),
         }
     }
 
@@ -908,61 +960,70 @@ impl BridgeManager {
     }
 
     /// Replace the full rule set (frontend owns persistence)
-    pub async fn sync_rules(self: &Arc<Self>, app: AppHandle, rules: Vec<BridgeRule>) -> Result<(), String> {
-        for r in &rules {
-            let filters = Self::rule_filters(r);
-            if filters.is_empty() {
-                return Err(format!("Rule '{}' has an empty source filter", r.name));
-            }
-            if !matches!(r.target_kind.as_str(), "mqtt" | "http") {
-                return Err("Unknown bridge target kind".into());
-            }
-            if r.target_kind == "http" && r.enabled {
-                if r.targets.len() > webhook::MAX_EXTRA_TARGETS {
-                    return Err(format!(
-                        "Rule '{}' fans out to {} extra sinks; the limit is {}",
-                        r.name,
-                        r.targets.len(),
-                        webhook::MAX_EXTRA_TARGETS
-                    ));
-                }
-                // The primary may be left blank when the rule only archives, but then
-                // at least one extra sink has to exist — an HTTP rule that delivers
-                // nowhere is a rule that silently eats traffic.
-                let primary = r.webhook.url.trim();
-                if !primary.is_empty() {
-                    r.webhook.validate()?;
-                } else if r.targets.is_empty() {
-                    return Err(format!("Rule '{}' has no webhook target to deliver to", r.name));
-                }
-                for (i, t) in r.targets.iter().enumerate() {
-                    t.validate()
-                        .map_err(|e| format!("Rule '{}' extra sink #{}: {}", r.name, i + 1, e))?;
-                }
-            }
-            if r.target_kind == "mqtt" && r.source_conn == r.target_conn {
-                return Err(format!("Rule '{}' must use two different connections", r.name));
-            }
-            if r.topic_mode == "fixed" && r.fixed_topic.trim().is_empty() {
-                return Err(format!("Rule '{}' uses fixed-topic mode without a target topic", r.name));
-            }
-            if r.topic_mode == "map" && r.topic_map.iter().all(|e| e.from.trim().is_empty() || e.to.trim().is_empty()) {
-                return Err(format!("Rule '{}' has an empty topic mapping table", r.name));
-            }
-            if r.topic_mode == "regex" && !r.regex_pattern.is_empty() {
-                Regex::new(&r.regex_pattern)
-                    .map_err(|e| format!("Rule '{}' has an invalid regex: {}", r.name, e))?;
-            }
-            let script = r.transform_script.trim();
-            if script.len() > SCRIPT_SIZE_LIMIT {
-                return Err(format!("Rule '{}' script exceeds {} B", r.name, SCRIPT_SIZE_LIMIT));
-            }
-            if !script.is_empty() && !script.contains("function transform") {
+    /// Why this rule cannot be synced, if it cannot.
+    ///
+    /// Its own function because the answer is pure — no connection, no store — and the
+    /// one thing it must never do is refuse a topology the user legitimately wants.
+    fn rule_error(r: &BridgeRule) -> Result<(), String> {
+        if Self::rule_filters(r).is_empty() {
+            return Err(format!("Rule '{}' has an empty source filter", r.name));
+        }
+        if !matches!(r.target_kind.as_str(), "mqtt" | "http") {
+            return Err("Unknown bridge target kind".into());
+        }
+        if r.target_kind == "http" && r.enabled {
+            if r.targets.len() > webhook::MAX_EXTRA_TARGETS {
                 return Err(format!(
-                    "Rule '{}' script must define function transform(topic, payload, qos, retain)",
-                    r.name
+                    "Rule '{}' fans out to {} extra sinks; the limit is {}",
+                    r.name,
+                    r.targets.len(),
+                    webhook::MAX_EXTRA_TARGETS
                 ));
             }
+            // The primary may be left blank when the rule only archives, but then
+            // at least one extra sink has to exist — an HTTP rule that delivers
+            // nowhere is a rule that silently eats traffic.
+            let primary = r.webhook.url.trim();
+            if !primary.is_empty() {
+                r.webhook.validate()?;
+            } else if r.targets.is_empty() {
+                return Err(format!("Rule '{}' has no webhook target to deliver to", r.name));
+            }
+            for (i, t) in r.targets.iter().enumerate() {
+                t.validate()
+                    .map_err(|e| format!("Rule '{}' extra sink #{}: {}", r.name, i + 1, e))?;
+            }
+        }
+        // A rule whose source and target are the same connection is a legitimate topology
+        // — rewriting topics inside one broker — and is bounded by the hop marker rather
+        // than refused. The shape that is always a self-echo (same connection, topic
+        // unchanged) is dropped at route time.
+        if r.topic_mode == "fixed" && r.fixed_topic.trim().is_empty() {
+            return Err(format!("Rule '{}' uses fixed-topic mode without a target topic", r.name));
+        }
+        if r.topic_mode == "map" && r.topic_map.iter().all(|e| e.from.trim().is_empty() || e.to.trim().is_empty()) {
+            return Err(format!("Rule '{}' has an empty topic mapping table", r.name));
+        }
+        if r.topic_mode == "regex" && !r.regex_pattern.is_empty() {
+            Regex::new(&r.regex_pattern)
+                .map_err(|e| format!("Rule '{}' has an invalid regex: {}", r.name, e))?;
+        }
+        let script = r.transform_script.trim();
+        if script.len() > SCRIPT_SIZE_LIMIT {
+            return Err(format!("Rule '{}' script exceeds {} B", r.name, SCRIPT_SIZE_LIMIT));
+        }
+        if !script.is_empty() && !script.contains("function transform") {
+            return Err(format!(
+                "Rule '{}' script must define function transform(topic, payload, qos, retain)",
+                r.name
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn sync_rules(self: &Arc<Self>, app: AppHandle, rules: Vec<BridgeRule>) -> Result<(), String> {
+        for r in &rules {
+            Self::rule_error(r)?;
         }
         let map: HashMap<String, BridgeRule> = rules.into_iter().map(|r| (r.id.clone(), r)).collect();
 
@@ -1026,6 +1087,13 @@ impl BridgeManager {
         entry.last_topic = topic.to_string();
     }
 
+    async fn bump_loop_broken(&self, rule_id: &str, topic: &str) {
+        let mut stats = self.stats.lock().await;
+        let entry = stats.entry(rule_id.to_string()).or_default();
+        entry.loop_broken += 1;
+        entry.last_topic = topic.to_string();
+    }
+
     /// True when the rule's per-second budget still has room (0 = unlimited)
     async fn rate_allow(&self, rule_id: &str, limit: u32) -> bool {
         if limit == 0 {
@@ -1064,6 +1132,32 @@ impl BridgeManager {
             // arrived on (would ping-pong through the same connection).
             let target_topic = map_topic(rule, &publish.topic);
             if rule.target_kind == "mqtt" && rule.target_conn == src_id && target_topic == publish.topic {
+                continue;
+            }
+            // Loop guard, general case: a message that has already been forwarded
+            // `HOP_LIMIT` times is going round a cycle of rules, and forwarding it again
+            // is the storm this exists to stop. Counted apart from `dropped` because the
+            // fix is in the rule set, not in the traffic.
+            let hop = inbound_hop(&publish);
+            if hop_exceeded(hop) {
+                self.bump_loop_broken(&rule.id, &publish.topic).await;
+                let _ = app.emit(
+                    "bridge-event",
+                    BridgeEvent {
+                        rule_id: rule.id.clone(),
+                        rule_name: rule.name.clone(),
+                        from_topic: publish.topic.clone(),
+                        to_topic: target_topic.clone(),
+                        bytes: 0,
+                        // The message as it arrived, not as this rule would have sent it:
+                        // nothing was sent.
+                        qos: publish.qos,
+                        retain: publish.retain,
+                        ok: false,
+                        error: Some(format!("loop broken after {hop} hops ({HOP_PROPERTY})")),
+                        timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                    },
+                );
                 continue;
             }
             if !self.rate_allow(&rule.id, rule.rate_limit).await {
@@ -1242,6 +1336,10 @@ impl BridgeManager {
                     continue;
                 }
             };
+            // The hop marker is the bridge's own metadata, not the device's, so it rides
+            // even when `forward_props` is off — that is the only case where the cap can
+            // do anything. A v3.1.1 target drops it, which is the gap the panel names.
+            let props = stamp_hop(props, hop);
             let result = target
                 .publish(&target_topic, qos, retain, payload_out, props.as_ref())
                 .await;
@@ -1637,5 +1735,133 @@ mod tests {
         // user fixes the ACL would leave the rule silently unforwarded forever.
         let p = plan(&[("a/#", 1)], &[], &[]);
         assert_eq!(p.sending, vec![("a/#".to_string(), 1)]);
+    }
+
+    fn arrived(hop: Option<&str>, device_prop: bool) -> NormalizedPublish {
+        let mut props = Vec::new();
+        if device_prop {
+            props.push(("vendor".to_string(), "acme".to_string()));
+        }
+        if let Some(h) = hop {
+            props.push((HOP_PROPERTY.to_string(), h.to_string()));
+        }
+        NormalizedPublish {
+            topic: "a/b".into(),
+            payload: Bytes::from_static(b"x"),
+            qos: 1,
+            retain: false,
+            content_type: None,
+            user_properties: props,
+            response_topic: None,
+            correlation_data: None,
+            payload_format: None,
+            subscription_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_message_reads_the_hop_it_arrived_with() {
+        assert_eq!(inbound_hop(&arrived(None, false)), 0);
+        assert_eq!(inbound_hop(&arrived(Some("3"), false)), 3);
+        // A device can stamp this property itself. The only power that gives it is making
+        // the bridge stop one of its own messages early, so it is read as "no count"
+        // rather than trusted or rejected outright.
+        assert_eq!(inbound_hop(&arrived(Some("not-a-number"), false)), 0);
+        assert_eq!(inbound_hop(&arrived(Some("999"), false)), 0, "a u8 overflow read as a hop");
+    }
+
+    #[test]
+    fn the_cap_bites_at_the_limit_it_names() {
+        assert!(!hop_exceeded(HOP_LIMIT - 1));
+        assert!(hop_exceeded(HOP_LIMIT));
+        assert!(hop_exceeded(HOP_LIMIT + 1));
+    }
+
+    #[test]
+    fn a_forward_carries_one_hop_more_and_no_rival_marker() {
+        // Two `dropqtt-hop` properties on the wire would let the next link pick either
+        // one, and which one it picks decides whether the loop is broken.
+        let stamped = stamp_hop(None, 0).expect("a hop marker is always stampable");
+        assert_eq!(
+            stamped.user_properties,
+            vec![(HOP_PROPERTY.to_string(), "1".to_string())]
+        );
+        let again = stamp_hop(Some(stamped), 1).unwrap();
+        assert_eq!(again.user_properties.len(), 1, "the previous count survived");
+        assert_eq!(again.user_properties[0].1, "2");
+
+        let with_device_prop = arrived(Some("4"), true);
+        let forwarded = stamp_hop(
+            Some(PubProperties {
+                user_properties: with_device_prop.user_properties.clone(),
+                ..Default::default()
+            }),
+            inbound_hop(&with_device_prop),
+        )
+        .unwrap();
+        assert!(
+            forwarded.user_properties.iter().any(|(k, v)| k == "vendor" && v == "acme"),
+            "forwarding ate the device's own property"
+        );
+        assert_eq!(
+            forwarded
+                .user_properties
+                .iter()
+                .filter(|(k, _)| k == HOP_PROPERTY)
+                .count(),
+            1,
+            "the device's marker and ours both went out"
+        );
+        assert_eq!(forwarded.user_properties.iter().find(|(k, _)| k == HOP_PROPERTY).unwrap().1, "5");
+    }
+
+    #[test]
+    fn a_rule_that_rewrites_topics_inside_one_broker_is_accepted() {
+        // This used to be refused outright — "must use two different connections" — which
+        // is the one topology a single-broker remap needs. It is bounded by the hop
+        // marker now, not by a rule that cannot tell a loop from a rewrite.
+        let mut r = rule("same", "", "");
+        r.target_conn = r.source_conn.clone();
+        assert!(
+            BridgeManager::rule_error(&r).is_ok(),
+            "refused a same-connection rule: {:?}",
+            BridgeManager::rule_error(&r)
+        );
+    }
+
+    #[test]
+    fn the_checks_that_protect_traffic_still_refuse() {
+        // Loosening one check must not quietly take the others with it: each of these is
+        // a rule that would forward nothing, or forward it somewhere it was never told to
+        // go, and say nothing while doing so.
+        let mut empty_filter = rule("same", "", "");
+        empty_filter.source_filter = "   ".into();
+        assert!(BridgeManager::rule_error(&empty_filter)
+            .unwrap_err()
+            .contains("empty source filter"));
+
+        let fixed = rule("fixed", "", "");
+        assert!(BridgeManager::rule_error(&fixed).unwrap_err().contains("fixed-topic mode"));
+
+        let mut mapping = rule("map", "", "");
+        mapping.topic_map = vec![TopicMapEntry { from: "".into(), to: "".into() }];
+        assert!(BridgeManager::rule_error(&mapping).unwrap_err().contains("mapping table"));
+
+        let mut regex = rule("regex", "", "");
+        regex.regex_pattern = "(".into();
+        assert!(BridgeManager::rule_error(&regex).unwrap_err().contains("invalid regex"));
+
+        let mut sinkless = rule("same", "", "");
+        sinkless.target_kind = "http".into();
+        assert!(BridgeManager::rule_error(&sinkless).unwrap_err().contains("no webhook target"));
+
+        let mut script = rule("same", "", "");
+        script.transform_script = "function nottransform() {}".into();
+        assert!(BridgeManager::rule_error(&script).unwrap_err().contains("function transform"));
+
+        // A disabled HTTP rule is allowed to have nowhere to post: it is not delivering.
+        let mut parked_sinkless = sinkless;
+        parked_sinkless.enabled = false;
+        assert!(BridgeManager::rule_error(&parked_sinkless).is_ok());
     }
 }
