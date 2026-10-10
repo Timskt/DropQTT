@@ -8,7 +8,7 @@
 （文件传输 / MQTT 控制台 / 数据桥接 / 消息历史 / 运维诊断），外加设备仿真与验收场景、
 会话录制回放、Prometheus 指标导出。贯穿全部功能的一条主张是**失败不许看起来像成功**。
 
-当前版本 **0.12.4**（发版中）。`v0.12.3` 的两条 macOS 腿被发版流水线自己弄坏了：未设置的 secret
+当前版本 **0.12.4**（已发布并按资产验收：17 个产物、11 个更新平台，`latest.json` 里 `darwin-aarch64`/`darwin-x86_64`/`linux-x86_64`/`windows-x86_64` 全部在位）。`v0.12.3` 的两条 macOS 腿被发版流水线自己弄坏了：未设置的 secret
 被 job 级 `env:` 映射成了**空字符串变量**，而 tauri-bundler 判的是"这个变量在不在"而不是"有没有值"，
 于是它去导一张根本不存在的证书（`SecKeychainItemImport: One or more parameters ... not valid`）。
 结果只发出 Linux + Windows 共 11 个产物，`check-release-shipped.py` 当场报
