@@ -8,24 +8,25 @@
 （文件传输 / MQTT 控制台 / 数据桥接 / 消息历史 / 运维诊断），外加设备仿真与验收场景、
 会话录制回放、Prometheus 指标导出。贯穿全部功能的一条主张是**失败不许看起来像成功**。
 
-当前版本 **0.11.2**，`main` 与 `origin/main` 同步，工作区干净
-（仅 `PROJECT_ANALYSIS_v0.9.md`、`docs/REVIEW_2026_10_03.md` 两份按你决定不入库的文档）。
+当前版本 **0.12.0**（发版中），`main` 与 `origin/main` 同步。
+未入库的只有几份按属主决定留在工作区的评审/提案文档（`docs/PROPOSAL_2026_10*.md`、
+`docs/REVIEW_2026_10_09.md`）与 `.workbuddy/`；`AGENTS.md` 点名的那两份历史文档本机已不存在。
 
 ## 2. 规模与门禁
 
 | 指标 | 实测值 |
 | --- | --- |
-| Rust 源码 | 23,282 行 / 27 个模块（含 `bin/dropqtt-cli.rs` 与 `tls_report.rs`） |
-| TS + TSX 源码 | 25,173 行 / 98 个文件 |
+| Rust 源码 | 23,707 行 / 27 个模块（含 `bin/dropqtt-cli.rs` 与 `tls_report.rs`） |
+| TS + TSX 源码 | 26,217 行 / 105 个文件 |
 | Tauri 命令 | 81 个 `#[tauri::command]`（按实测计数，旧值 79 已漂） |
-| i18n 键 | 1051 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
+| i18n 键 | 1057 × 4 语言（`scripts/check-i18n-parity.py` 三方核对：四份文件 + `Translations` 接口） |
 | 依赖 | npm 31（运行时 14 + 开发 17）/ cargo 22 个直接依赖（本轮新增 `x509-parser`，11 个传递依赖） |
-| 测试文件 | 24 个 unit + 40 个 Playwright spec + 1 个 Rust 集成测试 |
+| 测试文件 | 25 个 unit + 40 个 Playwright spec + 1 个 Rust 集成测试 |
 
-**门禁全绿（2026-10-09 本轮末次运行）**：
+**门禁全绿（2026-10-10，`v0.12.0` 发版前末次运行）**：
 
 - Rust **389 lib + 1 集成通过**（macOS 本机 `cargo test`；含 §4.86 分流用例与 §4.88 的保留值沿革 5 条）
-- 前端单测 **245 通过**（`npm test` = `vitest run tests/unit`）
+- 前端单测 **248 通过**（`npm test` = `vitest run tests/unit`）
 - 真 DOM UI **265 通过**（`npx playwright test`）
 - 真机 CLI 门禁 **cli-gate 37 项 + scenario-gate 26 项**（一次性 mosquitto `18831`，未碰本机 `1883`；scenario-gate 新增 7 项为 CLI 自驱 bench，§4.76；cli-gate 多出的那一项是 broker 身份自检，§4.78）
 - `tsc --noEmit` 干净；`cargo clippy --all-targets -- -D warnings` **通过**
@@ -110,7 +111,9 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 - 已推 tag：`v0.10.0`（→ `3f99499`）、`v0.10.1`（→ `b6c442b`，**含标题修复**）、
   `v0.11.0`（已删除，见下）→ `v0.11.1`（报文对比 / 字段取值取证 / 投递审计 / TLS 材料取证 /
   CLI 自驱 bench / webhook header 入钥匙串 / CI 门禁修复）→ `v0.11.2`
-  （修 `$SYS/#` 被拒后每秒一条 toast 的循环，§4.85）。
+  （修 `$SYS/#` 被拒后每秒一条 toast 的循环，§4.85）→ `v0.12.0`
+  （保留值沿革 + 僵尸 retain §4.88 / 时间戳一律带时区、导出文件名统一 UTC 戳 §4.89 /
+  可折叠侧栏 / 一行坏报文只降级成一个 chip / UTC 显示开关）。
   **`v0.11.0` 发布失败、`v0.11.1` 成功**，原因与教训见下两条。
 - **`v0.11.0` 四目标全挂在 tauri-action 一步**：`Unterminated inline array at row 56`。
   `src-tauri/Cargo.toml` 里 Linux target 的 `keyring` 写成了**跨行内联表**——TOML 1.0 不允许，
