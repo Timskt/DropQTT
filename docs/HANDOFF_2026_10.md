@@ -246,7 +246,7 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
    `latest.json` 里没有 `darwin-aarch64`，那批用户当时已经能看到这个 release 却拿不到自动更新。
 
    ```bash
-   python3 scripts/check-release-shipped.py v0.12.0   # 期望 release-shipped: YES
+   python3 scripts/check-release-shipped.py v0.12.1   # 期望 release-shipped: YES
    ```
 
    它检查四类只会静默伤害用户的东西：缺平台、`latest.json` 指向不存在的资产（提示可更新然后 404）、

@@ -1,6 +1,6 @@
 [package]
 name = "dropqtt"
-version = "0.12.0"
+version = "0.12.1"
 description = "MQTT workbench: resilient file transfer, pub/sub console, data bridge, searchable history, ops diagnostics and metrics export"
 authors = ["Timskt"]
 edition = "2021"
