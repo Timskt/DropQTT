@@ -8,7 +8,8 @@
 （文件传输 / MQTT 控制台 / 数据桥接 / 消息历史 / 运维诊断），外加设备仿真与验收场景、
 会话录制回放、Prometheus 指标导出。贯穿全部功能的一条主张是**失败不许看起来像成功**。
 
-当前版本 **0.12.0**（发版中），`main` 与 `origin/main` 同步。
+当前版本 **0.12.0**（已发布：四目标全绿，17 个产物，`latest.json` 四个平台齐备含 `darwin-aarch64`，
+`check-release-shipped.py` 验收通过），`main` 与 `origin/main` 同步。
 未入库的只有几份按属主决定留在工作区的评审/提案文档（`docs/PROPOSAL_2026_10*.md`、
 `docs/REVIEW_2026_10_09.md`）与 `.workbuddy/`；`AGENTS.md` 点名的那两份历史文档本机已不存在。
 
