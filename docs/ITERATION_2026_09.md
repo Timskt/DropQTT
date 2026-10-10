@@ -3854,6 +3854,68 @@ GitHub 表达式那里 `env.X` 未设置会成 `null`，我不想再赌一次它
 **并且**把 release 上的 `DropQTT.app.tar.gz` 下载回来解包，`check-macos-signed.py <app>` 说 `YES`——
 即"签名这件事在产物上成立"，而不是只在 workflow 日志里成立。
 
+### 4.96 bundler 只认 Apple 给的身份名：v0.12.5 的两条 macOS 腿死在"能签但解不出身份"（第二十九轮 2026-10-11）
+
+§4.95 的门在真 CI 上**全绿**（导入、smoke 签名都过了），但 `Build and package Tauri application` 仍红：
+
+```text
+failed to bundle project: failed codesign application: failed to resolve signing identity
+```
+
+`check-release-shipped.py v0.12.5` → `NO`，11 个产物、`latest.json` 里没有 `darwin-*`。
+**同一类残缺第三次发生**（v0.11.2、v0.12.3、v0.12.5），只是这次抓得最快。
+
+**根因是把 tauri 的源码读了出来，不是猜的**（`tauri-cli-v2.11.4`）：
+
+```text
+crates/tauri-bundler/src/bundle/macos/sign.rs :: keychain(identity)
+  APPLE_CERTIFICATE + APPLE_CERTIFICATE_PASSWORD 都在 → Keychain::with_certificate(...)
+      └─ tauri-macos-sign keychain.rs:183 → identity::list() → Error::ResolveSigningIdentity
+  否则若有 APPLE_SIGNING_IDENTITY        → Keychain::with_signing_identity(name)
+      └─ path: None（"none means the default keychain must be used"）
+         codesign --force -s "<name>"，不做任何身份解析
+
+crates/tauri-macos-sign/src/keychain/identity.rs :: list()
+  对七个前缀逐个 `security find-certificate -p -a -c "<prefix>"`：
+  "iOS Distribution:" / "Apple Distribution:" / "Developer ID Application:" /
+  "Mac App Distribution:" / "Apple Development:" / "iOS App Development:" / "Mac Development:"
+  并且 Team::from_x509 要求证书里有 OU=（team id），没有就 CertificateMissingOrganizationUnit。
+```
+
+也就是说：**只要把 `APPLE_CERTIFICATE` 交出去，bundler 就只认 Apple 发行体系里的身份名**，
+自签的 "DropQTT Code Signing" 不在那个词表里 → 解不出身份 → 构建失败。
+而它**明明能签**——同一个 keychain 的 smoke 步骤就是证据（那一步在失败的那次运行里是绿的）。
+
+**修法是把触发器拿掉，而不是把身份改成它认识的名字**：非公证路径不再导出 `APPLE_CERTIFICATE`，
+只导出 `APPLE_SIGNING_IDENTITY`，证书由**我们自己那一步**导进 build keychain（并把该 keychain
+设成 default，正好对上 `path: None` 的语义）。公证路径（将来真上 Developer ID 时）仍然导出
+`APPLE_CERTIFICATE`，因为只有那条分支会走到 notarytool。
+
+**为什么不走"把 CN 改成 `Developer ID Application: …` 骗过 bundler"这条路**——这是本轮最重要的一个决定：
+自签证书如果叫那个名字，`codesign -dvvv` 就会输出 `Authority=Developer ID Application: …`，
+于是**我自己的 `check-macos-signed.py --require-developer-id` 会对一个自签包说 YES**。
+一个能被取名迎合的门，比没有门更危险（§4.71、§4.73 同一类）。所以身份保持诚实的名字，
+改的是触发条件；这条禁令写进了 handoff。
+
+**预检也跟着改了**：它原先无条件要求 `APPLE_CERTIFICATE_PASSWORD`，而在新路径上那个变量**本来就不该存在**——
+如果不同步改，"配置正确"会被读成"配置残缺"。现在必需项是 `APPLE_SIGNING_IDENTITY`，
+`APPLE_CERTIFICATE(_PASSWORD)` 只在 `APPLE_NOTARIZE=1` 时要求。
+
+**验证方式也改了**：这次不再只测"配了的样子"（§4.94 的教训）。做法是**从 YAML 里把步骤脚本抽出来直接执行**，
+四个配置各跑一遍并断言写进 `$GITHUB_ENV` 的具体内容：
+
+```text
+A 什么都没配            → 只有 MACOS_SIGNED=0；APPLE_* 命中 0 行
+B 自签、不公证（本轮）  → MACOS_SIGNED=1 / APPLE_SIGNING_IDENTITY / APPLE_NOTARIZE=0，且【没有 APPLE_CERTIFICATE】
+C Developer ID + 公证   → APPLE_CERTIFICATE、APPLE_TEAM_ID 等按预期出现
+D 有证书没身份名        → 当场失败（exit!=0）
+预检四态                → 自签配置 0；"声称公证但没凭据" 1；"公证但没证书" 1；"没身份名" 1
+```
+
+**闭环判据**：v0.12.6 之后 `check-release-shipped.py v0.12.6` = `YES`（17 产物、11 平台），
+并且下载 release 上的 `DropQTT.app.tar.gz` 解包跑 `check-macos-signed.py <app>` = `YES`——
+这次连"产物是不是真的被那把身份签过"也要在产物上验，而不是只看步骤变绿。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

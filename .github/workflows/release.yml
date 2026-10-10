@@ -123,17 +123,40 @@ jobs:
             echo "no certificate configured — building unsigned, exactly as before"
             exit 0
           fi
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::APPLE_CERTIFICATE is set but APPLE_SIGNING_IDENTITY is not"
+            exit 1
+          fi
           # Same trap as above, one level down: an empty APPLE_ID would be "present" to
           # the bundler too, so the optional credentials are only exported when they hold
           # something.
           emit() { [ -n "$2" ] && printf '%s=%s\n' "$1" "$2" >> "$GITHUB_ENV" || true; }
           {
             echo "MACOS_SIGNED=1"
-            echo "APPLE_CERTIFICATE=$CERT"
-            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PW"
             echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
             echo "APPLE_NOTARIZE=${NOTARY:-0}"
           } >> "$GITHUB_ENV"
+          # `APPLE_CERTIFICATE` is exported only when notarizing, and that asymmetry is the
+          # whole reason v0.12.5's macOS legs died. In tauri-bundler 2.11.4
+          # (crates/tauri-bundler/src/bundle/macos/sign.rs, `keychain()`) the presence of
+          # APPLE_CERTIFICATE + APPLE_CERTIFICATE_PASSWORD makes the bundler import the
+          # certificate *itself* and then resolve the identity with
+          # `tauri_macos_sign::keychain::identity::list()` — which only enumerates
+          # certificates whose label begins with one of seven Apple-issued prefixes
+          # ("Developer ID Application:", "Apple Development:", …) and demands an `OU=` team
+          # field. A self-signed identity is not in that vocabulary, so the build failed with
+          # `failed codesign application: failed to resolve signing identity` — while the
+          # smoke step below had already proved that same keychain signs fine. Absent
+          # APPLE_CERTIFICATE the bundler takes the other branch,
+          # `Keychain::with_signing_identity(name)`, which passes the name straight to
+          # `codesign --force -s "<name>"` against the keychain search list. So the import is
+          # ours, not the bundler's. APPLE_NOTARIZE=1 goes back through the bundler because
+          # that is the only branch that reaches notarytool — and it will only accept a real
+          # Developer ID certificate, which is exactly what the preflight below now says.
+          if [ "${NOTARY:-0}" = "1" ]; then
+            emit APPLE_CERTIFICATE "$CERT"
+            emit APPLE_CERTIFICATE_PASSWORD "$CERT_PW"
+          fi
           emit APPLE_ID "$N_ID"
           emit APPLE_PASSWORD "$N_PW"
           emit APPLE_TEAM_ID "$N_TEAM"
@@ -148,14 +171,31 @@ jobs:
       - name: Preflight the macOS signing configuration
         if: matrix.platform == 'macos-latest' && env.MACOS_SIGNED == '1'
         shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
           missing=""
-          [ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ] || missing="$missing APPLE_CERTIFICATE_PASSWORD"
           [ -n "${APPLE_SIGNING_IDENTITY:-}" ] || missing="$missing APPLE_SIGNING_IDENTITY"
+          # Only the notarized path needs the bundler to hold the certificate itself; see
+          # the export step. Checking for it unconditionally is what would have made the
+          # self-signed path look misconfigured while it was in fact correct.
+          if [ "${APPLE_NOTARIZE:-0}" = "1" ]; then
+            [ -n "$CERT" ] || missing="$missing APPLE_CERTIFICATE"
+            [ -n "$CERT_PW" ] || missing="$missing APPLE_CERTIFICATE_PASSWORD"
+          fi
           if [ -n "$missing" ]; then
-            echo "::error::APPLE_CERTIFICATE is set but these are not:$missing"
+            echo "::error::signing is configured but these are not:$missing"
             exit 1
+          fi
+          if [ "${APPLE_NOTARIZE:-0}" = "1" ]; then
+            # A Developer ID certificate is the one thing this path cannot fake: the bundler
+            # resolves the identity by Apple-issued name prefix and requires an `OU=` team
+            # field, so a self-signed identity fails here rather than shipping something
+            # mislabelled.
+            echo "notarized path: the bundler imports the certificate itself and will require"
+            echo "notarized path: a 'Developer ID Application: …' identity with an OU= team field."
           fi
           notarized=0
           if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then notarized=1; fi
@@ -177,6 +217,14 @@ jobs:
       - name: Import the code-signing certificate into a build keychain
         if: matrix.platform == 'macos-latest' && env.MACOS_SIGNED == '1'
         shell: bash
+        env:
+          # Read from the secrets, not from $GITHUB_ENV: on the self-signed path the
+          # certificate is deliberately *not* exported, because APPLE_CERTIFICATE being
+          # present is what sends the bundler down the branch that cannot name a
+          # self-signed identity. Importing it here, ourselves, keeps the keychain ready
+          # for `codesign -s "<identity>"` without handing the bundler that trigger.
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
           KC="$RUNNER_TEMP/build.keychain-db"
@@ -187,9 +235,9 @@ jobs:
           # 6 h: a notarial submission waits, and the default timeout would take the
           # keychain down mid-build.
           security set-keychain-settings -lut 21600 "$KC"
-          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
           security import "$RUNNER_TEMP/certificate.p12" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" -A -T /usr/bin/codesign -t cert -f pkcs12 -k "$KC"
+            -P "$CERT_PW" -A -T /usr/bin/codesign -t cert -f pkcs12 -k "$KC"
           rm -f "$RUNNER_TEMP/certificate.p12"
           # Keep the runner's own chain reachable, or the Apple trust anchors disappear and
           # every signature later in the job fails to build a chain.

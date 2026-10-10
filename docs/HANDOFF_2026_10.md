@@ -273,12 +273,24 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
      私钥     只存在于 GitHub Secrets 与登录钥匙串两处；`.gitignore` 已挡 `*.p12`、`*signing-identity.password`
      换机器   从登录钥匙串导出 .p12 重新 `gh secret set` 即可；或在新机器重跑脚本并覆盖那三个 secrets
      ```
-     两个只有跑过才知道的坑（细节见 ITERATION §4.95）：
-     `security find-identity -v` **看不见**自签身份（`CSSMERR_TP_NOT_TRUSTED`，它只列被信任的），
-     但 `codesign` 能正常用它——所以 CI 的门槛是"真签一个二进制"而不是"问 keychain 显不显示"；
-     以及 `bundle.macOS.hardenedRuntime` 默认 `true`，设了签名身份就会给产物加 `--options runtime`，
-     在"自签 + 不公证"这条路上一无所获只增风险，故钉成 `false`。
-     **上路 B 时记得把它改回 `true`**（Apple 公证要求 hardened runtime）。
+     四个只有跑过才知道的坑（细节见 ITERATION §4.95、§4.96）：
+     1. `security find-identity -v` **看不见**自签身份（`CSSMERR_TP_NOT_TRUSTED`，它只列被信任的），
+        但 `codesign` 能正常用它——所以 CI 的门槛是"真签一个二进制"而不是"问 keychain 显不显示"。
+     2. `bundle.macOS.hardenedRuntime` 默认 `true`，设了签名身份就会给产物加 `--options runtime`；
+        在"自签 + 不公证"这条路上一无所获只增风险，故钉成 `false`。**上路 B 时记得改回 `true`**
+        （Apple 公证要求 hardened runtime）。
+     3. **绝不能把 `APPLE_CERTIFICATE` 交给 bundler**（非公证路径）。tauri-bundler 一看这个变量就自己
+        导证书，然后用"Apple 发行的七个身份名前缀"去解析（`Developer ID Application:` 等，还要求证书
+        里有 `OU=` team id）；自签的 "DropQTT Code Signing" 不在词表里，构建直接
+        `failed to resolve signing identity`（v0.12.5 的两条 macOS 腿就是这么死的，见 §4.96）。
+        现在的工作流：非公证路径**只**导出 `APPLE_SIGNING_IDENTITY`，证书由工作流自己 import 进
+        build keychain 并设为 default（对应 bundler 的 `path: None` 语义）；`APPLE_NOTARIZE=1` 时才导出
+        `APPLE_CERTIFICATE`，因为只有那条分支会走到 notarytool。
+     4. **别为了迎合 bundler 把证书 CN 改成 `Developer ID Application: …`。** 那样
+        `codesign -dvvv` 会输出 `Authority=Developer ID Application: …`，
+        `check-macos-signed.py --require-developer-id` 就会对一个自签包说 YES——
+        能被取名迎合的门比没有门更危险。身份保持诚实的名字，改的是触发条件。
+
 
      **路 B：Developer ID（$99/年，陌生人能双击安装）**
      ```text
