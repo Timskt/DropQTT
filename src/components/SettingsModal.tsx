@@ -7,7 +7,7 @@ import { Theme } from '../themes';
 import { TimePref } from '../utils/timePref';
 import {
   X, Server, Shield, Key, Sliders, CheckCircle2, Globe, Palette,
-  RefreshCw, Zap, BookmarkPlus, Trash2, Check, AlertCircle, Hash, Activity, ShieldCheck, Clock,
+  RefreshCw, Zap, BookmarkPlus, Trash2, Check, AlertCircle, Hash, Activity, ShieldCheck, Clock, Pencil,
 } from 'lucide-react';
 import {
   dropSecret, hasSecret, newSecretRef, readSecretStatus, takeBootReport, writeSecret,
@@ -33,6 +33,7 @@ interface SettingsModalProps {
   updateStatusText: string | null;
   profiles: BrokerProfile[];
   onSaveProfile: (name: string, config: BrokerConfig) => void;
+  onUpdateProfile: (id: string, name: string, config: BrokerConfig) => void;
   onDeleteProfile: (id: string) => void;
 }
 
@@ -96,11 +97,17 @@ const CertRow: React.FC<{
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen, onClose, config, onSaveAndConnect, onDisconnect, isConnected,
   lang, onLangChange, theme, onThemeChange, timePref, onTimePrefChange, t, onCheckUpdate, updateStatusText,
-  profiles, onSaveProfile, onDeleteProfile,
+  profiles, onSaveProfile, onUpdateProfile, onDeleteProfile,
 }) => {
   const [form, setForm] = useState<BrokerConfig>(config);
   const [selectedPreset, setSelectedPreset] = useState<string>('Custom');
   const [newProfileName, setNewProfileName] = useState<string>('');
+  /**
+   * The saved profile the form is currently editing. Opening one and changing its port
+   * used to have no honest outcome: "保存为常用预设" appended a second entry and left the
+   * stale one, so the list grew every time someone fixed a typo.
+   */
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [testing, setTesting] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   /** The password being typed now. It is never part of `form`, so nothing can save it. */
@@ -119,6 +126,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setForm(config);
       setTestResult(null);
       setPasswordDraft('');
+      setEditingProfileId(null);
+      setStoredPresent(null);
       const report = takeBootReport();
       setSecretError(report?.failed[0] ?? null);
       setBootReport(report);
@@ -139,20 +148,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     };
   }, [isOpen]);
 
-  // "Is this reference actually still in the store" is asked rather than assumed,
-  // because a reference whose password was deleted looks identical to a working one.
-  useEffect(() => {
-    if (!isOpen) return;
-    let alive = true;
+  /**
+   * "Is this reference actually still in the store" — asked **only when the button is
+   * pressed**. It used to run whenever the dialog opened, and on macOS that single read
+   * of the stored password is an authorization prompt: opening Settings to look at a port
+   * number interrupted the user for their login keychain. Nothing here needs the value,
+   * and a reference whose password was deleted still fails loudly at connect, so the
+   * answer is worth a click and not worth a prompt.
+   */
+  const checkStoredSecret = () => {
     const reference = form.secretRef;
-    const probe = secretStatus?.available === true && reference ? hasSecret(reference) : Promise.resolve(null);
-    void probe.then((found) => {
-      if (alive) setStoredPresent(found);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [isOpen, form.secretRef, secretStatus]);
+    if (secretStatus?.available !== true || !reference) return;
+    void hasSecret(reference).then(setStoredPresent);
+  };
 
   // Escape closes the dialog, Tab stays inside it, and focus returns on close.
   useEffect(() => {
@@ -218,12 +226,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleApplyPreset = (preset: { name: string; host: string; port: number; useTls: boolean; baseTopic?: string }) => {
     setSelectedPreset(preset.name);
+    // A public preset is a starting point, not an entry being maintained: saving after
+    // one must create, never overwrite the profile that happened to be loaded.
+    setEditingProfileId(null);
+    setNewProfileName('');
     setForm((prev) => ({ ...prev, host: preset.host, port: preset.port, useTls: preset.useTls, baseTopic: preset.baseTopic || 'dropqtt' }));
     setTestResult(null);
   };
 
   const handleApplyProfile = (profile: BrokerProfile) => {
     setSelectedPreset(profile.name);
+    setEditingProfileId(profile.id);
+    setNewProfileName(profile.name);
     setForm({ ...profile.config });
     setPasswordDraft('');
     setTestResult(null);
@@ -302,12 +316,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  /** The profile the save row would update, if any. Cleared once it is gone. */
+  const editingProfile = profiles.find((p) => p.id === editingProfileId) ?? null;
+
+  /**
+   * Save the form as a profile. With one loaded it updates that entry — including its
+   * name, when the name box was edited — instead of appending a near-duplicate.
+   */
   const handleSaveCurrentAsProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     const committed = await commitDraft();
     if (!committed) return;
-    const name = newProfileName.trim() || `${committed.host}:${committed.port}`;
-    onSaveProfile(name, committed);
+    const typed = newProfileName.trim();
+    if (editingProfile) {
+      onUpdateProfile(editingProfile.id, typed || editingProfile.name, committed);
+    } else {
+      onSaveProfile(typed || `${committed.host}:${committed.port}`, committed);
+    }
     setNewProfileName('');
   };
 
@@ -422,7 +447,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           : { background: 'var(--bg-inset)', borderColor: 'var(--border-inset)', color: 'var(--text-secondary)' }}
                       >
                         <button type="button" onClick={() => handleApplyProfile(p)} className="cursor-pointer">{p.name}</button>
-                        <button type="button" onClick={() => onDeleteProfile(p.id)} className="opacity-60 hover:opacity-100 p-0.5 ml-1" style={{ color: 'var(--bad)' }} title={t.deleteProfile} aria-label={t.deleteProfile}>
+                        {/* The pencil says "this one is editable" — the name button alone
+                            read as "connect to this", so changing a saved broker had no
+                            visible way in. */}
+                        <button type="button" onClick={() => handleApplyProfile(p)} className="opacity-60 hover:opacity-100 p-0.5" style={{ color: 'var(--text-secondary)' }} title={fill(t.editProfile, { name: p.name })} aria-label={fill(t.editProfile, { name: p.name })}>
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                        <button type="button" onClick={() => { onDeleteProfile(p.id); if (editingProfileId === p.id) { setEditingProfileId(null); setNewProfileName(''); } }} className="opacity-60 hover:opacity-100 p-0.5 ml-1" style={{ color: 'var(--bad)' }} title={t.deleteProfile} aria-label={t.deleteProfile}>
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
@@ -659,10 +690,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   value={passwordDraft}
                   onChange={(e) => { setPasswordDraft(e.target.value); setTestResult(null); setSecretError(null); }}
                   className="field-input w-full"
-                  placeholder={form.secretRef && storedPresent === true ? t.passwordKeptInKeyring : '••••••••'}
+                  placeholder={form.secretRef ? t.passwordKeptInKeyring : '••••••••'}
                   autoComplete="off"
                   aria-label={t.password}
                 />
+                {form.secretRef && (
+                  <button
+                    type="button"
+                    onClick={checkStoredSecret}
+                    className="btn-ghost !px-2 !py-1 text-[11px] shrink-0"
+                    style={{ color: 'var(--text-muted)' }}
+                    title={t.checkStoredPassword}
+                    aria-label={t.checkStoredPassword}
+                  >
+                    {storedPresent === null ? t.check : t.checkAgain}
+                  </button>
+                )}
                 {form.secretRef && (
                   <button
                     type="button"
@@ -704,12 +747,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </div>
 
-          {/* Save Profile */}
-          <div className="flex items-center gap-2 pt-1">
-            <input type="text" value={newProfileName} onChange={(e) => setNewProfileName(e.target.value)} placeholder={t.profileName} aria-label={t.profileName} className="field-input flex-1" />
-            <button type="button" onClick={handleSaveCurrentAsProfile} className="chip chip-indigo !px-3 !py-1.5 !text-xs transition">
-              <BookmarkPlus className="w-3.5 h-3.5" /><span>{t.saveProfile}</span>
-            </button>
+          {/* Save / update the named profile. One box, and the buttons say which of the
+              two they do — the old single "保存为常用预设" appended a duplicate every time
+              someone fixed a port. */}
+          <div className="inset-box p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {editingProfile ? `${t.editingProfile} · ${editingProfile.name}` : t.newProfile}
+              </span>
+              {editingProfile && (
+                <button
+                  type="button"
+                  onClick={() => { setEditingProfileId(null); setNewProfileName(''); }}
+                  className="text-[10px] font-mono underline decoration-dotted"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  {t.saveAsNew}
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newProfileName}
+                onChange={(e) => setNewProfileName(e.target.value)}
+                placeholder={t.profileName}
+                aria-label={t.profileName}
+                className="field-input flex-1"
+              />
+              <button type="button" onClick={handleSaveCurrentAsProfile} className="chip chip-indigo !px-3 !py-1.5 !text-xs transition shrink-0">
+                <BookmarkPlus className="w-3.5 h-3.5" />
+                <span>{editingProfile ? t.updateProfile : t.saveProfile}</span>
+              </button>
+            </div>
+            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {editingProfile ? t.updateProfileHint : t.saveProfileHint}
+            </p>
           </div>
 
           {/* QoS & KeepAlive */}

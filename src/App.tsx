@@ -739,6 +739,7 @@ export function App() {
         updateStatusText={updateStatusText}
         profiles={broker.profiles}
         onSaveProfile={broker.saveProfile}
+        onUpdateProfile={broker.updateProfile}
         onDeleteProfile={broker.deleteProfile}
       />
     </div>

@@ -167,6 +167,18 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
     [setProfiles],
   );
 
+  /**
+   * Replace a saved profile in place. Without this the only way to change one was to
+   * save it again under another name, which left the stale one on the list and taught
+   * people that "保存预设" accumulates rather than maintains.
+   */
+  const updateProfile = useCallback(
+    (id: string, name: string, pConfig: BrokerConfig) => {
+      setProfiles((prev) => prev.map((p) => (p.id === id ? { ...p, name, config: pConfig } : p)));
+    },
+    [setProfiles],
+  );
+
   const deleteProfile = useCallback(
     (id: string) => {
       const victim = profiles.find((p) => p.id === id);
@@ -212,6 +224,7 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
     toggleConnect,
     selectProfile,
     saveProfile,
+    updateProfile,
     deleteProfile,
     testLatency,
     registerTopic,

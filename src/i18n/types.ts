@@ -307,6 +307,16 @@ export interface Translations {
   saveProfile: string;
   profileName: string;
   deleteProfile: string;
+  editingProfile: string;
+  newProfile: string;
+  saveAsNew: string;
+  updateProfile: string;
+  updateProfileHint: string;
+  saveProfileHint: string;
+  editProfile: string;
+  check: string;
+  checkAgain: string;
+  checkStoredPassword: string;
   customBroker: string;
   manageBrokers: string;
   pingBroker: string;
