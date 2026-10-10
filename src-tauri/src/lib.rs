@@ -138,7 +138,7 @@ async fn connect_broker(
     app: AppHandle,
     state: State<'_, AppState>,
     config: BrokerConfig,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     let manager = state.mqtt.clone();
     manager.connect(app, config).await
 }

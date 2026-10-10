@@ -100,7 +100,13 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
       setIsConnecting(true);
       setConnectionError(null);
       try {
-        await invoke('connect_broker', { config: cfg });
+        // The number the badge shows is this handshake. It used to come from opening a
+        // *second* connection right after this one, which on macOS meant a second read
+        // of the same keychain secret — so one click on Connect asked for the login
+        // keychain password twice. The backend now waits for the CONNACK and reports its
+        // reason, which also means the chip cannot go green over a broker that refused it.
+        const ms = await invoke<number>('connect_broker', { config: cfg });
+        setLatency(ms);
         setConfig(cfg);
 
         // Register all desired topics (backend re-applies them on every CONNACK,
@@ -120,8 +126,6 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
             fill(rt.subscribeFailedAtConnect, { count: String(rejected.length), detail: rejected[0] }),
           );
         }
-
-        testLatency(cfg);
       } catch (err) {
         setConnectionError(String(err));
         throw err;
@@ -129,7 +133,7 @@ export function useBroker({ getTopicsToRegister }: UseBrokerOptions) {
         setIsConnecting(false);
       }
     },
-    [setConfig, testLatency],
+    [setConfig],
   );
 
   const disconnect = useCallback(async () => {

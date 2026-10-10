@@ -516,7 +516,16 @@ impl MqttManager {
         }
     }
 
-    pub async fn connect(self: &Arc<Self>, app: AppHandle, config: BrokerConfig) -> Result<(), String> {
+    /// Open the session and report how the *first* attempt ended, in milliseconds of
+    /// handshake time.
+    ///
+    /// Only the event loop ever sees the CONNACK, so before this the command could only
+    /// answer "task spawned" -- the UI then showed a green chip while the broker had
+    /// actually said `not authorized`, and the caller had to open a *second* connection
+    /// (a second read of the same keychain secret, a second macOS prompt) to find out.
+    /// A refusal that cannot change between attempts stops the loop instead of
+    /// reconnecting once per second.
+    pub async fn connect(self: &Arc<Self>, app: AppHandle, config: BrokerConfig) -> Result<u64, String> {
         self.disconnect().await;
         // A deliberate connect is the user asking again -- after changing a password, an
         // ACL, or a broker -- so the health probe gets one more attempt. An automatic
@@ -535,6 +544,8 @@ impl MqttManager {
         let this = self.clone();
         let app_handle = app.clone();
         let flag = shutdown.clone();
+        let (handshake_tx, mut handshake_rx) = tokio::sync::watch::channel(None);
+        let endpoint = format!("{}:{}", config.host, config.port);
 
         let handle = tokio::spawn(async move {
             // IMPORTANT: rumqttc's EventLoop::poll is NOT cancellation-safe —
@@ -542,9 +553,18 @@ impl MqttManager {
             // every 100 ms tick, corrupting connection state and causing the
             // sporadic auto-disconnects. Keep this loop pure; the feed flusher
             // runs on its own task so batch serialization never blocks keepalive.
+            let started = Instant::now();
             while !flag.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
                     NetEvent::Connected(caps) => {
+                        // A CONNACK that lands after the user already gave up (the
+                        // handshake window expired and `disconnect()` ran) must not
+                        // resurrect the session: the manager no longer owns this client,
+                        // so reporting it connected would leave a link nobody controls,
+                        // and dropping out here closes the socket with it.
+                        if flag.load(Ordering::SeqCst) {
+                            break;
+                        }
                         let ids_allowed = caps.subscription_ids_available;
                         *this.broker_caps.write().await = caps;
                         // Start every silence timer from now: a gap while we were
@@ -608,6 +628,10 @@ impl MqttManager {
                         }
                         let first = !this.is_connected.swap(true, Ordering::SeqCst);
                         if first {
+                            // The handshake the command reports is this one, measured from
+                            // the moment the task started rather than from a second
+                            // connection opened beside it.
+                            let _ = handshake_tx.send(Some(Ok(started.elapsed().as_millis() as u64)));
                             let _ = app_handle.emit("broker-connected", ());
                         }
                         let _ = app_handle.emit("broker-status", this.get_connection_status().await);
@@ -656,8 +680,28 @@ impl MqttManager {
                             .await;
                     }
                     NetEvent::AckRejected { stage, code, text } => {
+                        // A refused CONNACK is not a session that dropped: it never came
+                        // up, and rumqttc answers it by reconnecting — once per second,
+                        // forever, with the same credentials. A refusal that is about
+                        // *this client* cannot change between attempts, so the link stops
+                        // here and names which refusal it was, instead of the UI reading a
+                        // permission problem as an unstable network.
+                        let refused_connect = matches!(stage, crate::transport::AckStage::Connect);
+                        let terminal = refused_connect && crate::acks::connack_is_terminal(code);
                         this.handle_ack_rejected(&app_handle, stage, code, &text)
                             .await;
+                        if terminal {
+                            let _ = handshake_tx.send(Some(Err(format!(
+                                "the broker refused this connection: {} (0x{code:02X})",
+                                crate::acks::describe_connack(code)
+                            ))));
+                            break;
+                        }
+                        if refused_connect {
+                            // `unavailable`, `busy`, `rate exceeded` are worth another try,
+                            // but not worth a tight retry loop against the same port.
+                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                        }
                     }
                     NetEvent::Other => {}
                 }
@@ -733,7 +777,39 @@ impl MqttManager {
         });
 
         *self.loop_control.lock().await = Some((handle, shutdown));
-        Ok(())
+
+        // The answer the user asked for is the broker's, not ours, so wait for the first
+        // CONNACK. Returning "task spawned" instead made the chip go green over a refusal
+        // and pushed the caller into opening a *second* connection just to learn the truth.
+        // rumqttc gives one attempt `connection_timeout()` seconds (10 by default), so this
+        // window covers a full attempt and part of a retry — and a black-holed host must not
+        // leave the UI spinning forever.
+        let verdict = {
+            let waited = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                handshake_rx.wait_for(|outcome| outcome.is_some()),
+            )
+            .await;
+            match waited {
+                Ok(Ok(guard)) => guard.clone(),
+                // Every sender is gone: the loop ended without ever reaching a verdict.
+                Ok(Err(_)) => Some(Err("the connection ended before the broker answered".into())),
+                Err(_) => None,
+            }
+        };
+        match verdict {
+            Some(Ok(ms)) => Ok(ms),
+            Some(Err(reason)) => {
+                // Take the retrying task down with the answer, or the broker keeps
+                // receiving CONNECTs from a session the UI has already given up on.
+                self.disconnect().await;
+                Err(reason)
+            }
+            None => {
+                self.disconnect().await;
+                Err(format!("no CONNACK from {endpoint} within 15 seconds"))
+            }
+        }
     }
 
     pub async fn disconnect(&self) {
@@ -949,6 +1025,7 @@ impl MqttManager {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let meaning = match stage {
             A::Subscribe | A::Unsubscribe => crate::acks::describe_sub(code),
+            A::Connect => crate::acks::describe_connack(code),
             _ => crate::acks::describe_pub(code),
         };
         match stage {

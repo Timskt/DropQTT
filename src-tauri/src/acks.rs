@@ -88,6 +88,58 @@ pub fn describe_pub(code: u8) -> &'static str {
     }
 }
 
+/// English label for a refused CONNACK.
+///
+/// The v3.1.1 numbers (1-5) and the MQTT 5 ones (0x80 up) share this table because
+/// the two ranges never overlap on the wire, and a refusal has to be nameable without
+/// knowing which protocol the user spoke.
+pub fn describe_connack(code: u8) -> &'static str {
+    match code {
+        1 | 0x84 => "protocol version not supported",
+        2 | 0x85 => "client identifier rejected",
+        3 | 0x88 => "broker unavailable",
+        4 | 0x86 => "bad username or password",
+        5 | 0x87 => "not authorized",
+        0x80 => "unspecified error",
+        0x81 => "malformed packet",
+        0x82 => "protocol error",
+        0x83 => "implementation specific error",
+        0x89 => "broker busy",
+        0x8a => "client identifier banned",
+        0x8c => "authentication method not supported",
+        0x90 => "topic name invalid",
+        0x95 => "packet too large",
+        0x97 => "quota exceeded",
+        0x99 => "payload format invalid",
+        0x9a => "retain not supported",
+        0x9b => "QoS not supported",
+        0x9c => "use another server",
+        0x9d => "server moved",
+        0x9f => "connection rate exceeded",
+        _ => "unrecognized reason code",
+    }
+}
+
+/// True when reconnecting cannot change the answer, so the session must stop instead
+/// of retrying.
+///
+/// rumqttc turns a refused CONNACK into an ordinary connection error and reconnects on
+/// the next poll, which is what makes one under-privileged account read as a link that
+/// drops and comes back once per second. Only refusals that another attempt cannot
+/// change qualify: those about *this client* -- its credentials, its identifier, the
+/// protocol it speaks, a ban -- those about the CONNECT packet we could not stop
+/// rebuilding (malformed, protocol error), and a server that says "go to another
+/// endpoint", which retrying this one cannot follow. Broker unavailable, busy, quota and
+/// connection-rate can clear on their own, so those stay retried and the difference is
+/// not hidden behind one generic "cannot connect".
+pub fn connack_is_terminal(code: u8) -> bool {
+    matches!(
+        code,
+        1 | 2 | 4 | 5 | 0x81 | 0x82 | 0x84 | 0x85 | 0x86 | 0x87 | 0x8a | 0x8c | 0x90
+            | 0x95 | 0x99 | 0x9a | 0x9b | 0x9c | 0x9d
+    )
+}
+
 /// A filter or publish the broker refused, with enough context to explain it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -617,6 +669,38 @@ mod tests {
         assert!(!is_plain_success(0x10));
         assert!(is_plain_success(0x00));
         assert_eq!(describe_pub(0x10), "no matching subscribers");
+    }
+
+    #[test]
+    fn a_refused_connack_gets_a_real_label_from_either_spec() {
+        // v3.1.1 writes its refusals as 1-5 and MQTT 5 as 0x80-up; one table has to
+        // name both, because the app cannot know which one the user's broker spoke.
+        assert_eq!(describe_connack(4), "bad username or password");
+        assert_eq!(describe_connack(5), "not authorized");
+        assert_eq!(describe_connack(0x86), "bad username or password");
+        assert_eq!(describe_connack(0x87), "not authorized");
+        assert_eq!(describe_connack(0x8a), "client identifier banned");
+        assert_eq!(describe_connack(0x88), "broker unavailable");
+        // An unknown byte stays honest instead of inventing a verdict.
+        assert_eq!(describe_connack(0x7e), "unrecognized reason code");
+    }
+
+    #[test]
+    fn only_a_refusal_that_retry_cannot_change_is_terminal() {
+        // Credentials, identity, protocol, a ban, a packet we could not stop
+        // rebuilding, and a redirect we cannot follow by retrying this endpoint: another
+        // CONNECT reproduces all of them, and rumqttc sends one once a second forever.
+        for code in [
+            1u8, 2, 4, 5, 0x81, 0x82, 0x84, 0x85, 0x86, 0x87, 0x8a, 0x8c, 0x90, 0x95, 0x99,
+            0x9a, 0x9b, 0x9c, 0x9d,
+        ] {
+            assert!(connack_is_terminal(code), "0x{code:02X} would be retried forever");
+        }
+        // These can answer differently on the next attempt; stopping on them would turn
+        // a busy broker into a dead link the user has to revive by hand.
+        for code in [0u8, 3, 0x80, 0x83, 0x88, 0x89, 0x97, 0x9f] {
+            assert!(!connack_is_terminal(code), "0x{code:02X} stopped a retryable refusal");
+        }
     }
 }
 

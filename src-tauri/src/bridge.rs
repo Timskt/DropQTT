@@ -7,7 +7,7 @@
 //! untouched) onto the target connection, with optional topic remapping and
 //! QoS/retain policies.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -23,7 +23,7 @@ use crate::diagnostics::BridgeDiagnostics;
 use crate::topic::wildcard_match;
 use crate::protocol::{BrokerConfig, PubProperties, SubOptions};
 use crate::transform::{apply_transform, TransformOutcome, SCRIPT_SIZE_LIMIT};
-use crate::transport::{build_connection, MqttClient, NetEvent, NormalizedPublish};
+use crate::transport::{build_connection, AckStage, MqttClient, NetEvent, NormalizedPublish};
 use crate::webhook::{self, WebhookConfig};
 
 /// One exact/wildcard topic mapping entry for "map" mode
@@ -202,6 +202,17 @@ fn gate_allow(window: &mut RateWindow, now_sec: u64, limit: u32) -> bool {
 /// Eventloop task handle + cooperative shutdown flag
 pub type LoopControl = (JoinHandle<()>, Arc<AtomicBool>);
 
+/// What one resync pass decided to do about one connection's filters.
+#[derive(Debug, Default, PartialEq)]
+struct SubPlan {
+    /// To SUBSCRIBE, in the order the SUBACKs will answer.
+    sending: Vec<(String, u8)>,
+    /// Already live at exactly the requested QoS.
+    kept: HashMap<String, u8>,
+    /// Refused before and deliberately not replayed.
+    parked: Vec<String>,
+}
+
 pub struct BridgeManager {
     conns: Mutex<HashMap<String, BridgeConn>>,
     tasks: Mutex<HashMap<String, LoopControl>>,
@@ -210,6 +221,16 @@ pub struct BridgeManager {
     gates: Mutex<HashMap<String, RateWindow>>,
     /// Currently registered subscription filters per connection
     subs: Mutex<HashMap<String, HashMap<String, u8>>>,
+    /// Filters the broker refused, per connection.
+    ///
+    /// rumqttc treats a non-success SUBACK as fatal, so a refused filter drops the
+    /// link, and the next CONNACK re-applies the rules that just got refused. Without
+    /// parking them, one ACL denial becomes a disconnect/reconnect loop that emits a
+    /// fresh error every cycle. This is the console's mechanism (`acks::AckTracker`),
+    /// not a second one: `disconnect()` clears a link's park — which is what a
+    /// deliberate reconnect, `connect()` included, asks for — while rumqttc's own
+    /// reconnects never come through here, so a parked filter stays parked.
+    sub_state: Mutex<HashMap<String, crate::acks::AckTracker>>,
     subscription_sync: Mutex<()>,
     webhook_client: std::sync::OnceLock<Result<reqwest::Client, String>>,
     webhook_slots: Arc<Semaphore>,
@@ -224,6 +245,7 @@ impl Default for BridgeManager {
             conns: Mutex::new(HashMap::new()), tasks: Mutex::new(HashMap::new()),
             rules: Mutex::new(HashMap::new()), stats: Mutex::new(HashMap::new()),
             gates: Mutex::new(HashMap::new()), subs: Mutex::new(HashMap::new()),
+            sub_state: Mutex::new(HashMap::new()),
             subscription_sync: Mutex::new(()), webhook_client: std::sync::OnceLock::new(),
             webhook_slots: Arc::new(Semaphore::new(4)),
             outbox: std::sync::OnceLock::new(),
@@ -543,12 +565,24 @@ impl BridgeManager {
                 let mut subs = self.subs.lock().await;
                 subs.entry(id.clone()).or_default().clone()
             };
-            let mut applied = HashMap::new();
-            for (filter, qos) in &desired {
-                if current.get(filter) == Some(qos) {
-                    applied.insert(filter.clone(), *qos);
-                    continue;
+            // One synchronous pass decides what goes on the wire and reserves the
+            // attribution slot for it. The tracker is shared with this connection's
+            // event loop, and a lock held across `subscribe().await` would stall the
+            // task that has to keep draining rumqttc's request channel.
+            let plan = {
+                let mut trackers = self.sub_state.lock().await;
+                let tracker = trackers.entry(id.clone()).or_default();
+                tracker.reset_pending();
+                let parked: HashSet<String> =
+                    tracker.quarantined().into_iter().map(|r| r.filter).collect();
+                let plan = Self::plan_subscriptions(&desired, &current, &parked);
+                for (filter, _) in &plan.sending {
+                    tracker.expect_sub(filter);
                 }
+                plan
+            };
+            let mut applied = plan.kept;
+            for (filter, qos) in &plan.sending {
                 // Re-subscription is cheap and idempotent on reconnect too.
                 match conn.client.subscribe(filter, &SubOptions { qos: *qos, ..Default::default() }).await {
                     Ok(()) => {
@@ -565,10 +599,52 @@ impl BridgeManager {
             // and drops out of the cache, so the next sync retries it.
             for filter in current.keys().filter(|f| !desired.contains_key(*f)) {
                 conn.client.unsubscribe(filter).await;
+                // It is gone from the rules, so everything we believed about it —
+                // including a refusal parked under the old ACL — goes with it.
+                self.sub_state.lock().await.entry(id.clone()).or_default().forget(filter);
             }
-            self.subs.lock().await.insert(id, applied);
+            self.subs.lock().await.insert(id.clone(), applied);
+            if !plan.parked.is_empty() {
+                // Not forwarding is a fact the link has to carry, not an absence.
+                let message = format!(
+                    "{} subscription(s) refused by the broker and parked: {}",
+                    plan.parked.len(),
+                    plan.parked.join(", ")
+                );
+                if failure.is_none() {
+                    failure = Some(message);
+                }
+            }
         }
         failure.map_or(Ok(()), Err)
+    }
+
+    /// Which filters go on the wire, which are already live, and which stay parked.
+    ///
+    /// Sorted, because `expect_sub` order is the order SUBACKs answer in — an unordered
+    /// send would attribute a refusal to whichever filter happened to be queued first.
+    /// A parked filter is left out of `kept` as well: the broker refused it, so claiming
+    /// it is live would be its own lie.
+    fn plan_subscriptions(
+        desired: &HashMap<String, u8>,
+        current: &HashMap<String, u8>,
+        parked: &HashSet<String>,
+    ) -> SubPlan {
+        let mut wanted: Vec<(&String, &u8)> = desired.iter().collect();
+        wanted.sort();
+        let mut plan = SubPlan::default();
+        for (filter, qos) in wanted {
+            if parked.contains(filter) {
+                plan.parked.push(filter.clone());
+                continue;
+            }
+            if current.get(filter) == Some(qos) {
+                plan.kept.insert(filter.clone(), *qos);
+                continue;
+            }
+            plan.sending.push((filter.clone(), *qos));
+        }
+        plan
     }
 
     pub async fn bridge_status(self: &Arc<Self>) -> Vec<BridgeConnInfo> {
@@ -673,6 +749,14 @@ impl BridgeManager {
             while !flag.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
                     NetEvent::Connected(_) => {
+                        // Same rule as the console: a CONNACK that arrives after this link
+                        // was disconnected must not be adopted — the manager has already
+                        // dropped its handle to the client, so applying rules onto it would
+                        // keep a bridging session nobody owns. Breaking drops the eventloop,
+                        // which closes the socket.
+                        if flag.load(Ordering::SeqCst) {
+                            break;
+                        }
                         let first = !connected.swap(true, Ordering::SeqCst);
                         this.set_conn_error(&conn_id, None).await;
                         // Re-apply rule-driven subscriptions after (re)CONNACK
@@ -705,22 +789,79 @@ impl BridgeManager {
                     }
                     // Bridge links forward; nothing here waits on a publish ack.
                     NetEvent::PublishAcked { .. } => {}
-                    NetEvent::SubAck { .. } | NetEvent::UnsubAck { .. } => {
-                        // Attribution needs the filter each ack answers, which is
-                        // the console's registry, not a bridge link's. A refused
-                        // bridge subscription surfaces as its own dropped traffic.
+                    NetEvent::SubAck { codes, reason_string } => {
+                        // Some brokers answer with a SUBACK carrying a failure byte
+                        // instead of tearing the link down, so this is the other half
+                        // of the same attribution the console does.
+                        let now = chrono::Utc::now().timestamp_millis();
+                        let rejected: Vec<String> = {
+                            let mut trackers = this.sub_state.lock().await;
+                            let tracker = trackers.entry(conn_id.clone()).or_default();
+                            tracker
+                                .apply_sub(codes.as_slice(), reason_string, now)
+                                .into_iter()
+                                .filter_map(|outcome| match outcome {
+                                    crate::acks::Outcome::Rejected(r) => {
+                                        tracker.quarantine(&r);
+                                        Some(r.filter)
+                                    }
+                                    _ => None,
+                                })
+                                .collect()
+                        };
+                        if !rejected.is_empty() {
+                            let message = format!(
+                                "broker refused {} bridge subscription(s): {} — parked until you reconnect this side",
+                                rejected.len(),
+                                rejected.join(", ")
+                            );
+                            this.set_conn_error(&conn_id, Some(message)).await;
+                            this.emit_status(&app_handle).await;
+                        }
                     }
+                    NetEvent::UnsubAck { .. } => {}
                     NetEvent::AckRejected { stage, code, text } => {
                         // rumqttc drops the link on a refusal, so the bridge status
                         // has to carry the reason or the link just looks unstable.
-                        let message = format!(
-                            "{stage:?} refused by the broker: {text} (0x{code:02X})"
-                        );
+                        let now = chrono::Utc::now().timestamp_millis();
+                        let mut message =
+                            format!("{stage:?} refused by the broker: {text} (0x{code:02X})");
+                        if matches!(stage, AckStage::Subscribe) {
+                            // Park the filter this refusal belongs to, or the next
+                            // CONNACK replays it and the link flaps forever.
+                            let parked = {
+                                let mut trackers = this.sub_state.lock().await;
+                                let tracker = trackers.entry(conn_id.clone()).or_default();
+                                tracker.refuse_oldest_pending_sub(code, &text, now)
+                            };
+                            if let Some(r) = parked {
+                                message = format!(
+                                    "subscription to '{}' refused: {} (0x{code:02X}) — parked until you reconnect this side",
+                                    r.filter, r.meaning
+                                );
+                            }
+                        }
+                        // A refused CONNACK never made a session, and rumqttc answers it
+                        // by reconnecting — with the same credentials, on every poll,
+                        // forever. Stop instead, and let the status say which refusal it
+                        // was, so an under-privileged account is not read as an unstable
+                        // network.
+                        let terminal = matches!(stage, AckStage::Connect)
+                            && crate::acks::connack_is_terminal(code);
+                        if terminal {
+                            message = format!(
+                                "the broker refused this connection: {} (0x{code:02X})",
+                                crate::acks::describe_connack(code)
+                            );
+                        }
                         if connected.swap(false, Ordering::SeqCst) {
                             this.emit_status(&app_handle).await;
                         }
                         this.set_conn_error(&conn_id, Some(message)).await;
                         this.emit_status(&app_handle).await;
+                        if terminal {
+                            break;
+                        }
                         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                     }
                     NetEvent::Other => {}
@@ -753,6 +894,10 @@ impl BridgeManager {
             }
         }
         self.subs.lock().await.remove(id);
+        // A deliberate disconnect is the user asking again, so filters the broker
+        // refused are retried on the next connect. rumqttc's own reconnects never
+        // come through here, which is what keeps a parked filter parked.
+        self.sub_state.lock().await.remove(id);
     }
 
     pub async fn disconnect_all(&self) {
@@ -1436,5 +1581,61 @@ mod tests {
         assert_eq!(r.source_filter, "a/#");
         assert!(r.forward_props);
         assert_eq!(map_topic(&r, "a/x"), "b/x");
+    }
+
+    fn plan(
+        desired: &[(&str, u8)],
+        current: &[(&str, u8)],
+        parked: &[&str],
+    ) -> SubPlan {
+        let rows = |input: &[(&str, u8)]| {
+            input.iter().map(|(f, q)| (f.to_string(), *q)).collect::<HashMap<_, _>>()
+        };
+        let set = parked.iter().map(|f| f.to_string()).collect::<HashSet<_>>();
+        BridgeManager::plan_subscriptions(&rows(desired), &rows(current), &set)
+    }
+
+    #[test]
+    fn a_parked_filter_never_goes_back_on_the_wire() {
+        // rumqttc treats a refused SUBSCRIBE as fatal, so replaying one is one
+        // disconnect per reconnect. `kept` has to stay empty for the same reason one
+        // level down: the broker refused it, so calling it live would be a different lie.
+        let p = plan(&[("a/#", 1)], &[("a/#", 1)], &["a/#"]);
+        assert!(p.sending.is_empty(), "a parked filter was re-subscribed: {p:?}");
+        assert!(p.kept.is_empty(), "a parked filter was claimed as live: {p:?}");
+        assert_eq!(p.parked, vec!["a/#".to_string()]);
+    }
+
+    #[test]
+    fn a_filter_the_broker_still_holds_is_not_subscribed_twice() {
+        let p = plan(&[("a/#", 1)], &[("a/#", 1)], &[]);
+        assert!(p.sending.is_empty());
+        assert_eq!(p.kept, HashMap::from([("a/#".to_string(), 1u8)]));
+    }
+
+    #[test]
+    fn a_qos_change_is_a_resubscribe_and_not_a_keep() {
+        let p = plan(&[("a/#", 2)], &[("a/#", 0)], &[]);
+        assert_eq!(p.sending, vec![("a/#".to_string(), 2)]);
+        assert!(p.kept.is_empty(), "the old QoS was reported as the wanted one");
+    }
+
+    #[test]
+    fn the_send_order_is_the_order_the_subacks_answer_in() {
+        // `expect_sub` is a FIFO, so an unordered send would blame whichever filter
+        // happened to be queued first when the broker refuses one of them.
+        let p = plan(&[("z/#", 0), ("a/#", 1), ("m/#", 2)], &[], &[]);
+        assert_eq!(
+            p.sending.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>(),
+            vec!["a/#", "m/#", "z/#"]
+        );
+    }
+
+    #[test]
+    fn a_lifted_park_subscribes_the_filter_again() {
+        // Nothing may remember a parked filter as live, or lifting the park after the
+        // user fixes the ACL would leave the rule silently unforwarded forever.
+        let p = plan(&[("a/#", 1)], &[], &[]);
+        assert_eq!(p.sending, vec![("a/#".to_string(), 1)]);
     }
 }

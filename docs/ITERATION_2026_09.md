@@ -3468,6 +3468,113 @@ M3 把 `<=0` 判成负号 → `utcOffsetLabel` 红；M4 去掉 `Z` → `exportSt
 
 ---
 
+### 4.90 一次连接要输两遍钥匙串密码，权限不够时链接每秒掉一次（第二十三轮 2026-10-10）
+
+属主报了两件事，都发生在 v0.12.0 之后：
+
+1. 「我连接 mqtt 怎么老是弹出这个窗口让我输入？之前不用啊」——macOS 钥匙串授权框。
+2. 「账号权限不够的时候，会快速的弹出几个提示和快速的断开和重连」——并明确要求**和弹窗一起修**。
+
+**弹窗：一次点击读两次凭据。** 不是猜的，是数出来的：`useBroker.connect()` 在
+`invoke('connect_broker')` 之后又调了一次 `testLatency(cfg)`（旧 `useBroker.ts:124`），
+而 `test_broker_connection` → `MqttManager::test_connection` → `build_connection` →
+`secrets::resolve`（`transport.rs:579`）——**同一个 `secretRef` 被读了两次**，每次都是一次
+钥匙串访问。所以点一次 Connect，问两次。
+
+根因不止于此，而且这半边我在代码里修不掉：本机 `/Applications/DropQTT.app` 的签名是
+
+```
+Identifier=dropqtt-de60e67d56ba075b
+CodeDirectory v=20002 flags=0x20002(adhoc,linker-signed)
+Signature=adhoc   TeamIdentifier=not set
+```
+
+macOS 的钥匙串 ACL 认的是签名的 designated requirement；ad-hoc/链接器签名的 DR 就是 **CDHash**，
+每构建一次就变一次。「始终允许」写进去的是上一个构建的身份，所以下一个构建（含自动更新到
+0.12.0）又会重新问。**这是属主的决定，不是我能改的**：要么用 Developer ID 签名（需要证书），
+要么接受"每次升级后第一次连接会问一遍"。我能改的是把"每次连接问两遍"降到"问一遍"。
+
+**修法（凭据侧）**：`connect_broker` 现在**等第一次 CONNACK**，返回握手毫秒数；延迟徽章直接用这个
+数，自动探针删掉。顺带解决了一个更难看的问题——旧实现 `connect()` 只 `Ok(())` 表示"任务已 spawn"，
+UI 立刻变绿，而 broker 其实回的是 not authorized，用户看到的是一枚绿的点和一次稍后的掉线。
+等待窗口 15 s（rumqttc 单次尝试 `conn_timeout` 默认 10 s，够一次完整尝试加一部分重试）；
+超时或拿到拒绝都 `disconnect()` 收尾再返回 Err，不留一个还在重连的僵尸任务。
+
+**掉线重连：被拒的 CONNACK 和普通断线在 rumqttc 里是同一条通道。** 源码证据
+（`rumqttc-0.24.0/src/v5/eventloop.rs`）：
+
+- `415`：`Incoming::ConnAck(connack) => Err(ConnectionError::ConnectionRefused(connack.code))`
+  —— 失败的 CONNACK **不会**产生 `Connected` 事件，直接是一个错误；
+- `138-152`：`poll()` 里 `self.network = Some(network)` 已经赋值，错误从
+  `handle_incoming_packet(...)?` 抛出时**不会**走 `clean()`；下一圈 `poll()` 看见 network 还在，
+  继续在同一套凭据上重试。
+
+再叠上 `mqtt_manager.rs` 的 `ConnectionError` 分支睡 1000 ms 后继续，就是**每秒一圈**的
+断开/重连——正是属主描述的现象。§4.85 修的是订阅层（`$SYS/#` 被拒），那是 `StateError::SubFail`；
+**连接层此前没人管**，因为它的错误字符串里根本没有可分类的结构。
+
+**修法（分类侧）**：`transport` 把两个协议的 `ConnectionRefused` 都归一成
+`NetEvent::AckRejected { stage: Connect, code, .. }`（`AckStage::Connect` 这个变体早就存在、
+一直没人用），`acks` 补上 `describe_connack` 与 `connack_is_terminal`：
+
+- **终止**：0x84/0x85/0x86/0x87/0x8a/0x8c（凭据、身份、协议、封禁、认证方式）、
+  0x81/0x82/0x90/0x95/0x99/0x9a/0x9b（我们重发也一定重发的包）、0x9c/0x9d（让我们换端点，
+  重试这个端点不可能有用）、v3 的 1/2/4/5；
+- **可重试**：0x88 unavailable、0x89 busy、0x97 quota、0x9f rate——这些会自己好，
+  停在这里等于把一次拥塞变成一次需要用户手点的人工恢复。
+
+终止码 → 事件循环 `break`，状态栏留下一次说清楚的原因；可重试码 → 照旧睡 1 s 再试。
+
+**桥接侧补齐 §4.85 的那半套机制。** 控制台早就按 `is_quarantined` 跳过被拒主题，
+桥接**没有**：`resync_subs` 每次 CONNACK 都重放全部规则过滤器，所以桥接上一个 ACL 拒绝
+就是一条永远每秒掉一次的链路。现在 `BridgeManager` 持 `sub_state: HashMap<id, AckTracker>`
+（**复用 `acks::AckTracker`，不新造第二套机制**——§4.85 记的就是这个教训）：
+被拒过滤器进隔离名单、`resync_subs` 跳过它、显式 `connect/disconnect` 清空该链路的名单
+（= 人又问了一次），rumqttc 自己的重连不清空。选择逻辑抽成纯函数 `plan_subscriptions`
+（sending / kept / parked 三份），因为带着 `await` 的那半没法测。
+
+**为什么隔离名单不"顺手"当成已订阅**：被 broker 拒绝的过滤器**不是**活的订阅。第一版我把它
+留在 `applied` 里（"保留我们以为还活着的那条"），那是把"用户想要"和"链路已有"混成一件事——
+桥接的 `subs` 缓存语义是后者。所以 parked 既不进 `sending` 也不进 `kept`，
+`a_parked_filter_never_goes_back_on_the_wire` 两条断言分别钉住这两点。
+
+**验证**：Rust **397**（+8）：`describe_connack` 两协议标签、终止/可重试两侧各一整列、
+`v3/v5_error_event` 把 25 个 CONNACK 码逐个映射并断言普通 `Io` 错误**没有**被误分类成拒绝
+（吞掉网络错误会停掉一条本来能恢复的链路）、桥接 `plan_subscriptions` 5 条。
+UI **267**（+2）：`connect-cost.spec.ts` —— 点一次 Connect 只出现一次 `connect_broker`、
+**零次** `test_broker_connection`、徽章显示后端返回的 23 ms；拒绝用例断言原因上屏且徽章仍是
+`PING`（不给从未存在的会话编一个延迟）。
+
+**新加了一条真 socket 集成测试**（`src-tauri/tests/connack_refusal.rs`，Rust 集成从 1 条到 **2 条**）：
+自己监听一个临时端口，对每个 CONNECT 回 `20 02 00 05` 然后挂断（MQTT 3.1.1 §3.2 要求被拒后关闭），
+数 CONNECT 的次数。它证明两件事：**(a)** 被拒的 CONNACK 到达本 app 时确实是
+`AckRejected{stage: Connect, code: 0x05}`（不是我读源码读出来的），
+**(b)** 继续按事件循环那样 `poll()`，broker 会**再次**收到 CONNECT —— 每秒一次的抖动是
+rumqttc 自己的行为，停只能由调用方做。**它顺手纠正了我一个错**：我原本按 v5 的
+`poll()` 顺序（`network` 已赋值 → 下一次 `select()` 拿到 EOF）断言"第二次尝试之前一定先有一个
+ConnectionError"，跑起来发现 v3 不是这样——`eventloop.rs:150-153` 在 `self.network = Some(...)`
+**之前**就把拒绝抛了出去，所以 v3 的第二次 CONNECT 前面**没有任何错误事件**，比 v5 还紧。
+断言改成不依赖这个顺序的、更有意义的那条：**被拒过的会话一次都没有被报成 Connected**。
+变异：从终止表里删 `0x05` → 这条集成测试红（"0x05 is not terminal"）；
+删 `wanted.sort()` → 顺序断言红（**第一次尝试没红**，因为 `cp` 备份在改之前把变异覆盖掉了，
+等于没改——现在每条变异都 `assert` 锚点命中，§4.88 那个坑第二次踩）；
+从终止表里删 0x87/0x86 → 分类测试红；改 `describe_connack(0x8a)` → 标签测试红；
+`connack_code_v5(NotAuthorized)` 改成 0x86 → 映射测试红；删掉 v3 的 `ConnectionRefused` 分支 → 红；
+把 `testLatency(cfg)` 加回 `useBroker.connect` → `connect-cost` 第 1 条红。
+全量：Rust 397 + 2 集成、单测 248、UI 267、tsc 干净、eslint 恰好 10、clippy `-D warnings` 干净、
+`gate-rig` 两条 CLI 门禁（cli-gate / scenario-gate）在一次性 mosquitto `18831` 上重跑**全绿**。
+
+**没验到的部分，说清楚**：`MqttManager::connect` 与 `bridge::connect` 需要真实 `AppHandle`
+（`tauri::test::mock_builder()` 造的是 `App<MockRuntime>`，类型对不上），所以**"终止码让循环
+break 掉、之后不再重连"这半没有自动化断言**——被证明的是它消费的两个输入（真 socket 送来的
+`AckRejected{Connect, 0x05}`，和 `connack_is_terminal` 对它的判决）以及它不该做的事（被拒的会话
+不得报成 Connected）。要补的话，缺的是一个能注入的 `AppHandle` 替身，不是更多的单测。
+同理，桥接的隔离名单只证到纯函数那一层（`plan_subscriptions`），`SubAck`/`AckRejected` 两个
+分支的接线是读代码确认的。
+
+**顺手记下但没动**：`dropqtt-cli` 不走 `transport::build_connection`（它自己实现连接），
+所以连接层拒绝分类对它不适用；CLI 的 `connect` 自带 `--timeout`，行为未变。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

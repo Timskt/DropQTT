@@ -166,6 +166,12 @@ pub enum NetEvent {
     /// down *instead of* delivering the SUBACK. Recognizing it is the only way
     /// to tell the user why the session keeps dropping — and the only way to
     /// stop replaying the filter that caused it.
+    ///
+    /// `stage: Connect` is the same channel for a refusal that arrives before any
+    /// ack exists: rumqttc maps a failed CONNACK to `ConnectionError::ConnectionRefused`
+    /// and reconnects on the next poll, so an under-privileged account would otherwise
+    /// look exactly like a flapping network. Callers decide from
+    /// `acks::connack_is_terminal` whether another attempt can change the answer.
     AckRejected {
         stage: AckStage,
         code: u8,
@@ -414,6 +420,56 @@ fn puback_code_v5(code: &rumqttc::v5::mqttbytes::v5::PubAckReason) -> u8 {
         C::PacketIdentifierInUse => 0x91,
         C::QuotaExceeded => 0x97,
         C::PayloadFormatInvalid => 0x99,
+    }
+}
+
+/// Wire byte for a refused CONNACK, MQTT 5 (§3.2.2.3.0).
+fn connack_code_v5(code: &rumqttc::v5::mqttbytes::v5::ConnectReturnCode) -> u8 {
+    use rumqttc::v5::mqttbytes::v5::ConnectReturnCode as C;
+    match code {
+        C::Success => 0x00,
+        C::UnspecifiedError => 0x80,
+        C::MalformedPacket => 0x81,
+        C::ProtocolError => 0x82,
+        C::ImplementationSpecificError => 0x83,
+        C::UnsupportedProtocolVersion => 0x84,
+        C::ClientIdentifierNotValid => 0x85,
+        C::BadUserNamePassword => 0x86,
+        C::NotAuthorized => 0x87,
+        C::ServiceUnavailable => 0x88,
+        C::ServerBusy => 0x89,
+        C::Banned => 0x8a,
+        C::BadAuthenticationMethod => 0x8c,
+        C::TopicNameInvalid => 0x90,
+        C::PacketTooLarge => 0x95,
+        C::QuotaExceeded => 0x97,
+        C::PayloadFormatInvalid => 0x99,
+        C::RetainNotSupported => 0x9a,
+        C::QoSNotSupported => 0x9b,
+        C::UseAnotherServer => 0x9c,
+        C::ServerMoved => 0x9d,
+        C::ConnectionRateExceeded => 0x9f,
+        // mqttbytes keeps the v3.1.1 spellings of three refusals in this same enum, and a
+        // v5 CONNACK can never carry them — its parser rejects 1-5. Mapped to the numbers
+        // `acks::describe_connack` already reads, so even an impossible value names the
+        // right thing instead of silently becoming "unspecified".
+        C::RefusedProtocolVersion => 1,
+        C::BadClientId => 2,
+        C::ServerUnavailable => 3,
+    }
+}
+
+/// Wire byte for a refused CONNACK, v3.1.1 (§3.2.2.3). The numbers are the spec's own
+/// 1-5, which `acks::describe_connack` reads beside the MQTT 5 table.
+fn connack_code_v3(code: &rumqttc::mqttbytes::v4::ConnectReturnCode) -> u8 {
+    use rumqttc::mqttbytes::v4::ConnectReturnCode as C;
+    match code {
+        C::Success => 0x00,
+        C::RefusedProtocolVersion => 1,
+        C::BadClientId => 2,
+        C::ServiceUnavailable => 3,
+        C::BadUserNamePassword => 4,
+        C::NotAuthorized => 5,
     }
 }
 
@@ -798,7 +854,7 @@ impl MqttEventLoop {
                     reason_string: None,
                 },
                 Ok(_) => NetEvent::Other,
-                Err(e) => NetEvent::ConnectionError(format!("{:?}", e)),
+                Err(e) => v3_error_event(&e),
             },
             MqttEventLoop::V5(loop5) => match loop5.poll().await {
                 Ok(rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(a))) => {
@@ -882,6 +938,19 @@ impl MqttEventLoop {
     }
 }
 
+/// v3.1.1 has no ack reason codes, so the only refusal worth naming that arrives as an
+/// error is the CONNACK itself.
+fn v3_error_event(e: &rumqttc::ConnectionError) -> NetEvent {
+    if let rumqttc::ConnectionError::ConnectionRefused(code) = e {
+        return NetEvent::AckRejected {
+            stage: AckStage::Connect,
+            code: connack_code_v3(code),
+            text: format!("{code:?}"),
+        };
+    }
+    NetEvent::ConnectionError(format!("{:?}", e))
+}
+
 /// Split rumqttc's one error channel into what actually happened.
 ///
 /// Every ack refusal arrives here rather than as a packet: `MqttState` treats a
@@ -893,6 +962,14 @@ fn v5_error_event(e: &rumqttc::v5::ConnectionError) -> NetEvent {
     use rumqttc::v5::mqttbytes::v5::{PubCompReason, PubRecReason, PubRelReason, UnsubAckReason};
     use rumqttc::v5::StateError as S;
     use rumqttc::v5::ConnectionError as C;
+
+    if let C::ConnectionRefused(code) = e {
+        return NetEvent::AckRejected {
+            stage: AckStage::Connect,
+            code: connack_code_v5(code),
+            text: format!("{code:?}"),
+        };
+    }
 
     if let C::MqttState(state) = e {
         match state {
@@ -1364,6 +1441,79 @@ mod tests {
         };
         assert_eq!(ack_reason_string(Some(&blank)), None);
         assert_eq!(ack_reason_string(None::<&rumqttc::v5::mqttbytes::v5::SubAckProperties>), None);
+    }
+
+    #[test]
+    fn a_refused_connack_is_a_classifiable_event_not_an_opaque_string() {
+        // rumqttc reports a failed CONNACK on the same channel as a network drop, so a
+        // refusal that stays a string leaves the caller unable to tell "go away" from
+        // "come back later" — which is the difference between stopping and flapping
+        // once a second against a broker that will never accept these credentials.
+        // The byte each code carries is asserted at the same time, because the whole
+        // point is that the UI can classify it.
+        use rumqttc::mqttbytes::v4::ConnectReturnCode as C3;
+        use rumqttc::v5::mqttbytes::v5::ConnectReturnCode as C5;
+        let refused = |code| rumqttc::v5::ConnectionError::ConnectionRefused(code);
+        for (code, want) in [
+            (C5::NotAuthorized, 0x87u8),
+            (C5::BadUserNamePassword, 0x86),
+            (C5::ClientIdentifierNotValid, 0x85),
+            (C5::UnsupportedProtocolVersion, 0x84),
+            (C5::Banned, 0x8a),
+            (C5::ServerBusy, 0x89),
+            (C5::ServiceUnavailable, 0x88),
+            (C5::QuotaExceeded, 0x97),
+            (C5::BadAuthenticationMethod, 0x8c),
+            (C5::TopicNameInvalid, 0x90),
+            (C5::PacketTooLarge, 0x95),
+            (C5::PayloadFormatInvalid, 0x99),
+            (C5::RetainNotSupported, 0x9a),
+            (C5::QoSNotSupported, 0x9b),
+            (C5::UseAnotherServer, 0x9c),
+            (C5::ServerMoved, 0x9d),
+            (C5::ConnectionRateExceeded, 0x9f),
+            (C5::MalformedPacket, 0x81),
+            (C5::ProtocolError, 0x82),
+            (C5::ImplementationSpecificError, 0x83),
+            (C5::UnspecifiedError, 0x80),
+            (C5::Success, 0x00),
+            // mqttbytes' v5 enum carries the v3.1.1 spellings too; they cannot be parsed
+            // from a v5 CONNACK, but they must still land on a label rather than vanish.
+            (C5::RefusedProtocolVersion, 1),
+            (C5::BadClientId, 2),
+            (C5::ServerUnavailable, 3),
+        ] {
+            match v5_error_event(&refused(code)) {
+                NetEvent::AckRejected { stage, code: got, .. } => {
+                    assert_eq!(stage, AckStage::Connect, "{code:?} lost its stage");
+                    assert_eq!(got, want, "{code:?} mapped to 0x{got:02X}, not 0x{want:02X}");
+                }
+                other => panic!("{code:?} became {other:?}, not a refusal"),
+            }
+        }
+        for (code, want) in [
+            (C3::BadUserNamePassword, 4u8),
+            (C3::NotAuthorized, 5),
+            (C3::RefusedProtocolVersion, 1),
+            (C3::BadClientId, 2),
+            (C3::ServiceUnavailable, 3),
+            (C3::Success, 0),
+        ] {
+            let e = rumqttc::ConnectionError::ConnectionRefused(code);
+            match v3_error_event(&e) {
+                NetEvent::AckRejected { stage, code: got, .. } => {
+                    assert_eq!(stage, AckStage::Connect, "{code:?} lost its stage");
+                    assert_eq!(got, want, "{code:?} mapped to {got}, not {want}");
+                }
+                other => panic!("{code:?} became {other:?}, not a refusal"),
+            }
+        }
+        // And an ordinary transport failure keeps its old shape: swallowing it into a
+        // "refused" verdict would stop retrying a network that could come back.
+        let io = rumqttc::ConnectionError::Io(std::io::Error::other("unreachable"));
+        assert!(matches!(v3_error_event(&io), NetEvent::ConnectionError(_)));
+        let io5 = rumqttc::v5::ConnectionError::Io(std::io::Error::other("unreachable"));
+        assert!(matches!(v5_error_event(&io5), NetEvent::ConnectionError(_)));
     }
 }
 
