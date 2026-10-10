@@ -8,7 +8,18 @@
 （文件传输 / MQTT 控制台 / 数据桥接 / 消息历史 / 运维诊断），外加设备仿真与验收场景、
 会话录制回放、Prometheus 指标导出。贯穿全部功能的一条主张是**失败不许看起来像成功**。
 
-当前版本 **0.12.4**（已发布并按资产验收：17 个产物、11 个更新平台，`latest.json` 里 `darwin-aarch64`/`darwin-x86_64`/`linux-x86_64`/`windows-x86_64` 全部在位）。`v0.12.3` 的两条 macOS 腿被发版流水线自己弄坏了：未设置的 secret
+当前版本 **0.12.6**（已发布并按资产验收：17 个产物、11 个更新平台，`latest.json` 里 `darwin-aarch64`/`darwin-x86_64`/`linux-x86_64`/`windows-x86_64` 全部在位）。
+**它是第一个带稳定代码签名身份的包**：下载 release 上的 `DropQTT_aarch64.app.tar.gz` 解包验出来的
+指派要求是 `identifier "com.dropqtt.desktop" and certificate leaf = H"d483c414…"`，
+而 0.12.4 的产物是 `cdhash H"215cc553…"`——每次构建都变，所以钥匙串的"始终允许"活不过一次更新。
+这条改动路上又踩了两次同一类坑（§4.95、§4.96）：门槛测的是 `find-identity -v` 的**显示**而不是**能不能签**
+（自签身份永远 `CSSMERR_TP_NOT_TRUSTED`，于是要红）；以及只要把 `APPLE_CERTIFICATE` 交给 bundler，
+它就只认 Apple 发行的七个身份名前缀，自签身份直接 `failed to resolve signing identity`——
+**v0.12.5 因此只发出了 11 个产物、`latest.json` 没有 `darwin-*`**，它保持公开但残缺（tag 不动），
+macOS 用户不会收到它、直接从 0.12.4 升到 0.12.6。签名身份是自签的（不是 Developer ID），
+所以 Gatekeeper 对隔离下载的拒绝**没有**被修好，那需要 $99/年的证书与公证。
+
+`v0.12.3` 的两条 macOS 腿同样被发版流水线自己弄坏：未设置的 secret
 被 job 级 `env:` 映射成了**空字符串变量**，而 tauri-bundler 判的是"这个变量在不在"而不是"有没有值"，
 于是它去导一张根本不存在的证书（`SecKeychainItemImport: One or more parameters ... not valid`）。
 结果只发出 Linux + Windows 共 11 个产物，`check-release-shipped.py` 当场报
@@ -113,7 +124,7 @@ SUBACK/PUBACK reason code 全量上抛、CONNACK 能力表（broker 说"只收 Q
 | §3.5 多连接工作区 | **未做**。实测改造面：73 个命令全部隐含"只有一个连接"、`App.tsx` 单 `broker.isConnected` 就 23 处、事件名要按连接分道、32 个 spec 的 mock 随之全改；且需先定"现有 4.8 万行历史如何归属"。属架构决策，不适合顺手做。 |
 | §3.2 无头 CLI 进 CI | **已完成**（2026-10-07）。`ci.yml` 新增 `cli` 作业：一次性 mosquitto + ACL，跑 `scripts/cli-gate.sh` 的 37 项退出码断言。2026-10-08 起 `verify --scenario --bench-rate N` 能自己打负载、判性能条，带条的验收文件在 CLI 里也能拿到 0（§4.76）。**四个作业在 2026-10-08 首次同时转绿**——此前 `cli` 作业自引入起连红六次，真实原因是门禁对着别人的 broker 跑（§4.78）。 |
 | §3.3 broker 凭据入 keyring | **已完成**（2026-10-07，见 §4.72）。密码进 OS 凭据库，本地设置只留随机引用；启动前迁移旧明文；引用悬空时连接明确报错而不是匿名重试。webhook header 里的敏感值 2026-10-08 也已入库（`webhook:` 前缀，见 §4.75）。 |
-| macOS 每次升级后仍会问一次钥匙串 | **代码侧已减到"一次连接问一次、打开设置零次"（§4.90 + §4.92），剩下的问不掉了**：发出去的 `.app` 是 ad-hoc/链接器签名（`Signature=adhoc`、`TeamIdentifier=not set`），钥匙串 ACL 只能按 CDHash 认人，而 CDHash 每构建一次就变。要让「始终允许」真的长期有效，需要 Developer ID 签名 + 公证。仓库侧**已就绪**（§4.93）：`release.yml` 里预检/导入/验产物三步以 `APPLE_CERTIFICATE` 是否存在为门槛，没配 secrets 时行为与今天完全一致；`scripts/check-macos-signed.py` 会在产物仍是 ad-hoc 时让发版失败。证书与六个 secrets 仍待属主（一次性清单在 `docs/HANDOFF_2026_10.md` §6 第 3 条），**所以这条还没闭环**：门已证伪过现有 ad-hoc 包，但真签名跑一次变 YES 才算修好。 |
+| macOS 每次升级后仍会问一次钥匙串 | **已闭环（0.12.6，§4.95/§4.96）**：代码侧先减到"一次连接问一次、打开设置零次"（§4.90 + §4.92），根因在产物侧——发出去的 `.app` 是 ad-hoc/链接器签名（实测 0.12.4 的指派要求是 `cdhash H"215cc553…"`），钥匙串 ACL 只能按 CDHash 认人，而 CDHash 每构建一次就变。0.12.6 起产物由 `DropQTT Code Signing` 自签身份签名，实测指派要求变成 `identifier "com.dropqtt.desktop" and certificate leaf = H"d483c414…"`，跨构建不变。**装上 0.12.6 之后还会弹最后一次**（指派要求换了，旧授权自然失效），点"始终允许"以后就不再弹。仍未解决的一半：身份是自签而非 Developer ID，所以 **Gatekeeper 对隔离（quarantined）下载照样拒绝**，陌生人双击 DMG 还是会被拦——那需要 Apple 证书 + 公证（`APPLE_NOTARIZE=1` 那条分支已经备好，见 handoff §6 第 3 条路 B）。 |
 | §1.6 桥接每消息克隆 rules/conns 表 | **未做**。评审称是最大可优化项，但按本项目规矩要先 A/B 量出收益；此前两次"看起来该优化"的地方量下来都不是瓶颈。 |
 | §1.7 `BEGIN IMMEDIATE` 失败少报计数 | **已完成**（本轮复核发现评审该条已过期，代码里已是"计入 lost_rows 并跳过本批"）。 |
 | §8.4 双栏对比 | 依赖多连接的半边未做；"改动前 vs 改动后报文对比"半边**已有**（`utils/diff.ts` + 详情面板）。 |
