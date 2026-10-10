@@ -3752,6 +3752,67 @@ verify 步骤两个失败分支本地跑过。Rust/前端本轮未改。
 
 
 
+### 4.94 未设置的 secret 会被映射成"空字符串变量"，v0.12.3 的两条 macOS 腿就死在这上面（第二十七轮 2026-10-11）
+
+我在 §4.93 里写过一句"**没配 secrets 时行为与今天完全一致**，所以这次改动对现有发布零风险"。
+`v0.12.3` 打出去六分钟，这句话就被证伪了：
+
+```text
+security: SecKeychainItemImport: One or more parameters passed to a function were not valid.
+failed to bundle project: failed codesign application: failed to run command security import:
+failed to import keychain certificate
+```
+
+**原因不在签名步骤里，在那句"零风险"的写法上。** 为了让 step 的 `if:` 能判断 secrets（step 级
+`if:` 读不到 `secrets` 上下文），我在 job 级写了
+
+```yaml
+env:
+  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+```
+
+**未设置的 secret 不会让变量消失，它把变量定义成空字符串。** 而 tauri-bundler 判断"要不要做代码签名"
+用的是 `APPLE_CERTIFICATE` **存在与否**，不是有没有值——于是"什么都没配"变成了"配了一张空证书"，
+两条 macOS 腿在 bundle 阶段死掉。Windows/Linux 不受影响，于是 release 变成**公开但只发了 11 个产物、
+`latest.json` 里没有 `darwin-*`**——正是 §4.86 记录过的那类残缺。
+
+**这次抓到它的正是为那类残缺建的门**：
+
+```text
+$ python3 scripts/check-release-shipped.py v0.12.3
+latest.json has no 'darwin-x86_64': Intel macOS users get no auto-update …
+no *_aarch64.dmg asset … / no *_x64.dmg asset …
+release-shipped: NO (11 assets inspected)
+```
+
+所以流程上是对的：**看产物而不是看绿勾**这条习惯，第一次在真事故上兑现了价值。
+
+**修法不是把判断改成 `!= ''`，而是让"没有"真的是没有**：一个步骤按需往 `$GITHUB_ENV` 里写，
+只有真的有值才写；门槛改读 `MACOS_SIGNED=0/1` 哨兵（不靠"未定义变量与空串比较"的语义，
+GitHub 表达式那里 `env.X` 未设置会成 `null`，我不想再赌一次它的强制转换）。
+**同一个坑在下一层也堵掉**：公证凭据是可选的，`emit()` 只在非空时导出，
+否则 `APPLE_ID=` 这种空存在会让 bundler 以为要公证。
+
+**我的本地测试为什么没抓到**：预检脚本四个分支我都跑过，但**每一次都传了非空的 `APPLE_CERTIFICATE`**——
+也就是只测了"配了"的世界，没测"什么都没配"那个真正会走的默认路径。教训写进脚本注释里：
+**默认路径必须自己测一遍**，尤其是这个默认路径的意义就是"和以前一模一样"。
+现在两个分支都跑：空 → `$GITHUB_ENV` 里只有 `MACOS_SIGNED=0`，`grep '^APPLE_'` 命中 **0 行**；
+非空 → 导出四个必需变量 + `APPLE_NOTARIZE=0`，空的可选项 **0 行**。
+
+**为什么补发 0.12.4 而不是重跑**：`gh run rerun --failed` 用的是**同一个 commit**，
+那里的 workflow 就是坏的，重跑只会再坏一次；而移动已发布的 tag 是明令禁止的（§4.86 之后仍然成立）。
+所以走 patch 版本，`v0.12.3` 的代码原样带上（它本身没有功能问题，只是被流水线绊倒）。
+
+**顺带**：`check-macos-signed.py` 的 `--require-developer-id` 只在该步真的会公证时才加，
+否则自签身份永远过不了那道门——那等于把免费路径变成不可能绿的路径。
+
+**验证**：`check-ci-shell.py` 两个 workflow 共 29 个 run 块 0 语法失败；导出步骤两个分支本地跑过并
+断言了写进去的内容；`check-release-ready.py` 在 0.12.4 四处版本号一致；Rust 402 lib + 2 集成、
+单测 257、UI 275、i18n 1075×4、tsc/eslint/clippy 全绿（代码与 0.12.3 相同，只有 workflow 与文档变了）。
+**闭环判据**：0.12.4 的 release 跑完后 `check-release-shipped.py v0.12.4` 必须回到
+`YES`、产物数回到 17、`latest.json` 里 `darwin-aarch64`/`darwin-x86_64` 都在。
+
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

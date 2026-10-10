@@ -35,7 +35,7 @@ python3 scripts/bench-history-lock.py  # 量「图表读会不会拖住写锁」
 python3 scripts/check-ci-shell.py             # 工作流 run 块语法（纯标准库，无需 PyYAML）
 python3 scripts/check-release-ready.py        # 只有发版才会暴露的那批问题，本地先跑
 python3 scripts/check-macos-signed.py --self-test   # 这道门能不能说"不"（也能验真产物）
-python3 scripts/check-release-shipped.py v0.12.3  # 发版**之后**按资产验收：workflow 全绿 ≠ 四个平台都发出去了
+python3 scripts/check-release-shipped.py v0.12.4  # 发版**之后**按资产验收：workflow 全绿 ≠ 四个平台都发出去了
 ```
 
 CI（`.github/workflows/ci.yml`）有四个作业：`frontend` / `ui` / `backend` / `cli`，push 即跑。
