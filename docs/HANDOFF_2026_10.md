@@ -244,38 +244,59 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
    - **macOS 代码签名 + 公证**用 Apple 的 Developer ID。CI 侧已经接好（`release.yml` 的三步：
      预检 → 导入证书 → 验产物），**但仓库里没有证书就不会启用**——那三步的门槛是
      `env.APPLE_CERTIFICATE != ''`，缺 secrets 时构建行为与以前完全一致（产物仍是 ad-hoc 签名）。
-     启用需要属主做一次性准备：
+     启用需要一次性准备。**先量过再选路**（2026-10-11 用两个只差一字节的二进制实测，
+     `codesign -d -r-`）：
 
      ```text
-     1) Apple Developer Program（$99/年）。命令行证书工具拿不到 Developer ID Application 证书，
-        必须去 developer.apple.com → Certificates 用本机 Keybook 生成的 CSR 下载 .cer。
-        验证：security find-identity -v -p codesigning 里出现
-        "1) XXXX "Developer ID Application: <Name> (<TEAMID>)""
-     2) 导出 .p12（含私钥），设一个导出口令，然后：
-        base64 -i DeveloperID.p12 | pbcopy    → GitHub secret APPLE_CERTIFICATE
-        导出口令                              → secret APPLE_CERTIFICATE_PASSWORD
-        证书完整名（含括号里的 TEAMID）        → secret APPLE_SIGNING_IDENTITY
-     3) 公证二选一：
-        (a) App 专用口令：secret APPLE_ID（Apple ID 邮箱）+ APPLE_PASSWORD（app-specific）
-            + APPLE_TEAM_ID（就是上面那 10 位）
-        (b) API 密钥：developer.apple.com → Users and Access → Integrations → App Store Connect API
-            建一个，下载 .p8；secret APPLE_API_KEY = 文件内容（含 BEGIN/END 行，不要路径），
-            APPLE_API_ISSUER = 页面上的 Issuer ID
-            （这两个变量的名字与用法是从要打的那个 CLI 二进制里读出来的：它会把内容写成临时
-            `AuthKey*.p8` 再喂给 notarytool；想给路径要用另一个变量 `APPLE_API_KEY_PATH`。）
-        只配证书不配公证 = 预检直接失败退出，不会发出一个 Gatekeeper 打不开的包。
+     ad-hoc（今天）    designated => cdhash H"40563cb7…" / H"9cbd40d4…"   ← 每次构建都变
+     自签证书          designated => certificate leaf = H"9625804c…"      ← 两个构建完全相同
+     Gatekeeper        两者 spctl --assess 都是 exit 3 / rejected          ← 自签不比现在更差
      ```
 
-     配好之后**先跑一次 `workflow_dispatch`**（release.yml 支持手动触发）看那三步真的绿，
-     再打 tag。产物验的是签名本身，不是 job 结论：
+     所以有两条路，成本与收益不同：
+
+     **路 A：自签证书（免费、不需要 Apple 账号、只解决钥匙串反复弹窗）**
+     ```bash
+     scripts/macos-selfsigned-identity.sh          # 建身份 + 导出 .p12 + 打印要设的 secrets
+     ```
+     它把身份装进登录钥匙串（本机 `tauri build` 也能签），并给出三条 `gh secret set`。
+     **不要**设仓库变量 `APPLE_NOTARIZE`——Apple 只给 Developer ID 做公证，
+     设了预检会直接失败（这是故意的：不能声称公证了其实没有）。
+     代价：Gatekeeper 行为和现在一模一样（都是拒绝），所以陌生人下载 DMG 仍然要被拦，
+     你自己走自动更新没问题。
+
+     **路 B：Developer ID（$99/年，陌生人能双击安装）**
+     ```text
+     1) developer.apple.com → Certificates → 用本机 Keychain 生成的 CSR 下载
+        Developer ID Application 证书（命令行工具造不出这张）。
+        验证：security find-identity -v -p codesigning 里出现
+        "1) XXXX "Developer ID Application: <Name> (<TEAMID>)""
+     2) 导出带口令的 .p12：
+        base64 -i DeveloperID.p12 | gh secret set APPLE_CERTIFICATE
+        gh secret set APPLE_CERTIFICATE_PASSWORD       # 导出口令
+        gh secret set APPLE_SIGNING_IDENTITY           # 证书完整名（含 TEAMID）
+     3) 公证二选一，然后 gh variable set APPLE_NOTARIZE --body 1：
+        (a) APPLE_ID + APPLE_PASSWORD(app 专用口令) + APPLE_TEAM_ID
+        (b) APPLE_API_KEY(.p8 文件内容，不是路径) + APPLE_API_ISSUER
+            名字与用法是从要打的那个 CLI 二进制里读出来的：它会把内容写成临时
+            `AuthKey*.p8` 再喂给 notarytool；想给路径要用另一个变量 `APPLE_API_KEY_PATH`。
+     ```
+
+     两条路都**先跑一次 `workflow_dispatch`**（release.yml 支持手动触发）看那三步真的绿，再打 tag。
+     产物验的是签名本身，不是 job 结论：
 
      ```bash
      python3 scripts/check-macos-signed.py --self-test          # 期望 YES
-     python3 scripts/check-macos-signed.py /Applications/DropQTT.app --require-developer-id
+     python3 scripts/check-macos-signed.py /Applications/DropQTT.app          # 今天：NO
      ```
 
-     第二条现在会报 `macos-signed: NO`——本机装的正是 ad-hoc 包，这正是"每次升级都要重新
-     输一次钥匙串密码"的根因（§4.90）。它变成 YES 的那天，才算真的修好了。
+     它变成 YES 的那天，"每次升级都要重新输一次钥匙串密码"才算真的修好。
+     自签身份走的是同一条门（不带 `--require-developer-id`，因为自签永远过不了那个）。
+
+     **做实验时的一个教训**：临时钥匙串脚本千万不要改 `security default-keychain`。
+     当天一次实验把默认钥匙串指向了随后被删掉的临时文件，你的登录钥匙串一度变成
+     "A default keychain could not be found"（已恢复：default 与搜索列表都指回
+     `~/Library/Keychains/login.keychain-db`）。只往搜索列表里**加**，用完还原，别动 default。
 4. 产物：macOS（aarch64 + x86_64）、Linux（deb/AppImage）、Windows（msi/NSIS）+ `latest.json`。
 5. **按产物验收，不要只看 workflow 结论**：`releaseDraft: false` 意味着每条腿各自发布，
    一条腿失败会留下**公开但残缺**的 release。v0.11.2 就这样少了 Apple Silicon 包，

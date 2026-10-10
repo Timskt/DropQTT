@@ -34,6 +34,8 @@ jobs:
     # the way it always did, and with them it must produce a Developer ID artifact or fail.
     env:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      # Set to 1 only when the identity can actually be notarized (a Developer ID).
+      APPLE_NOTARIZE: ${{ vars.APPLE_NOTARIZE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -109,11 +111,12 @@ jobs:
         run: |
           cargo test
 
-      # Half-configured signing is worse than none: the job would go green while shipping a
-      # Developer ID app that Gatekeeper blocks, because notarization needs its own
-      # credentials. So either the certificate and a notarization credential pair are both
-      # present, or this leg ships the way it always has.
-      - name: Refuse half-configured macOS signing
+      # Two different mistakes hide behind "signing is configured". Half-set credentials
+      # would ship a signed app whose notarization silently never happened; and a
+      # self-signed identity (scripts/macos-selfsigned-identity.sh) cannot be notarized at
+      # all — Apple only notarizes Developer ID — so opting into that path has to be
+      # explicit rather than inferred. Hence APPLE_NOTARIZE.
+      - name: Preflight the macOS signing configuration
         if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
         shell: bash
         run: |
@@ -121,15 +124,26 @@ jobs:
           missing=""
           [ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ] || missing="$missing APPLE_CERTIFICATE_PASSWORD"
           [ -n "${APPLE_SIGNING_IDENTITY:-}" ] || missing="$missing APPLE_SIGNING_IDENTITY"
+          if [ -n "$missing" ]; then
+            echo "::error::APPLE_CERTIFICATE is set but these are not:$missing"
+            exit 1
+          fi
           notarized=0
           if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then notarized=1; fi
           if [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then notarized=1; fi
-          [ "$notarized" = 1 ] || missing="$missing (APPLE_ID+APPLE_PASSWORD+APPLE_TEAM_ID or APPLE_API_KEY+APPLE_API_ISSUER)"
-          if [ -n "$missing" ]; then
-            echo "::error::APPLE_CERTIFICATE is set but these are not:$missing — refusing to ship a signed-but-unnotarized app"
+          if [ "${APPLE_NOTARIZE:-0}" = "1" ] && [ "$notarized" != "1" ]; then
+            echo "::error::APPLE_NOTARIZE=1 but no notarization credentials — refusing to ship a signed-but-unnotarized app while claiming otherwise"
+            echo "   need APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or APPLE_API_KEY + APPLE_API_ISSUER"
             exit 1
           fi
-          echo "signing identity: $APPLE_SIGNING_IDENTITY, notarization credentials present"
+          if [ "$notarized" = "1" ]; then
+            echo "signing with '$APPLE_SIGNING_IDENTITY', notarization credentials present"
+          else
+            echo "::warning::signing with '$APPLE_SIGNING_IDENTITY' and NOT notarizing."
+            echo "::warning::Gatekeeper rejects this for quarantined downloads — measured to behave"
+            echo "::warning::the same as the current ad-hoc build, so nothing regresses; a Developer"
+            echo "::warning::ID certificate is still required for strangers to double-click the DMG."
+          fi
 
       - name: Import the Developer ID certificate
         if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
@@ -204,8 +218,15 @@ jobs:
             echo "::error::no .app under $dir — nothing was verified"
             exit 1
           fi
-          python3 scripts/check-macos-signed.py "$app" --require-developer-id
-          xcrun stapler validate "$app"
-          spctl --assess --type execute --verbose=4 "$app"
-          echo "notarytool history (last submissions):"
-          xcrun notarytool history --output-format json 2>/dev/null | head -20 || true
+          # The signature gate always applies. The notarization gates only do, because a
+          # self-signed identity cannot be notarized and stapler would then fail a build
+          # that is behaving exactly as configured.
+          if [ "${APPLE_NOTARIZE:-0}" = "1" ]; then
+            python3 scripts/check-macos-signed.py "$app" --require-developer-id
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose=4 "$app"
+          else
+            python3 scripts/check-macos-signed.py "$app"
+            echo "::warning::notarization skipped (APPLE_NOTARIZE unset): no staple, and Gatekeeper"
+            echo "::warning::will still refuse a quarantined download of this build"
+          fi
