@@ -178,3 +178,36 @@ git push origin v0.9.0
 ```
 
 GitHub Actions will automatically build the artifacts and attach them to a new GitHub Release.
+
+### Installing on macOS (no Apple developer account needed)
+
+macOS builds are signed with a **self-signed** code-signing identity, because that is what makes
+the login keychain remember your broker password across updates. It is not a Developer ID
+certificate, so Gatekeeper still refuses anything it thinks you *downloaded from a browser* —
+the DMG included. Measured against this repository's own artifacts:
+
+| the same signed `.app` | result |
+| --- | --- |
+| without the `com.apple.quarantine` attribute | **launches** |
+| with it (what a browser download leaves behind) | refused, process never starts |
+
+`spctl --assess` reports "rejected" in *both* rows, so it is not the test — whether the app opens is.
+Installing from the release's `.app.tar.gz` with `curl` + `tar` never sets that attribute, which is
+also why **in-app auto-update was never blocked**:
+
+```bash
+bash scripts/install-macos.sh              # latest release → /Applications
+bash scripts/install-macos.sh --tag v0.12.6
+```
+
+The script refuses to install a bundle whose designated requirement is not this project's
+certificate, so it cannot be tricked into installing a re-signed or ad-hoc copy — a property a
+checksum fetched from the same server would not give you. After installing, the first broker
+connection asks for the keychain password **one last time**: the bundle's identity changed, so the
+old grant no longer matches. Click *Always Allow* and it stays allowed through future updates.
+
+If you already have the DMG: dragging it to `/Applications` and then approving the app under
+System Settings → Privacy & Security is the alternative, and `xattr -d com.apple.quarantine` only
+works from a shell that has Full Disk Access (it returns `Operation not permitted` without it).
+Permanently fixing this for strangers — double-click and go — requires a paid Developer ID
+certificate plus notarization; the pipeline already has that branch prepared.

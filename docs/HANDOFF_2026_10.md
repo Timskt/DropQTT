@@ -331,6 +331,27 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
 
      它变成 YES 的那天，"每次升级都要重新输一次钥匙串密码"才算真的修好。
      自签身份走的是同一条门（不带 `--require-developer-id`，因为自签永远过不了那个）。
+     **0.12.6 起已经是 YES**（对 release 上的 `DropQTT_aarch64.app.tar.gz` 解包实测），
+     指派要求从 `cdhash H"…"` 变成 `certificate leaf = H"d483c414…"`；`/Applications/DropQTT.app`
+     在你没升级之前仍是旧 ad-hoc 那份，所以那条命令现在依然报 NO——那是**装机**的状态，不是产物的状态。
+
+     **免费解决"陌生人装不上"的那一半（`scripts/install-macos.sh`）**。实测数据（macOS 26 / arm64，
+     用本仓库自己的产物）：
+
+     ```text
+     同一个自签 .app，没有 com.apple.quarantine  →  能启动（2 秒内进程出现）
+     同一个自签 .app，有 com.apple.quarantine    →  被拦，进程不出现
+     spctl --assess 在两种状态下都是 rejected     →  所以 spctl 不是判据，"打得开"才是
+     curl 写文件不带隔离位；tar 也不传播隔离位
+     xattr -d com.apple.quarantine 在没有「完全磁盘访问权限」的终端里 EPERM（网上教的招不灵）
+     ```
+
+     所以首装走 release 上的 `.app.tar.gz`（自动更新用的就是它，这也是更新从来没被拦的原因）：
+     `bash scripts/install-macos.sh [--tag v0.12.6] [--dest DIR] [--from-file TARBALL]`。
+     脚本装的之前先验 `codesign --verify --strict` **并且**要求指派要求等于本项目的证书叶子哈希，
+     ad-hoc 或重签名的副本会被拒绝——这个性质比"从同一台服务器再取个 sha256 对一对"强，
+     因为攻击者没有私钥就造不出匹配的指派要求。改 `EXPECTED_LEAF` 等于换身份，会让所有人钥匙串里的
+     「始终允许」失效，属主级决定，不要顺手改。
 
      **做实验时的一个教训**：临时钥匙串脚本千万不要改 `security default-keychain`。
      当天一次实验把默认钥匙串指向了随后被删掉的临时文件，你的登录钥匙串一度变成

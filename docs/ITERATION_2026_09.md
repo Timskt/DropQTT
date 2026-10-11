@@ -3916,6 +3916,66 @@ D 有证书没身份名        → 当场失败（exit!=0）
 并且下载 release 上的 `DropQTT.app.tar.gz` 解包跑 `check-macos-signed.py <app>` = `YES`——
 这次连"产物是不是真的被那把身份签过"也要在产物上验，而不是只看步骤变绿。
 
+### 4.97 不花钱把"陌生人装不上"也解掉：拦人的是隔离位，不是签名（第三十轮 2026-10-11）
+
+0.12.6 修好了钥匙串，我在收尾时说了句"还剩 Gatekeeper 那一半，需要 $99 证书"。属主的回答是
+**"我没钱买证书，你想办法解决"**。于是这一轮不去解释为什么买不到，而是把"到底被什么挡住"量清楚。
+
+**实验用的是本仓库自己的产物，在这台 macOS 26 / arm64 上跑**（先做了一次失败尝试：直接拿
+release 的 tar.gz 测，本机到 GitHub release 的下载会在 ~2MB 处被截断——handoff 里记过这条环境陷阱，
+后来给安装脚本的 curl 加了 `--continue-at -` + 重试才跑通）：
+
+```text
+A 同一个 .app，ad-hoc 签名，无隔离位        spctl: exit 1 "code has no resources…"
+B 同一个 .app，ad-hoc 签名，有隔离位        spctl: 同上
+C 同一个 .app，自签身份，无隔离位           spctl: exit 3 rejected
+D 同一个 .app，自签身份，有隔离位           spctl: exit 3 rejected
+```
+
+**如果只看 spctl，结论会是"花不花钱都一样被拦"——错。** spctl 永远做完整评估，
+而 Gatekeeper 的**强制**只在文件带 `com.apple.quarantine` 时发生。所以判据换成"进程起不起来"：
+
+```text
+自签 + 无隔离位  →  `open` 之后 2 秒内进程出现        ← 能装、能跑
+自签 + 有隔离位  →  进程完全不出现                    ← 这才是"装不上"的那个症状
+curl 写出的文件  →  xattr 里没有隔离位
+tar 解包         →  不传播隔离位
+xattr -d com.apple.quarantine  →  EPERM（这个 shell 没有「完全磁盘访问权限」）
+```
+
+**结论：自签身份下，"被浏览器下载"是唯一拦人的东西，而它可以绕开。**
+release 上本来就有 `DropQTT_aarch64.app.tar.gz` / `DropQTT_x64.app.tar.gz`（更新包），
+用 `curl + tar` 落地就是无隔离位状态——这也解释了为什么**自动更新从来没被拦过**。
+所以新增 `scripts/install-macos.sh`：按 `uname -m` 选资产、curl 带重试与断点续传、解包、
+装进 `/Applications`（不可写就退到 `~/Applications`，不偷偷 sudo）。
+
+**装之前验什么，是个设计决定。** 顺手的做法是"从服务器再下一个 SHA256SUMS 对一下"，
+但那是**同一个服务器**给的第二个数字，攻击者若能换掉包，也能换掉校验文件。改成验密码学上真正站得住的那件事：
+`codesign --verify --strict` **并且**指派要求必须是 `certificate leaf = H"d483c414…"`。
+没有私钥的人造不出匹配的指派要求，所以"被重签名的包"和"ad-hoc 的旧包"都会被拒绝安装——
+变异测试跑过：把同一个包签成 ad-hoc 再喂给脚本，它报
+`refusing to install: designated requirement is not our certificate / got: cdhash H"b40dd1f8…"` 并 exit 1。
+
+**顺带修了一个只在自己的解析里成立的地方**：脚本第一版取指派要求用的是 `sed -n 's/^designated => //p'`，
+而 codesign 对没有内部要求的签名会把那行打成 `# designated => cdhash …`——锚在行首就**抽不到东西**，
+门会因为解析器瞎了而看起来"通过"。改成 `s/.*designated => //p` 之后，三种真实形态
+（证书叶子 / cdhash / 无内部要求）都能取到，且拿不到就拒绝（fail-closed）。
+这是 §4.71/§4.73"验证工具本身也要验"在本轮的第三次兑现。
+
+**没有假装解决的部分**（写进两份 README 与 handoff）：陌生人拿到 DMG 仍会被拦，
+`xattr -d` 在没有完全磁盘访问权限的终端里不灵，可用的是 系统设置 → 隐私与安全性 → 「仍要打开」；
+双击就装的唯一解仍是 Developer ID + 公证。自签带来的**新**代价也说清：换身份（`EXPECTED_LEAF` 变了）
+会让所有人钥匙串里的「始终允许」失效一次。
+
+**闭环判据**（都跑了，不是设想）：脚本对 release 的**真产物**跑通——下载（本机 24 KB/s，9 分 19 秒才拉完
+12.6 MB，所以 curl 的 `--continue-at -` + 重试不是装饰）→ 验签 → 装到 `--dest`；装出来的那份
+`xattr` 里没有隔离位，`open` 之后进程出现（也就是"能装能跑"这条在最真实的输入上成立）。
+另外三个测试：**覆盖安装**（dest 里已有旧包 → 新包在位、无临时残留）；
+**ad-hoc 变异**（签成 ad-hoc 再喂进去 → 拒绝，并打印出它看到的 `cdhash H"b40dd1f8…"`）；
+**中途失败**（用脚本副本注入一次失败，落在"旧包已挪开、新包还没落位"那一瞬 → 属主原来那份被放回原位，
+`designated` 与失败前逐字一致，退出码 1）。最后一条是本轮真正学到的：`mv` 走开再走回来的清理逻辑
+本身就是个丢程序的窗口，trap 必须把它当成一等公民——第一版没有这个 trap。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

@@ -234,6 +234,33 @@ git push origin v0.10.2
 
 Actions 会自动构建产物并挂到一个新的 GitHub Release 上。
 
+### macOS 安装（不需要 Apple 开发者账号）
+
+macOS 产物用的是**自签**代码签名身份——它的作用是让登录钥匙串记住你的 broker 口令、跨更新不再反复问；
+它不是 Developer ID 证书，所以 Gatekeeper 仍会拒绝"被浏览器标记为下载来的"东西，DMG 也算。
+拿本仓库自己的产物实测：
+
+| 同一个已签名的 `.app` | 结果 |
+| --- | --- |
+| 没有 `com.apple.quarantine` 隔离位 | **能打开**（进程 2 秒内出现） |
+| 有隔离位（浏览器下载留下的） | 被拦，进程根本不出现 |
+
+`spctl --assess` 在两行都报 rejected，所以它不是判据——**能不能打开才是**。
+用 `curl` + `tar` 从 release 的 `.app.tar.gz` 安装不会带上隔离位，这也是**应用内自动更新从来没被拦过**的原因：
+
+```bash
+bash scripts/install-macos.sh              # 最新版 → /Applications
+bash scripts/install-macos.sh --tag v0.12.6
+```
+
+脚本会拒绝安装指派要求不属于本项目证书的信号包，所以它不会被一个重签名或 ad-hoc 的副本骗过去——
+这是"从同一台服务器顺手取个 sha256 对一下"给不了你的性质。装完之后**第一次连接 broker 还会问一次**钥匙串口令：
+这包的签名身份换了，旧的授权自然不匹配。点「始终允许」，以后跨更新就一直有效。
+
+已经下了 DMG 的话：拖进「应用程序」后去 系统设置 → 隐私与安全性 里点「仍要打开」是另一条免费路子；
+`xattr -d com.apple.quarantine` 只在有「完全磁盘访问权限」的终端里有效，否则会报 `Operation not permitted`。
+想让陌生人双击就能装，只能买 Developer ID 证书 + 公证；流水线里那条分支已经备好。
+
 ---
 
 ## 📚 更多文档
