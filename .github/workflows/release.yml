@@ -280,7 +280,36 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'DropQTT ${{ github.ref_name }}'
-          releaseBody: 'Automated release for ${{ github.ref_name }}. Download installers for macOS (Apple Silicon & Intel DMG), Linux (DEB & AppImage), and Windows (MSI & NSIS exe).'
+          # The body is what a stranger reads first, and the old text advertised only the DMG —
+          # which is precisely the one macOS path that Gatekeeper blocks. Stating the install
+          # command here is the cheapest fix to a problem measured on the real artifacts.
+          releaseBody: |-
+            Automated release for ${{ github.ref_name }}.
+
+            ## macOS — install with this rather than the DMG
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/Timskt/DropQTT/main/scripts/install-macos.sh | bash
+            ```
+
+            (Read the script first if you prefer: it is in `scripts/install-macos.sh`.)
+
+            macOS builds here are signed with a **self-signed** identity — no Apple Developer ID,
+            so no notarization. Measured on this project's own artifacts: the same signed app
+            launches when it carries no `com.apple.quarantine` and is refused when it does, and a
+            browser download always sets that bit, the DMG included. The command above installs
+            from this release's `.app.tar.gz` using `curl` + `tar`, which never sets it, and it
+            refuses to install any bundle whose signature does not anchor to this project's
+            certificate. Already downloaded the DMG? Approve it under System Settings → Privacy &
+            Security → *Open Anyway*.
+
+            After installing, the first broker connection asks for the keychain password once —
+            click **Always Allow**, and future updates keep that grant.
+
+            ## Other platforms
+
+            Linux (DEB, RPM, AppImage) and Windows (MSI, NSIS exe) install normally; the updater
+            on every platform is unaffected by all of the above.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
