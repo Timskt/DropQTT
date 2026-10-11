@@ -348,6 +348,10 @@ assertions faults responder outbox metrics secrets verdict scenario cli`，
 
      所以首装走 release 上的 `.app.tar.gz`（自动更新用的就是它，这也是更新从来没被拦的原因）：
      `bash scripts/install-macos.sh [--tag v0.12.6] [--dest DIR] [--from-file TARBALL]`。
+     **这个脚本本身也是 release 资产**（`releases/latest/download/install-macos.sh`），
+     发布页印的就是那条 URL——不要改回 `raw.githubusercontent.com`：那是第二条网络通道，
+     与 app 本体的下载通道各有各的挂法，而且不随版本走（旧 release 的用户会拿到新脚本）。
+     发版时 CI 会当场 curl 两条 URL 验证，不是 200 就红（见 ITERATION §4.98）。
      脚本装的之前先验 `codesign --verify --strict` **并且**要求指派要求等于本项目的证书叶子哈希，
      ad-hoc 或重签名的副本会被拒绝——这个性质比"从同一台服务器再取个 sha256 对一对"强，
      因为攻击者没有私钥就造不出匹配的指派要求。改 `EXPECTED_LEAF` 等于换身份，会让所有人钥匙串里的

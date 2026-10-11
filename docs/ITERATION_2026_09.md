@@ -3976,6 +3976,44 @@ release 上本来就有 `DropQTT_aarch64.app.tar.gz` / `DropQTT_x64.app.tar.gz`�
 `designated` 与失败前逐字一致，退出码 1）。最后一条是本轮真正学到的：`mv` 走开再走回来的清理逻辑
 本身就是个丢程序的窗口，trap 必须把它当成一等公民——第一版没有这个 trap。
 
+### 4.98 属主跑发布页那条命令报了 403：命令不能依赖第二条网络通道（第三十一轮 2026-10-11）
+
+发布页我写的是 `curl -fsSL https://raw.githubusercontent.com/.../install-macos.sh | bash`。
+属主在自己的终端上跑，得到四行 `curl: (56) The requested URL returned error: 403`。
+
+**先复现，再改。** 同一台机器、同一个 `/usr/bin/curl`（8.7.1，无 `~/.curlrc`）、
+登录 shell 与交互 shell 里都没有代理变量，`HEAD` 那条 URL 回来是 **200**——
+**我没有复现出 403**，系统代理是 `127.0.0.1:7897`（curl 本来不读 macOS 系统代理），
+所以那四行最可能是属主那侧代理/边缘节点的瞬时状态。这一点要如实说：**症状没被我抓到现行**。
+
+**但设计上我确实错了，而且错误与 403 是不是瞬时无关**：那条命令让安装依赖**第二条网络通道**
+（`raw.githubusercontent.com`），而 app 本体走的是 `github.com/.../releases/download/...`
+→ `release-assets.githubusercontent.com`。两条通道各有各的挂法，用户能下到 13 MB 的 app
+却下不到 7 KB 的脚本，是完全可能的事——这次就是这么撞上的。
+所以：**脚本改成 release 资产**（`releases/latest/download/install-macos.sh`），
+和它要装的东西同域名、同路径、同一次发布，可达性等价；而且它**跟着版本走**，
+不再是"`main` 今天长什么样就用什么脚本"——那意味着旧 release 的用户会拿到一个新脚本，
+里面 `EXPECTED_LEAF` 之类的常量未必对得上他手上那个包。
+
+CI 侧新加一步（只在 tag 推送、只在 aarch64 那条腿，四条腿会抢同一个资产名）：
+上传之后**当场把两条 URL 都 curl 一遍**，不是 200 就让发版失败。理由写进步骤里：
+发布页现在印着这条命令，**一条 404 的指令比没有指令更糟**。
+
+**已发布页面的补救**（不动 tag、不动资产，只补文本与资产）：
+`gh release upload v0.12.6 scripts/install-macos.sh` + 用同一份 YAML 文案重写正文。
+验收不是"我说了能通"，而是把发布页那条命令的 `bash` 换成 `bash -n` 在**属主那种 shell**
+（`zsh -lc`）里真跑一遍：
+
+```text
+  https://github.com/Timskt/DropQTT/releases/download/v0.12.6/install-macos.sh  HTTP 200
+  https://github.com/Timskt/DropQTT/releases/latest/download/install-macos.sh   HTTP 200
+  取回 7304 字节、首行 #!/usr/bin/env bash、与仓库那份逐字节相同、bash -n 通过
+```
+
+**这轮的可迁移结论**：凡是对用户公布的命令，判据不是"我这边能跑"，而是
+**"它依赖的每一条通道都和它要装的东西共用"**；以及用户报一个我复现不了的错时，
+正确动作是"如实说没复现 + 仍然修掉那个让瞬时故障变成硬故障的结构"。
+
 ## 6. 下一轮候选
 
 > 原列第 1、2 项（过载漏记、历史错误可见）**已在第二轮完成并真机验证**，见 §3.3 与 §4.5。

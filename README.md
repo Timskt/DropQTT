@@ -196,6 +196,14 @@ Installing from the release's `.app.tar.gz` with `curl` + `tar` never sets that 
 also why **in-app auto-update was never blocked**:
 
 ```bash
+curl -fsSL https://github.com/Timskt/DropQTT/releases/latest/download/install-macos.sh | bash
+```
+
+The script is published as a release asset — the same host and path the app itself downloads
+from — so a second domain going down cannot make this command fail. From a clone of this repo it
+is the same file:
+
+```bash
 bash scripts/install-macos.sh              # latest release → /Applications
 bash scripts/install-macos.sh --tag v0.12.6
 ```

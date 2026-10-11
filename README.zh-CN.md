@@ -249,6 +249,13 @@ macOS 产物用的是**自签**代码签名身份——它的作用是让登录�
 用 `curl` + `tar` 从 release 的 `.app.tar.gz` 安装不会带上隔离位，这也是**应用内自动更新从来没被拦过**的原因：
 
 ```bash
+curl -fsSL https://github.com/Timskt/DropQTT/releases/latest/download/install-macos.sh | bash
+```
+
+脚本是**随 release 一起发布的资产**，和 app 本体走同一个域名同一条路径——所以不会出现"能下到 app 却下不到
+安装脚本"这种第二条网络通道单独挂掉的情况。已经克隆了仓库的话，它就是同一个文件：
+
+```bash
 bash scripts/install-macos.sh              # 最新版 → /Applications
 bash scripts/install-macos.sh --tag v0.12.6
 ```
