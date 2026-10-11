@@ -84,6 +84,32 @@ if pgrep -f "DropQTT.app/Contents/MacOS/dropqtt$" >/dev/null 2>&1; then
   exit 1
 fi
 
+# When a fetch of github.com fails, the most common cause on the networks this project is used
+# on is not GitHub: Clash-family proxy clients answer DNS for these hosts out of a fake-ip pool,
+# and their rule engine then produces the 403 that looks like a dead download link. Naming the
+# cause is the difference between "your install command is broken" and "my client blocks it".
+diagnose_fetch_failure() {
+  python3 - "${1:-github.com}" <<'PY'
+import ipaddress, socket, sys
+host = sys.argv[1]
+try:
+    ips = sorted({a[4][0] for a in socket.getaddrinfo(host, 443, 0, socket.SOCK_STREAM)})
+except Exception as error:
+    print(f"  {host} does not resolve: {error}")
+    raise SystemExit
+print(f"  {host} resolves to: {', '.join(ips)}")
+fake = [i for i in ips if ":" not in i and ipaddress.ip_address(i) in ipaddress.ip_network("198.18.0.0/15")]
+if fake:
+    print("  198.18.0.0/15 is the fake-ip range a Clash-family client hands out, so this")
+    print("  machine's traffic to GitHub is being decided by that client — the 403 is its")
+    print("  rule, not GitHub's answer. Let github.com and *.githubusercontent.com through")
+    print("  it (or switch it to global/direct mode) and re-run this.")
+else:
+    print("  If the fetch still fails, the block is somewhere between here and GitHub:")
+    print("  try a browser download of the .app.tar.gz plus `--from-file`, or another network.")
+PY
+}
+
 if [ -z "$tarball" ]; then
   if [ -z "$tag" ]; then
     # Plain curl against the public API: requiring `gh` or a token would make this unusable on
@@ -91,13 +117,17 @@ if [ -z "$tarball" ]; then
     tag=$(curl -fsSL --retry 4 --retry-all-errors --max-time 60 \
         "https://api.github.com/repos/$REPO/releases/latest" \
       | sed -n 's/.*"tag_name":[[:space:]]*"\(v[0-9][0-9.]*\)".*/\1/p' | head -1)
-    [ -n "$tag" ] || { echo "could not read the latest release tag from $REPO" >&2; exit 1; }
+    [ -n "$tag" ] || { echo "could not read the latest release tag from $REPO" >&2; diagnose_fetch_failure api.github.com; exit 1; }
   fi
   url="https://github.com/$REPO/releases/download/$tag/$asset"
   echo "downloading $url"
   # --continue-at keeps a truncated 13 MB download from starting over; the connection to release
   # assets on this network does get cut mid-stream.
-  curl -fL --retry 6 --retry-all-errors --continue-at - --max-time 900 -o "$work/$asset" "$url"
+  if ! curl -fL --retry 6 --retry-all-errors --continue-at - --max-time 900 -o "$work/$asset" "$url"; then
+    echo "download failed: $url" >&2
+    diagnose_fetch_failure github.com
+    exit 1
+  fi
   tarball="$work/$asset"
 fi
 
