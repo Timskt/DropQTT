@@ -292,6 +292,13 @@ jobs:
             curl -fsSL ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/install-macos.sh | bash
             ```
 
+            If that fails with a 403 or a timeout, try it bypassing your local proxy — both
+            transports have worked here, and neither worked every time:
+
+            ```bash
+            curl --noproxy '*' -fsSL ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/install-macos.sh | bash
+            ```
+
             (Read it first if you prefer — it is the `install-macos.sh` asset on this page, the
             same file as `scripts/install-macos.sh` in the repository.)
 

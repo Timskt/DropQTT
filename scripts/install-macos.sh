@@ -101,9 +101,10 @@ print(f"  {host} resolves to: {', '.join(ips)}")
 fake = [i for i in ips if ":" not in i and ipaddress.ip_address(i) in ipaddress.ip_network("198.18.0.0/15")]
 if fake:
     print("  198.18.0.0/15 is the fake-ip range a Clash-family client hands out, so this")
-    print("  machine's traffic to GitHub is being decided by that client — the 403 is its")
-    print("  rule, not GitHub's answer. Let github.com and *.githubusercontent.com through")
-    print("  it (or switch it to global/direct mode) and re-run this.")
+    print("  machine's route to GitHub runs through that client — a 403 here is its answer,")
+    print("  not GitHub's. It is often intermittent rather than a fixed rule: retry, or try")
+    print("  this same command with --noproxy '*' (both transports have worked on one such")
+    print("  machine, and neither worked every time).")
 else:
     print("  If the fetch still fails, the block is somewhere between here and GitHub:")
     print("  try a browser download of the .app.tar.gz plus `--from-file`, or another network.")
